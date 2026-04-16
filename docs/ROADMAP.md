@@ -1,6 +1,6 @@
 # Offbook Roadmap
 
-## M0 — Repo & Autonomous Development Setup [IN PROGRESS]
+## M0 — Repo & Autonomous Development Setup [DONE]
 
 **Goal:** Self-sustaining development environment.
 
@@ -11,13 +11,13 @@
 - [x] .claude/rules/ — scoped rules (go-backend, database, frontend, testing)
 - [x] docs/ARCHITECTURE.md — full technical reference
 - [x] docs/ROADMAP.md — this file
-- [ ] docs/ADR/ — 5 initial ADRs
-- [ ] .github/ISSUE_TEMPLATE/feature.md
-- [ ] docker-compose.yml skeleton
-- [ ] .env.example
-- [ ] .gitignore
-- [ ] Initial commit and push to GitHub
-- [ ] Create M1 milestone and file all M1 issues
+- [x] docs/ADR/ — 5 initial ADRs
+- [x] .github/ISSUE_TEMPLATE/feature.md
+- [x] docker-compose.yml skeleton
+- [x] .env.example
+- [x] .gitignore
+- [x] Initial commit and push to GitHub
+- [x] Create M1 milestone and file all M1 issues (8 issues: #1–#8)
 
 **Done criteria:** Repo on GitHub; CLAUDE.md + .claude/ infra complete; hooks enforce branch naming + go vet on commit; M1 backlog fully filed as GitHub Issues; a cold autonomous session can start M1 without asking any questions.
 
