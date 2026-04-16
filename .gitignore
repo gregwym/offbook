@@ -1,0 +1,44 @@
+# Dependencies
+backend/vendor/
+frontend/node_modules/
+
+# Build output
+backend/bin/
+frontend/dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Database
+data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Test coverage
+coverage/
+*.coverprofile

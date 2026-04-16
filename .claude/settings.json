@@ -1,0 +1,54 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go *)",
+      "Bash(docker compose *)",
+      "Bash(pnpm *)",
+      "Bash(npm *)",
+      "Bash(gh issue *)",
+      "Bash(gh pr *)",
+      "Bash(git checkout *)",
+      "Bash(git branch *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(migrate *)",
+      "Bash(golangci-lint *)",
+      "Bash(ls *)",
+      "Bash(mkdir *)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(sudo *)",
+      "Bash(* DROP TABLE *)",
+      "Bash(* drop table *)",
+      "Bash(git push --force *)",
+      "Bash(git reset --hard *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash(git commit.*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd backend && go vet ./... 2>&1 || exit 2"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash(git checkout -b.*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/validate-branch-name.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
