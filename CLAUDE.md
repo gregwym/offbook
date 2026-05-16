@@ -20,7 +20,8 @@
 8. Move to next issue
 
 ## Git Discipline
-- Auto-commit completed work without asking. Push when appropriate (e.g., to open a PR).
+- Auto-commit completed work without asking.
+- On `main`: push freely to preserve work. On feature branches: push when opening/updating a PR.
 - NEVER `git commit --amend`, `git reset --hard`, or `git push --force` (any variant). No exceptions.
 - Fix mistakes with new commits, not history rewrites.
 
