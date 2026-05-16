@@ -10,10 +10,10 @@ services:
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U offbook"]
+      test: ["CMD-SHELL", "pg_isready -U offbook -d offbook"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   backend:
     build:
@@ -25,18 +25,26 @@ services:
       DATABASE_URL: postgres://offbook:offbook@postgres:5432/offbook?sslmode=disable
       PORT: "8000"
       FRONTEND_URL: http://localhost:5173
+      MIGRATIONS_PATH: /app/migrations
     env_file:
       - path: .env
         required: false
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "5173:5173"
+      - "5173:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_started
