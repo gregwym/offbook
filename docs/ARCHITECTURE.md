@@ -27,8 +27,8 @@ backend/
 ├── cmd/server/main.go            # Entry point
 ├── internal/
 │   ├── config/config.go          # Env-based config struct (godotenv + struct)
-│   ├── db/db.go                  # GORM connection, migration runner
-│   ├── model/                    # GORM models — one file per domain entity
+│   ├── db/db.go                  # GORM connection (schema is owned by golang-migrate, NOT AutoMigrate)
+│   ├── model/                    # GORM models — one file per domain entity. Models mirror migrations; never use AutoMigrate.
 │   ├── handler/                  # Gin handlers — thin, parse request → call service → respond
 │   ├── service/                  # Business logic — receives repo interfaces
 │   │   ├── ai/                   # AI provider protocol, context builder, service
@@ -81,9 +81,9 @@ User message → ai_service.go → context_builder.go (queries DB, EXCLUDES pii_
 
 ### Table: `pii_store`
 ```sql
-id            SERIAL PRIMARY KEY
+id            BIGSERIAL PRIMARY KEY
 entity_type   TEXT NOT NULL      -- 'account' | 'transaction' | 'institution'
-entity_id     INTEGER NOT NULL
+entity_id     BIGINT NOT NULL
 field_name    TEXT NOT NULL      -- 'holder_name' | 'account_number' | 'routing_number' | 'address'
 value         TEXT NOT NULL
 created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -114,11 +114,23 @@ UNIQUE (entity_type, entity_id, field_name)
 ### Money columns
 All monetary values: `NUMERIC(30, 18)`. In Go: `github.com/shopspring/decimal`.
 
+### IDs
+All primary keys: `BIGSERIAL` / `BIGINT`. Future-proof for high-volume tables (transactions, ai_messages). `pii_store.entity_id` is `BIGINT` — no FK by design, since PII isolation precludes a join target.
+
+### Soft-delete-safe uniqueness
+Any `UNIQUE` constraint on a soft-deletable table must be a partial index excluding deleted rows. Example:
+```sql
+CREATE UNIQUE INDEX uq_transactions_external
+  ON transactions (account_id, external_id)
+  WHERE deleted_at IS NULL;
+```
+Otherwise re-importing a previously-deleted transaction fails.
+
 ### Core tables
 - **accounts** — `id, name, institution_slug, account_type, currency, balance, last_four, plaid_account_id, plaid_item_id, is_active, created_at, updated_at, deleted_at`
 - **transactions** — `id, account_id, category_id, amount, currency, description, description_clean, merchant_name, transaction_date, posted_date, source, external_id, plaid_transaction_id, categorization_method, is_transfer, transfer_pair_id, notes, created_at, updated_at, deleted_at`
   - `source`: `'plaid' | 'csv' | 'pdf' | 'manual'`
-  - `UNIQUE(account_id, external_id)` for deduplication
+  - Partial unique index on `(account_id, external_id) WHERE deleted_at IS NULL` for deduplication (see Soft-delete-safe uniqueness above)
 - **categories** — hierarchical via `parent_id`, seeded with ~20 system categories
 - **categorization_rules** — `pattern, category_id, match_type ('contains'|'regex'|'exact'), priority`
 - **budgets** — `category_id, period ('monthly'|'weekly'|'annual'), amount, rollover, is_active`

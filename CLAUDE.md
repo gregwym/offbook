@@ -19,6 +19,11 @@
 7. Commit, push, `gh pr create --body "Closes #{issue-number}"`
 8. Move to next issue
 
+## Git Discipline
+- Auto-commit completed work without asking. Push when appropriate (e.g., to open a PR).
+- NEVER `git commit --amend`, `git reset --hard`, or `git push --force` (any variant). No exceptions.
+- Fix mistakes with new commits, not history rewrites.
+
 ## Backlog Discipline
 - Do NOT fix things outside the current issue
 - Instead: `gh issue create --title "..." --body "..." --label backlog`
@@ -28,3 +33,10 @@
 - Architecture: @docs/ARCHITECTURE.md
 - Decisions: @docs/ADR/
 - Roadmap: @docs/ROADMAP.md
+
+## Scoped Rules
+Apply these when touching matching files:
+- @.claude/rules/go-backend.md
+- @.claude/rules/database.md
+- @.claude/rules/frontend.md
+- @.claude/rules/testing.md

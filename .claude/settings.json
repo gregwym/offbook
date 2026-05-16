@@ -11,10 +11,15 @@
       "Bash(git branch *)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git push *)",
+      "Bash(git push)",
+      "Bash(git push origin *)",
+      "Bash(git push -u origin *)",
       "Bash(git status)",
       "Bash(git diff *)",
       "Bash(git log *)",
+      "Bash(git fetch *)",
+      "Bash(git pull *)",
+      "Bash(git rebase *)",
       "Bash(migrate *)",
       "Bash(golangci-lint *)",
       "Bash(ls *)",
@@ -25,27 +30,20 @@
       "Bash(sudo *)",
       "Bash(* DROP TABLE *)",
       "Bash(* drop table *)",
-      "Bash(git push --force *)",
+      "Bash(git push --force*)",
+      "Bash(git push * --force*)",
+      "Bash(git push -f*)",
       "Bash(git reset --hard *)"
     ]
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash(git commit.*)",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "cd backend && go vet ./... 2>&1 || exit 2"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash(git checkout -b.*)",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/validate-branch-name.sh"
+            "command": ".claude/hooks/pre-bash.sh"
           }
         ]
       }

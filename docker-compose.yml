@@ -26,7 +26,8 @@ services:
       PORT: "8000"
       FRONTEND_URL: http://localhost:5173
     env_file:
-      - .env
+      - path: .env
+        required: false
     depends_on:
       postgres:
         condition: service_healthy
