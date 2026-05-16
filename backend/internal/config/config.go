@@ -34,7 +34,7 @@ func loadDotenv(path string) {
 	if err := godotenv.Load(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		// Real parse error — surface via stderr so the user notices, but don't crash.
 		// (Most callers want to keep going if the file is malformed.)
-		os.Stderr.WriteString("dotenv load " + path + ": " + err.Error() + "\n")
+		_, _ = os.Stderr.WriteString("dotenv load " + path + ": " + err.Error() + "\n")
 	}
 }
 

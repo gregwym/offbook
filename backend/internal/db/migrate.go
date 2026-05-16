@@ -26,7 +26,7 @@ func RunMigrations(databaseURL, migrationsPath string) error {
 	if err != nil {
 		return fmt.Errorf("sql.Open: %w", err)
 	}
-	defer sqlDB.Close()
+	defer func() { _ = sqlDB.Close() }()
 
 	driver, err := migratepg.WithInstance(sqlDB, &migratepg.Config{})
 	if err != nil {

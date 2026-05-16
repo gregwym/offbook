@@ -1,0 +1,23 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck       # unhandled errors
+    - govet          # shadowing, struct tags, suspicious constructs
+    - ineffassign    # ineffective assignments
+    - staticcheck    # bugs + simplifications (subsumes gosimple in v2)
+    - unused         # dead code
+
+  exclusions:
+    paths:
+      - migrations
+    rules:
+      # Test files often deliberately ignore Close() / Delete() return values
+      # during cleanup; muting errcheck there keeps the noise out.
+      - path: _test\.go
+        linters: [errcheck]
