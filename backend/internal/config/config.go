@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -14,13 +16,25 @@ type Config struct {
 }
 
 func Load() Config {
-	_ = godotenv.Load()
+	// Load .env from cwd, then repo root (one level up), so commands work
+	// whether run from backend/ or the repo root. godotenv stops on the first
+	// missing file, so call once per candidate and ignore not-found errors.
+	loadDotenv(".env")
+	loadDotenv("../.env")
 
 	return Config{
 		Port:           getenv("PORT", "8000"),
 		DatabaseURL:    os.Getenv("DATABASE_URL"),
 		FrontendURL:    getenv("FRONTEND_URL", "http://localhost:5173"),
 		MigrationsPath: getenv("MIGRATIONS_PATH", "migrations"),
+	}
+}
+
+func loadDotenv(path string) {
+	if err := godotenv.Load(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		// Real parse error — surface via stderr so the user notices, but don't crash.
+		// (Most callers want to keep going if the file is malformed.)
+		os.Stderr.WriteString("dotenv load " + path + ": " + err.Error() + "\n")
 	}
 }
 
