@@ -23,25 +23,25 @@
 
 ---
 
-## M1 — Foundation [NOT STARTED]
+## M1 — Foundation [DONE]
 
 **Goal:** Running Go + React skeleton end-to-end.
 
-- [ ] Go + Gin app skeleton with `/api/v1/health`
-- [ ] PostgreSQL connection + golang-migrate setup
-- [ ] Migration 000001: all tables created
-- [ ] Migration 000002: category seed data (20 system categories)
-- [ ] React + Vite + TypeScript scaffold
-- [ ] AppShell layout (sidebar nav, routing, all pages as stubs)
-- [ ] Docker Compose: backend + frontend + postgres services, volumes configured
-- [ ] shopspring/decimal integrated, verified in a unit test
-- [ ] golangci-lint configured
+- [x] Go + Gin app skeleton with `/api/v1/health`
+- [x] PostgreSQL connection + golang-migrate setup
+- [x] Migration 000001: all tables created
+- [x] Migration 000002: category seed data (20 system categories)
+- [x] React + Vite + TypeScript scaffold
+- [x] AppShell layout (sidebar nav, routing, all pages as stubs)
+- [x] Docker Compose: backend + frontend + postgres services, volumes configured
+- [x] shopspring/decimal integrated, verified in a unit test
+- [x] golangci-lint configured
 
 **Done criteria:** `docker compose up` → frontend at :5173, health 200, Postgres schema initialized; `go vet` and `golangci-lint` pass.
 
 ---
 
-## M2 — Accounts & Transactions (Manual) [NOT STARTED]
+## M2 — Accounts & Transactions (Manual) [NEXT]
 
 **Goal:** Core data model usable through UI.
 
