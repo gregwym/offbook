@@ -25,6 +25,11 @@
 - NEVER `git commit --amend`, `git reset --hard`, or `git push --force` (any variant). No exceptions.
 - Fix mistakes with new commits, not history rewrites.
 
+## Dev Dependencies
+- Run all dev infrastructure (Postgres, Redis, queues, etc.) via Docker / `docker compose`, never native installs.
+- Native installs only for language toolchains (Go, Node, etc.).
+- If the Docker daemon isn't running, fix the daemon — don't bypass with a native install.
+
 ## Backlog Discipline
 - Do NOT fix things outside the current issue
 - Instead: `gh issue create --title "..." --body "..." --label backlog`
