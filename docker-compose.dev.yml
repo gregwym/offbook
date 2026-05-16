@@ -1,0 +1,41 @@
+# Dev override: live reload for backend (air) and Vite dev server for frontend.
+# Usage:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+services:
+  backend:
+    image: cosmtrek/air:latest
+    build: !reset null
+    working_dir: /app
+    entrypoint: ["air", "-c", ".air.toml"]
+    volumes:
+      - ./backend:/app
+      - backend_go_mod:/go/pkg/mod
+    environment:
+      DATABASE_URL: postgres://offbook:offbook@postgres:5432/offbook?sslmode=disable
+      PORT: "8000"
+      FRONTEND_URL: http://localhost:5173
+      MIGRATIONS_PATH: /app/migrations
+    healthcheck:
+      disable: true
+
+  frontend:
+    image: node:22-alpine
+    build: !reset null
+    working_dir: /app
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        corepack enable
+        pnpm install --frozen-lockfile
+        pnpm dev --host 0.0.0.0 --port 5173
+    ports: !override
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    environment:
+      VITE_API_BASE_URL: ""
+      VITE_PROXY_TARGET: http://backend:8000
+
+volumes:
+  backend_go_mod:
+  frontend_node_modules:
