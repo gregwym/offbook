@@ -6,6 +6,8 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/config"
 	"github.com/gregwym/offbook/backend/internal/handler"
+	"github.com/gregwym/offbook/backend/internal/repository"
+	"github.com/gregwym/offbook/backend/internal/service"
 )
 
 func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
@@ -14,9 +16,14 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 
 	health := handler.NewHealthHandler(gormDB)
 
+	accountRepo := repository.NewAccountRepository(gormDB)
+	accountSvc := service.NewAccountService(accountRepo)
+	accountHandler := handler.NewAccountHandler(accountSvc)
+
 	v1 := r.Group("/api/v1")
 	{
 		v1.GET("/health", health.Get)
+		accountHandler.Register(v1)
 	}
 
 	return r
