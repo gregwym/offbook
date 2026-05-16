@@ -2,18 +2,21 @@ package router
 
 import (
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/gregwym/offbook/backend/internal/config"
 	"github.com/gregwym/offbook/backend/internal/handler"
 )
 
-func New(cfg config.Config) *gin.Engine {
+func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery(), corsMiddleware(cfg.FrontendURL))
 
+	health := handler.NewHealthHandler(gormDB)
+
 	v1 := r.Group("/api/v1")
 	{
-		v1.GET("/health", handler.Health)
+		v1.GET("/health", health.Get)
 	}
 
 	return r

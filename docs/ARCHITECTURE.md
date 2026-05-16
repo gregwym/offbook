@@ -222,6 +222,7 @@ func (h *AccountHandler) Create(c *gin.Context) {
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `PORT` | No | Backend port (default: 8000) |
 | `FRONTEND_URL` | No | CORS origin (default: http://localhost:5173) |
+| `MIGRATIONS_PATH` | No | Path to golang-migrate SQL dir (default: `migrations`) |
 | `PLAID_CLIENT_ID` | No | Plaid API client ID |
 | `PLAID_SECRET` | No | Plaid API secret |
 | `PLAID_ENV` | No | Plaid environment: sandbox, development, production |
