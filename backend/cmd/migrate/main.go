@@ -96,15 +96,15 @@ func newMigrator(databaseURL, path string) (*migrate.Migrate, func(), error) {
 	}
 	driver, err := migratepg.WithInstance(sqlDB, &migratepg.Config{})
 	if err != nil {
-		sqlDB.Close()
+		_ = sqlDB.Close()
 		return nil, nil, fmt.Errorf("migrate driver: %w", err)
 	}
 	m, err := migrate.NewWithDatabaseInstance("file://"+path, "postgres", driver)
 	if err != nil {
-		sqlDB.Close()
+		_ = sqlDB.Close()
 		return nil, nil, fmt.Errorf("migrate.New: %w", err)
 	}
-	return m, func() { sqlDB.Close() }, nil
+	return m, func() { _ = sqlDB.Close() }, nil
 }
 
 func usage() {

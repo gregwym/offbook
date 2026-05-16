@@ -3,7 +3,7 @@
 ## Commands
 - Backend: `cd backend && go run cmd/server/main.go`
 - Tests: `cd backend && go test ./...`
-- Lint: `cd backend && golangci-lint run`
+- Lint: `cd backend && docker run --rm -v "$PWD":/app -w /app golangci/golangci-lint:latest-alpine golangci-lint run ./...`
 - Frontend: `cd frontend && pnpm dev`
 - Full stack: `docker compose up`
 - Migrations: `cd backend && go run ./cmd/migrate {up|down|down-all|version|force <ver>}` (uses `.env`)
