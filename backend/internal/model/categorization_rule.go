@@ -1,0 +1,23 @@
+package model
+
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
+
+type CategorizationRule struct {
+	ID         int64          `gorm:"primaryKey" json:"id"`
+	Pattern    string         `gorm:"not null" json:"pattern"`
+	CategoryID int64          `gorm:"not null" json:"category_id"`
+	MatchType  string         `gorm:"not null" json:"match_type"`
+	Priority   int            `gorm:"not null;default:0" json:"priority"`
+	IsActive   bool           `gorm:"not null;default:true" json:"is_active"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
+
+	Category *Category `gorm:"foreignKey:CategoryID" json:"-"`
+}
+
+func (CategorizationRule) TableName() string { return "categorization_rules" }

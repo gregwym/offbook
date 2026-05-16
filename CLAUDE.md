@@ -6,8 +6,8 @@
 - Lint: `cd backend && golangci-lint run`
 - Frontend: `cd frontend && pnpm dev`
 - Full stack: `docker compose up`
-- Migrations up: `cd backend && migrate -path migrations -database "$DATABASE_URL" up`
-- Migrations new: `migrate create -ext sql -dir backend/migrations -seq <name>`
+- Migrations: `cd backend && go run ./cmd/migrate {up|down|down-all|version|force <ver>}` (uses `.env`)
+- Migration files: name as `migrations/{NNNNNN}_{slug}.{up|down}.sql`, 6-digit zero-padded sequence
 
 ## Autonomous Workflow
 1. Read @docs/ROADMAP.md → find current milestone
