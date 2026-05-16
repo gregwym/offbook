@@ -26,11 +26,17 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	piiSvc := service.NewPIIService(piiRepo, accountSvc)
 	piiHandler := handler.NewPIIHandler(piiSvc)
 
+	transactionRepo := repository.NewTransactionRepository(gormDB)
+	categoryRepo := repository.NewCategoryRepository(gormDB)
+	transactionSvc := service.NewTransactionService(transactionRepo, accountRepo, categoryRepo)
+	transactionHandler := handler.NewTransactionHandler(transactionSvc)
+
 	v1 := r.Group("/api/v1")
 	{
 		v1.GET("/health", health.Get)
 		accountHandler.Register(v1)
 		piiHandler.RegisterAccountRoutes(v1)
+		transactionHandler.Register(v1)
 	}
 
 	return r
