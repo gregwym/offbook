@@ -3,11 +3,13 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 
+	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
 )
 
@@ -21,9 +23,88 @@ func NewTransactionHandler(s *service.TransactionService) *TransactionHandler {
 
 func (h *TransactionHandler) Register(g *gin.RouterGroup) {
 	g.POST("/transactions", h.Create)
+	g.GET("/transactions", h.List)
 	g.GET("/transactions/:id", h.Get)
 	g.PATCH("/transactions/:id", h.Update)
 	g.DELETE("/transactions/:id", h.Delete)
+}
+
+// List returns a paginated, filtered slice of transactions.
+//
+// Query params:
+//
+//	account_id   — exact match (positive int64)
+//	category_id  — exact match OR the literal "null" to find uncategorized rows
+//	from, to     — inclusive date range on transaction_date, YYYY-MM-DD or RFC3339
+//	search       — case-insensitive substring match on description + merchant_name
+//	limit        — default 50, clamped to [1, 200]
+//	offset       — default 0, must be non-negative
+func (h *TransactionHandler) List(c *gin.Context) {
+	f := repository.TransactionFilter{}
+
+	if v := c.Query("account_id"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "account_id must be a positive integer", "code": "INVALID_REQUEST"})
+			return
+		}
+		f.AccountID = &id
+	}
+	if v := c.Query("category_id"); v != "" {
+		if v == "null" {
+			f.UncategorizedOnly = true
+		} else {
+			id, err := strconv.ParseInt(v, 10, 64)
+			if err != nil || id <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "category_id must be a positive integer or 'null'", "code": "INVALID_REQUEST"})
+				return
+			}
+			f.CategoryID = &id
+		}
+	}
+	if v := c.Query("from"); v != "" {
+		t, ok := parseFlexibleDate(c, v, "from")
+		if !ok {
+			return
+		}
+		f.From = &t
+	}
+	if v := c.Query("to"); v != "" {
+		t, ok := parseFlexibleDate(c, v, "to")
+		if !ok {
+			return
+		}
+		f.To = &t
+	}
+	f.Search = c.Query("search")
+	if v := c.Query("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be a non-negative integer", "code": "INVALID_REQUEST"})
+			return
+		}
+		f.Limit = n
+	}
+	if v := c.Query("offset"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "offset must be a non-negative integer", "code": "INVALID_REQUEST"})
+			return
+		}
+		f.Offset = n
+	}
+
+	transactions, total, err := h.svc.List(c.Request.Context(), f)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data":   transactions,
+		"total":  total,
+		"limit":  resolvedLimit(f.Limit),
+		"offset": f.Offset,
+	})
 }
 
 // JSON shape for POST /transactions.
