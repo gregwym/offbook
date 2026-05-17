@@ -26,9 +26,9 @@ import (
 //   - PURGED members are excluded everywhere — they don't appear in
 //     repository.ListMembersIncludingLeft to begin with.
 type Aggregator struct {
-	repo            repository.HouseholdAggregatorRepository
-	households      repository.HouseholdRepository
-	now             func() time.Time
+	repo       repository.HouseholdAggregatorRepository
+	households repository.HouseholdRepository
+	now        func() time.Time
 }
 
 func NewAggregator(
@@ -51,15 +51,15 @@ func (a *Aggregator) SetClock(fn func() time.Time) { a.now = fn }
 // household + aggregates only across opt-in shared accounts. All money fields
 // are strings to preserve precision across the wire.
 type HouseholdDashboard struct {
-	Period           PeriodWindow              `json:"period"`
-	NetWorth         string                    `json:"net_worth"`         // sum across balance_only + balance_and_txns shares
-	Income           string                    `json:"income"`            // period; balance_and_txns only
-	Spending         string                    `json:"spending"`          // period; balance_and_txns only
-	AccountCount     int                       `json:"account_count"`     // shared accounts count (any visibility)
-	TransactionCount int64                     `json:"transaction_count"` // period; balance_and_txns only
-	ByCategory       []CategorySpendingItem    `json:"by_category"`       // period; balance_and_txns only
-	LiveMemberCount  int                       `json:"live_member_count"`
-	InGraceCount     int                       `json:"in_grace_count"`
+	Period           PeriodWindow           `json:"period"`
+	NetWorth         string                 `json:"net_worth"`         // sum across balance_only + balance_and_txns shares
+	Income           string                 `json:"income"`            // period; balance_and_txns only
+	Spending         string                 `json:"spending"`          // period; balance_and_txns only
+	AccountCount     int                    `json:"account_count"`     // shared accounts count (any visibility)
+	TransactionCount int64                  `json:"transaction_count"` // period; balance_and_txns only
+	ByCategory       []CategorySpendingItem `json:"by_category"`       // period; balance_and_txns only
+	LiveMemberCount  int                    `json:"live_member_count"`
+	InGraceCount     int                    `json:"in_grace_count"`
 }
 
 // PeriodWindow is the resolved [from, to) window. Mirrors service.PeriodWindow
@@ -101,13 +101,13 @@ type GoalProgressItem struct {
 // household. Includes the LIVE dashboard summary, the shared-thread list, AND
 // the requester's PERSONAL threads — never another member's private threads.
 type HouseholdAIContext struct {
-	HouseholdID      int64                `json:"household_id"`
-	NetWorth         string               `json:"net_worth"`
-	Income           string               `json:"income"`
-	Spending         string               `json:"spending"`
-	Period           PeriodWindow         `json:"period"`
-	SharedThreads    []ThreadSummary      `json:"shared_threads"`
-	PersonalThreads  []ThreadSummary      `json:"personal_threads"`
+	HouseholdID     int64           `json:"household_id"`
+	NetWorth        string          `json:"net_worth"`
+	Income          string          `json:"income"`
+	Spending        string          `json:"spending"`
+	Period          PeriodWindow    `json:"period"`
+	SharedThreads   []ThreadSummary `json:"shared_threads"`
+	PersonalThreads []ThreadSummary `json:"personal_threads"`
 }
 
 // ThreadSummary excludes message content — the aggregator never returns raw

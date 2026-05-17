@@ -17,9 +17,9 @@ const InviteTTL = 7 * 24 * time.Hour
 
 // HouseholdDetail is the GET /households/:id payload — household + active members.
 type HouseholdDetail struct {
-	Household *model.Household         `json:"household"`
-	Members   []model.HouseholdMember  `json:"members"`
-	Role      string                   `json:"role"` // requester's role in this household
+	Household *model.Household        `json:"household"`
+	Members   []model.HouseholdMember `json:"members"`
+	Role      string                  `json:"role"` // requester's role in this household
 }
 
 // CreateInput is the body for POST /households.

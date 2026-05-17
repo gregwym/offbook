@@ -5,6 +5,7 @@
       "Bash(make *)",
       "Bash(command make *)",
       "Bash(docker compose *)",
+      "Bash(docker run *)",
       "Bash(pnpm *)",
       "Bash(npm *)",
       "Bash(gh issue *)",
