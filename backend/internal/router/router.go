@@ -9,6 +9,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/auth"
+	"github.com/gregwym/offbook/backend/internal/service/household"
 )
 
 func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
@@ -45,6 +46,18 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	dashboardSvc := service.NewDashboardService(dashboardRepo)
 	dashboardHandler := handler.NewDashboardHandler(dashboardSvc)
 
+	householdSvc := household.NewService(
+		repository.NewHouseholdRepository(gormDB),
+		repository.NewHouseholdMemberRepository(gormDB),
+		repository.NewHouseholdInviteRepository(gormDB),
+		repository.NewAccountShareRepository(gormDB),
+		accountRepo,
+		repository.NewInstanceConfigRepository(gormDB),
+		repository.NewUserRepository(gormDB),
+		cfg.SessionSecret,
+	)
+	householdHandler := handler.NewHouseholdHandler(householdSvc)
+
 	v1 := r.Group("/api/v1")
 	{
 		// Open routes — no session required.
@@ -59,6 +72,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		piiHandler.RegisterAccountRoutes(secured)
 		transactionHandler.Register(secured)
 		dashboardHandler.Register(secured)
+		householdHandler.Register(secured)
 	}
 
 	return r

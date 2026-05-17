@@ -21,9 +21,10 @@ var (
 	ErrSessionExpired  = errors.New("session expired")
 )
 
-// newToken returns 32 bytes of random hex. Caller stores HashToken(token);
-// the raw token only ever lives in the cookie.
-func newToken() (string, error) {
+// NewToken returns 32 bytes of random hex. Caller stores HashToken(token);
+// the raw token only ever lives in the cookie (sessions) or in the link sent
+// to the invitee (household invites).
+func NewToken() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err

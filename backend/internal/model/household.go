@@ -15,9 +15,12 @@ const (
 )
 
 // Account share visibility levels. Absence of an account_shares row = "private".
+// VisibilityPrivate is an API-level value: sending it on PUT clears the share.
+// It is never stored — the CHECK constraint only permits the other two.
 const (
-	VisibilityBalanceOnly     = "balance_only"
-	VisibilityBalanceAndTxns  = "balance_and_txns"
+	VisibilityPrivate        = "private"
+	VisibilityBalanceOnly    = "balance_only"
+	VisibilityBalanceAndTxns = "balance_and_txns"
 )
 
 type Household struct {
