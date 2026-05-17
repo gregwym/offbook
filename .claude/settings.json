@@ -2,6 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(go *)",
+      "Bash(make *)",
+      "Bash(command make *)",
       "Bash(docker compose *)",
       "Bash(pnpm *)",
       "Bash(npm *)",
