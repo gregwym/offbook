@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gregwym/offbook/backend/internal/crypto"
 	"github.com/gregwym/offbook/backend/internal/model"
@@ -36,6 +37,16 @@ type SyncAccountsResult struct {
 	Updated int `json:"updated"`
 }
 
+// SyncTransactionsResult summarizes a /transactions/sync drain. Inserted
+// is the count of rows actually written (i.e., excludes duplicates that
+// hit the ON CONFLICT DO NOTHING path). Removed is the count of Plaid
+// IDs we were told to forget — for the initial pull this is always 0.
+type SyncTransactionsResult struct {
+	Inserted int64 `json:"inserted"`
+	Modified int   `json:"modified"`
+	Removed  int   `json:"removed"`
+}
+
 // Service orchestrates the Plaid Link flow: issue link tokens, exchange
 // public_tokens for durable access_tokens, and discover accounts behind
 // each linked item. access_tokens are encrypted at rest (ADR-0010).
@@ -48,18 +59,21 @@ type Service struct {
 	box      *crypto.SecretBox
 	itemRepo repository.PlaidItemRepository
 	acctRepo repository.AccountRepository
+	txRepo   repository.TransactionRepository
 	piiSvc   *service.PIIService
 }
 
 // NewService constructs a Service. Pass nil for client/box/repos to
 // indicate the instance is not Plaid-enabled — calls then return
-// ErrNotConfigured. The PIIService is only needed for FetchAccounts; for
-// link-only setups it can be nil and SyncAccounts will error out cleanly.
+// ErrNotConfigured. txRepo and piiSvc are only needed for the discovery
+// and transaction-sync surfaces; link-only setups can pass nil and the
+// affected methods will error out cleanly.
 func NewService(
 	client Client,
 	box *crypto.SecretBox,
 	itemRepo repository.PlaidItemRepository,
 	acctRepo repository.AccountRepository,
+	txRepo repository.TransactionRepository,
 	piiSvc *service.PIIService,
 ) *Service {
 	return &Service{
@@ -67,6 +81,7 @@ func NewService(
 		box:      box,
 		itemRepo: itemRepo,
 		acctRepo: acctRepo,
+		txRepo:   txRepo,
 		piiSvc:   piiSvc,
 	}
 }
@@ -270,4 +285,105 @@ func zeroBytes(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
+}
+
+// SyncTransactions paginates /transactions/sync for the given item,
+// translating each page through MapPlaidTransaction and bulk-inserting
+// into the transactions table. The cursor + last_synced_at on the item
+// are updated after EVERY page so a crash mid-pull resumes cleanly.
+//
+// First-time pull: pass an item whose cursor is empty. Subsequent runs
+// re-use the persisted cursor and only fetch deltas. The sign convention
+// flip and date mapping happen in MapPlaidTransaction.
+//
+// Idempotency: the bulk insert uses ON CONFLICT (plaid_transaction_id)
+// DO NOTHING, so re-running against the same upstream is a no-op rather
+// than an error.
+func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemID string) (SyncTransactionsResult, error) {
+	if !s.Configured() || s.acctRepo == nil || s.txRepo == nil {
+		return SyncTransactionsResult{}, ErrNotConfigured
+	}
+
+	item, err := s.itemRepo.GetByPlaidItemID(ctx, userID, plaidItemID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return SyncTransactionsResult{}, ErrItemNotFound
+		}
+		return SyncTransactionsResult{}, fmt.Errorf("plaid: lookup item: %w", err)
+	}
+
+	tokenBytes, err := s.box.Decrypt(item.AccessTokenEnc)
+	if err != nil {
+		return SyncTransactionsResult{}, fmt.Errorf("plaid: decrypt access_token: %w", err)
+	}
+	defer zeroBytes(tokenBytes)
+	accessToken := string(tokenBytes)
+
+	cursor := ""
+	if item.Cursor != nil {
+		cursor = *item.Cursor
+	}
+
+	// Cache plaid_account_id → local accounts.id lookups so we don't hit
+	// the DB once per transaction. The same accountID-resolution miss is
+	// also surfaced as an error so we don't silently drop transactions
+	// belonging to an account that wasn't discovered first.
+	accountIDByPlaidID := map[string]int64{}
+
+	var result SyncTransactionsResult
+	for {
+		page, err := s.client.SyncTransactions(ctx, accessToken, cursor)
+		if err != nil {
+			return result, err
+		}
+
+		batch := make([]model.Transaction, 0, len(page.Added))
+		for _, pt := range page.Added {
+			localID, err := s.resolveAccountID(ctx, userID, pt.PlaidAccountID, accountIDByPlaidID)
+			if err != nil {
+				return result, err
+			}
+			row, err := MapPlaidTransaction(pt, userID, localID)
+			if err != nil {
+				return result, err
+			}
+			batch = append(batch, row)
+		}
+		if len(batch) > 0 {
+			n, err := s.txRepo.CreateBatch(ctx, batch)
+			if err != nil {
+				return result, fmt.Errorf("plaid: insert batch: %w", err)
+			}
+			result.Inserted += n
+		}
+		result.Modified += len(page.Modified)
+		result.Removed += len(page.Removed)
+
+		cursor = page.NextCursor
+		if err := s.itemRepo.UpdateCursor(ctx, userID, item.ID, cursor, time.Now().UTC()); err != nil {
+			return result, fmt.Errorf("plaid: persist cursor: %w", err)
+		}
+		if !page.HasMore {
+			break
+		}
+	}
+	return result, nil
+}
+
+// resolveAccountID maps a Plaid account_id to the local accounts.id,
+// memoizing in the per-call cache. Returns an error if no local account
+// exists — the caller should run /sync-accounts first.
+func (s *Service) resolveAccountID(ctx context.Context, userID int64, plaidAcctID string, cache map[string]int64) (int64, error) {
+	if id, ok := cache[plaidAcctID]; ok {
+		return id, nil
+	}
+	a, err := s.acctRepo.FindByPlaidAccountID(ctx, userID, plaidAcctID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return 0, fmt.Errorf("plaid: no local account for plaid_account_id=%s (run sync-accounts first)", plaidAcctID)
+		}
+		return 0, fmt.Errorf("plaid: lookup account %s: %w", plaidAcctID, err)
+	}
+	cache[plaidAcctID] = a.ID
+	return a.ID, nil
 }

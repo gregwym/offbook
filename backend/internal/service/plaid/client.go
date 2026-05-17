@@ -34,6 +34,37 @@ type Client interface {
 	// (typically PRODUCTS_NOT_SUPPORTED on sandbox banks without identity),
 	// HolderNames are empty on every account but the call still succeeds.
 	FetchAccounts(ctx context.Context, accessToken string) (AccountsResult, error)
+
+	// SyncTransactions wraps one /transactions/sync call. An empty cursor
+	// triggers the historical pull; a non-empty cursor delivers only what
+	// changed since that cursor. Callers paginate by re-calling with
+	// page.NextCursor while page.HasMore is true.
+	SyncTransactions(ctx context.Context, accessToken, cursor string) (SyncTransactionsPage, error)
+}
+
+// SyncTransactionsPage is one page of /transactions/sync output. The cursor
+// is opaque — never inspect it, just persist and feed back on the next call.
+type SyncTransactionsPage struct {
+	Added      []PlaidTransaction
+	Modified   []PlaidTransaction
+	Removed    []string // plaid_transaction_id values to soft-delete
+	NextCursor string
+	HasMore    bool
+}
+
+// PlaidTransaction is the slim view of one Plaid transaction. The
+// amount-sign convention here matches Plaid's: positive = money OUT of
+// the account. transaction_mapping.go flips this for project storage.
+type PlaidTransaction struct {
+	PlaidTransactionID string
+	PlaidAccountID     string
+	Amount             decimal.Decimal // Plaid sign convention
+	Currency           string
+	Name               string  // Plaid `name` (raw description)
+	MerchantName       *string // Plaid `merchant_name` (may be nil)
+	Date               string  // "YYYY-MM-DD"
+	AuthorizedDate     *string // optional "YYYY-MM-DD"
+	Pending            bool
 }
 
 // AccountsResult bundles the institution descriptor and the account list
@@ -227,4 +258,62 @@ func (c *SDKClient) FetchAccounts(ctx context.Context, accessToken string) (Acco
 		})
 	}
 	return out, nil
+}
+
+func (c *SDKClient) SyncTransactions(ctx context.Context, accessToken, cursor string) (SyncTransactionsPage, error) {
+	req := plaid.NewTransactionsSyncRequest(accessToken)
+	if cursor != "" {
+		req.SetCursor(cursor)
+	}
+	resp, _, err := c.api.PlaidApi.TransactionsSync(ctx).TransactionsSyncRequest(*req).Execute()
+	if err != nil {
+		return SyncTransactionsPage{}, fmt.Errorf("plaid: transactions/sync: %w", err)
+	}
+
+	page := SyncTransactionsPage{
+		Added:      make([]PlaidTransaction, 0, len(resp.GetAdded())),
+		Modified:   make([]PlaidTransaction, 0, len(resp.GetModified())),
+		Removed:    make([]string, 0, len(resp.GetRemoved())),
+		NextCursor: resp.GetNextCursor(),
+		HasMore:    resp.GetHasMore(),
+	}
+	for _, t := range resp.GetAdded() {
+		page.Added = append(page.Added, convertPlaidTransaction(t))
+	}
+	for _, t := range resp.GetModified() {
+		page.Modified = append(page.Modified, convertPlaidTransaction(t))
+	}
+	for _, r := range resp.GetRemoved() {
+		if id, ok := r.GetTransactionIdOk(); ok && id != nil && *id != "" {
+			page.Removed = append(page.Removed, *id)
+		}
+	}
+	return page, nil
+}
+
+// convertPlaidTransaction reshapes the SDK type into our slim struct.
+// Amount stays in Plaid's sign convention (positive = outflow); the
+// service-side mapper flips for project storage.
+func convertPlaidTransaction(t plaid.Transaction) PlaidTransaction {
+	out := PlaidTransaction{
+		PlaidTransactionID: t.GetTransactionId(),
+		PlaidAccountID:     t.GetAccountId(),
+		Amount:             decimal.NewFromFloat(t.GetAmount()),
+		Currency:           t.GetIsoCurrencyCode(),
+		Name:               t.GetName(),
+		Date:               t.GetDate(),
+		Pending:            t.GetPending(),
+	}
+	if out.Currency == "" {
+		out.Currency = "USD"
+	}
+	if mn, ok := t.GetMerchantNameOk(); ok && mn != nil && *mn != "" {
+		v := *mn
+		out.MerchantName = &v
+	}
+	if ad, ok := t.GetAuthorizedDateOk(); ok && ad != nil && *ad != "" {
+		v := *ad
+		out.AuthorizedDate = &v
+	}
+	return out
 }

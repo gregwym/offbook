@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -18,6 +19,10 @@ type PlaidItemRepository interface {
 	GetByPlaidItemID(ctx context.Context, userID int64, plaidItemID string) (*model.PlaidItem, error)
 	ListByUser(ctx context.Context, userID int64) ([]model.PlaidItem, error)
 	UpdateStatus(ctx context.Context, userID, id int64, status string, lastError *string) error
+	// UpdateCursor persists the /transactions/sync cursor + last sync time.
+	// Called after each successful pagination flush so a crash mid-pull
+	// resumes from the last committed page.
+	UpdateCursor(ctx context.Context, userID, id int64, cursor string, lastSyncedAt time.Time) error
 	SoftDelete(ctx context.Context, userID, id int64) error
 }
 
@@ -77,6 +82,23 @@ func (r *plaidItemRepo) UpdateStatus(ctx context.Context, userID, id int64, stat
 		Updates(map[string]any{
 			"status":     status,
 			"last_error": lastError,
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *plaidItemRepo) UpdateCursor(ctx context.Context, userID, id int64, cursor string, lastSyncedAt time.Time) error {
+	res := r.db.WithContext(ctx).
+		Model(&model.PlaidItem{}).
+		Where("user_id = ? AND id = ?", userID, id).
+		Updates(map[string]any{
+			"cursor":         cursor,
+			"last_synced_at": lastSyncedAt,
 		})
 	if res.Error != nil {
 		return res.Error
