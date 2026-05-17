@@ -140,6 +140,7 @@ UNIQUE (entity_type, entity_id, field_name)
 - The household aggregator (`service/household/`) CANNOT access PII
 - Frontend accesses PII via explicit `/accounts/:id/pii` endpoint — deliberate, auditable
 - Ownership of a `pii_store` row is transitive through `entity_id`: PII belongs to whichever user owns the referenced account/transaction. `pii_service.go` must check the entity's `user_id` matches the session before returning the row.
+- **Orphan-cleanup policy:** soft-delete on an account/transaction **preserves** its PII rows ([ADR-0009](ADR/0009-pii-orphan-cleanup-policy.md)). Soft-deleted entities are unreachable through the API (the transitive ownership check rejects them), but their PII survives until a hard purge. Hard purge MUST delete `pii_store` rows in the same transaction as the entity hard-delete.
 
 ### What goes in pii_store vs main tables
 

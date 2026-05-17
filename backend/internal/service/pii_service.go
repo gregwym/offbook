@@ -57,9 +57,9 @@ func (s *PIIService) GetAccountPII(ctx context.Context, userID, accountID int64)
 // SetAccountPII upserts the provided fields. Ownership is enforced via the
 // same transitive check as GetAccountPII.
 //
-// NOTE: per ADR #21 (backlog) the orphan-cleanup policy for PII on account
-// soft-delete is not yet decided. Today, soft-deleting an account leaves
-// PII rows behind. Revisit once #21 lands.
+// Per ADR-0009, soft-delete preserves PII; rows are only removed by hard
+// purge. The transitive check above already prevents soft-deleted accounts'
+// PII from being read or written through this service.
 func (s *PIIService) SetAccountPII(ctx context.Context, userID, accountID int64, fields map[string]string) error {
 	if _, err := s.accSvc.Get(ctx, userID, accountID); err != nil {
 		return err
