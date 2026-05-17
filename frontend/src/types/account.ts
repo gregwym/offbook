@@ -1,0 +1,51 @@
+// Account mirrors backend model.Account. Money fields arrive as decimal
+// strings (NUMERIC(30,18)) — never parse into Number; format via AmountDisplay.
+export type Account = {
+  id: number
+  user_id: number
+  name: string
+  institution_slug: string
+  account_type: AccountType
+  currency: string
+  balance: string
+  last_four?: string | null
+  plaid_account_id?: string | null
+  plaid_item_id?: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+// Mirrors the CHECK constraint in migration 000001 + service.validAccountTypes.
+export const ACCOUNT_TYPES = [
+  'checking',
+  'savings',
+  'credit_card',
+  'loan',
+  'investment',
+  'crypto',
+  'cash',
+  'other',
+] as const
+export type AccountType = (typeof ACCOUNT_TYPES)[number]
+
+// CreateAccountRequest mirrors backend handler.createAccountRequest. Balance
+// is a decimal string when sent over the wire.
+export type CreateAccountInput = {
+  name: string
+  institution_slug: string
+  account_type: AccountType
+  currency: string
+  balance?: string
+  last_four?: string | null
+  is_active?: boolean
+}
+
+// UpdateAccountInput is a sparse patch; only provided fields are mutated.
+export type UpdateAccountInput = Partial<CreateAccountInput>
+
+// AccountPII mirrors the map[string]string returned by GET /accounts/:id/pii.
+// The allowlist matches backend service.allowedAccountPIIFields.
+export const PII_FIELDS = ['holder_name', 'account_number', 'routing_number', 'address'] as const
+export type AccountPIIField = (typeof PII_FIELDS)[number]
+export type AccountPII = Partial<Record<AccountPIIField, string>>
