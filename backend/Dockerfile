@@ -12,8 +12,7 @@ RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 app
 WORKDIR /app
 COPY --from=build /out/server /app/server
 COPY migrations /app/migrations
-ENV MIGRATIONS_PATH=/app/migrations \
-    PORT=8000
+ENV PORT=8000
 USER app
 EXPOSE 8000
 ENTRYPOINT ["/app/server"]
