@@ -5,6 +5,7 @@ paths:
 
 # Go Backend Rules
 - Handlers: parse request → call service → return JSON. No business logic in handlers.
+- Response envelope: every handler wraps. Success-list → `{"data": [...], "total": N}`; success-single → `{"data": {...}}`; error → `{"error": "...", "code": "..."}`. No bare-object responses, including infra/health.
 - Services: receive repository interfaces as constructor args. Never instantiate DB directly.
 - Repositories: GORM calls only. Return domain models, not GORM-specific types.
 - Money: shopspring/decimal everywhere. Never float64 for monetary values.
