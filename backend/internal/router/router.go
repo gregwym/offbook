@@ -42,6 +42,9 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	transactionSvc := service.NewTransactionService(transactionRepo, accountRepo, categoryRepo)
 	transactionHandler := handler.NewTransactionHandler(transactionSvc)
 
+	categorySvc := service.NewCategoryService(categoryRepo)
+	categoryHandler := handler.NewCategoryHandler(categorySvc)
+
 	dashboardRepo := repository.NewDashboardRepository(gormDB)
 	dashboardSvc := service.NewDashboardService(dashboardRepo)
 	dashboardHandler := handler.NewDashboardHandler(dashboardSvc)
@@ -83,6 +86,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		accountHandler.Register(secured)
 		piiHandler.RegisterAccountRoutes(secured)
 		transactionHandler.Register(secured)
+		categoryHandler.Register(secured)
 		dashboardHandler.Register(secured)
 		householdHandler.Register(secured)
 		aggregatorHandler.Register(secured)
