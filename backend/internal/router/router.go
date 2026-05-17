@@ -46,17 +46,29 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	dashboardSvc := service.NewDashboardService(dashboardRepo)
 	dashboardHandler := handler.NewDashboardHandler(dashboardSvc)
 
+	householdRepo := repository.NewHouseholdRepository(gormDB)
+	memberRepo := repository.NewHouseholdMemberRepository(gormDB)
+	userRepo := repository.NewUserRepository(gormDB)
 	householdSvc := household.NewService(
-		repository.NewHouseholdRepository(gormDB),
-		repository.NewHouseholdMemberRepository(gormDB),
+		householdRepo,
+		memberRepo,
 		repository.NewHouseholdInviteRepository(gormDB),
 		repository.NewAccountShareRepository(gormDB),
 		accountRepo,
 		repository.NewInstanceConfigRepository(gormDB),
-		repository.NewUserRepository(gormDB),
+		userRepo,
 		cfg.SessionSecret,
 	)
 	householdHandler := handler.NewHouseholdHandler(householdSvc)
+
+	aggregator := household.NewAggregator(
+		repository.NewHouseholdAggregatorRepository(gormDB),
+		householdRepo,
+	)
+	aggregatorHandler := handler.NewHouseholdAggregatorHandler(aggregator, memberRepo)
+
+	scopeSvc := service.NewScopeService(userRepo, memberRepo)
+	scopeHandler := handler.NewScopeHandler(scopeSvc)
 
 	v1 := r.Group("/api/v1")
 	{
@@ -73,6 +85,8 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		transactionHandler.Register(secured)
 		dashboardHandler.Register(secured)
 		householdHandler.Register(secured)
+		aggregatorHandler.Register(secured)
+		scopeHandler.Register(secured)
 	}
 
 	return r
