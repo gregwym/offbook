@@ -222,7 +222,7 @@ func (s *Service) InstanceConfig(ctx context.Context) (*model.InstanceConfig, er
 // issueSession mints a fresh token, stores its hash, and returns the raw
 // token so the handler can set the cookie.
 func (s *Service) issueSession(ctx context.Context, u *model.User) (*SigninResult, error) {
-	token, err := newToken()
+	token, err := NewToken()
 	if err != nil {
 		return nil, fmt.Errorf("token: %w", err)
 	}
