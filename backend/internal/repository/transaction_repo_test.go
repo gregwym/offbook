@@ -154,11 +154,11 @@ func TestTransactionRepository_List_Filters(t *testing.T) {
 	}
 
 	cases := []struct {
-		name       string
-		filter     repository.TransactionFilter
-		wantIDs    map[int64]struct{}
-		wantTotal  int64
-		wantOrder  []int // expected (newest-first) order by fixture index, optional
+		name      string
+		filter    repository.TransactionFilter
+		wantIDs   map[int64]struct{}
+		wantTotal int64
+		wantOrder []int // expected (newest-first) order by fixture index, optional
 	}{
 		{
 			name:      "by account_id A",

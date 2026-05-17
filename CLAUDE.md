@@ -6,6 +6,7 @@
 - Backend smoke (start + wait for /health): `cd backend && make smoke`
 - Tests: `cd backend && make test`
 - Lint: `cd backend && make lint`
+- Format Go: `cd backend && docker run --rm -v "$PWD":/app -w /app golangci/golangci-lint:latest-alpine golangci-lint fmt ./...` (rewrites files in place; `golangci-lint run` then verifies)
 - Frontend: `cd frontend && pnpm dev`
 - Full stack: `docker compose up`
 - Migrations: `cd backend && go run ./cmd/migrate {up|down|down-all|version|force <ver>}` (uses `.env`)

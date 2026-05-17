@@ -21,3 +21,8 @@ linters:
       # during cleanup; muting errcheck there keeps the noise out.
       - path: _test\.go
         linters: [errcheck]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

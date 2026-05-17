@@ -20,16 +20,17 @@ func NewHouseholdHandler(s *household.Service) *HouseholdHandler {
 }
 
 // Register attaches routes to the authenticated /api/v1 group.
-//   POST   /households                        create
-//   GET    /households/:id                    detail (member-only)
-//   PATCH  /households/:id                    update name / grace (owner)
-//   DELETE /households/:id                    dissolve (owner)
-//   POST   /households/:id/invites            mint invite token (owner)
-//   POST   /invites/:token/accept             consume token
-//   DELETE /households/:id/members/me         self-leave
 //
-//   GET    /accounts/:id/shares                       list visibility per household
-//   PUT    /accounts/:id/shares/:householdID          set/clear visibility
+//	POST   /households                        create
+//	GET    /households/:id                    detail (member-only)
+//	PATCH  /households/:id                    update name / grace (owner)
+//	DELETE /households/:id                    dissolve (owner)
+//	POST   /households/:id/invites            mint invite token (owner)
+//	POST   /invites/:token/accept             consume token
+//	DELETE /households/:id/members/me         self-leave
+//
+//	GET    /accounts/:id/shares                       list visibility per household
+//	PUT    /accounts/:id/shares/:householdID          set/clear visibility
 func (h *HouseholdHandler) Register(g *gin.RouterGroup) {
 	g.POST("/households", h.Create)
 	g.GET("/households/:id", h.Get)

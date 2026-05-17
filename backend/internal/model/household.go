@@ -24,13 +24,13 @@ const (
 )
 
 type Household struct {
-	ID               int64          `gorm:"primaryKey" json:"id"`
-	Name             string         `gorm:"not null" json:"name"`
-	OwnerID          int64          `gorm:"not null" json:"owner_id"`
-	GracePeriodDays  int            `gorm:"not null;default:30" json:"grace_period_days"`
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
-	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
+	ID              int64          `gorm:"primaryKey" json:"id"`
+	Name            string         `gorm:"not null" json:"name"`
+	OwnerID         int64          `gorm:"not null" json:"owner_id"`
+	GracePeriodDays int            `gorm:"not null;default:30" json:"grace_period_days"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (Household) TableName() string { return "households" }
@@ -77,16 +77,16 @@ func (AccountShare) TableName() string { return "account_shares" }
 
 // SharedBudget mirrors Budget but is owned by a household. No CRUD in M2.5.
 type SharedBudget struct {
-	ID           int64           `gorm:"primaryKey" json:"id"`
-	HouseholdID  int64           `gorm:"not null" json:"household_id"`
-	CategoryID   int64           `gorm:"not null" json:"category_id"`
-	Period       string          `gorm:"not null" json:"period"`
-	Amount       decimal.Decimal `gorm:"type:numeric(30,18);not null" json:"amount"`
-	Rollover     bool            `gorm:"not null;default:false" json:"rollover"`
-	IsActive     bool            `gorm:"not null;default:true" json:"is_active"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt  `gorm:"index" json:"-"`
+	ID          int64           `gorm:"primaryKey" json:"id"`
+	HouseholdID int64           `gorm:"not null" json:"household_id"`
+	CategoryID  int64           `gorm:"not null" json:"category_id"`
+	Period      string          `gorm:"not null" json:"period"`
+	Amount      decimal.Decimal `gorm:"type:numeric(30,18);not null" json:"amount"`
+	Rollover    bool            `gorm:"not null;default:false" json:"rollover"`
+	IsActive    bool            `gorm:"not null;default:true" json:"is_active"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt  `gorm:"index" json:"-"`
 }
 
 func (SharedBudget) TableName() string { return "shared_budgets" }

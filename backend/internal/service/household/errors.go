@@ -9,9 +9,9 @@ var (
 	ErrInviteExpired         = errors.New("invite expired")
 	ErrInviteAlreadyAccepted = errors.New("invite already accepted")
 
-	ErrEmptyName        = errors.New("name must not be empty")
-	ErrInvalidRole      = errors.New("invalid role")
-	ErrInvalidGrace     = errors.New("grace_period_days must be >= 0")
+	ErrEmptyName         = errors.New("name must not be empty")
+	ErrInvalidRole       = errors.New("invalid role")
+	ErrInvalidGrace      = errors.New("grace_period_days must be >= 0")
 	ErrInvalidVisibility = errors.New("invalid visibility")
 
 	// Lifecycle / authorization

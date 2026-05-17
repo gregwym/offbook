@@ -35,8 +35,8 @@ var (
 // PIIService is the only place that wires pii_repo. It depends on
 // AccountService only to check existence — never to mutate accounts.
 type PIIService struct {
-	repo    repository.PIIRepository
-	accSvc  *AccountService
+	repo   repository.PIIRepository
+	accSvc *AccountService
 }
 
 func NewPIIService(repo repository.PIIRepository, accSvc *AccountService) *PIIService {

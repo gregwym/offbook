@@ -24,13 +24,13 @@ var ErrInvalidPeriod = errors.New("invalid period")
 // DashboardSummary mirrors the API response shape exactly. The handler can
 // json-encode this directly.
 type DashboardSummary struct {
-	Period           PeriodWindow                     `json:"period"`
-	NetWorth         string                           `json:"net_worth"`
-	Income           string                           `json:"income"`
-	Spending         string                           `json:"spending"`
-	AccountCount     int64                            `json:"account_count"`
-	TransactionCount int64                            `json:"transaction_count"`
-	ByCategory       []DashboardCategorySpendingItem  `json:"by_category"`
+	Period           PeriodWindow                    `json:"period"`
+	NetWorth         string                          `json:"net_worth"`
+	Income           string                          `json:"income"`
+	Spending         string                          `json:"spending"`
+	AccountCount     int64                           `json:"account_count"`
+	TransactionCount int64                           `json:"transaction_count"`
+	ByCategory       []DashboardCategorySpendingItem `json:"by_category"`
 }
 
 // PeriodWindow uses "from" inclusive, "to" exclusive (documented in the

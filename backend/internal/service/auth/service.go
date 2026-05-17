@@ -43,7 +43,7 @@ type SetupAdminInput struct {
 
 type SigninResult struct {
 	User    *model.User
-	Token   string    // raw cookie token — return to handler so it can set the cookie
+	Token   string // raw cookie token — return to handler so it can set the cookie
 	Expires time.Time
 }
 

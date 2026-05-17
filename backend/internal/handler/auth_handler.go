@@ -136,8 +136,8 @@ func (h *AuthHandler) Signout(c *gin.Context) {
 func (h *AuthHandler) Me(c *gin.Context) {
 	uid := auth.MustUserID(c.Request.Context())
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"id":            uid,
-		"user_id":       uid, // alias to keep frontend explicit
+		"id":      uid,
+		"user_id": uid, // alias to keep frontend explicit
 	}})
 }
 
