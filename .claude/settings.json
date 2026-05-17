@@ -25,6 +25,8 @@
       "Bash(git rebase *)",
       "Bash(migrate *)",
       "Bash(golangci-lint *)",
+      "Bash(gofmt *)",
+      "Bash(goimports *)",
       "Bash(ls *)",
       "Bash(mkdir *)"
     ],
