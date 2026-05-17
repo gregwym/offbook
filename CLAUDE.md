@@ -18,6 +18,8 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 - Use `command make` (not raw `make`) — a zsh autoload stub in claude-code's shell snapshot shadows the binary in Claude's Bash tool. Interactive terminals are unaffected.
 - Bash tool cwd persists across calls. Stay in the repo root for `git` (so it matches the allowlist's plain `git <verb>` patterns); `cd backend` only when running `make`/`go`/etc.
 - Don't put a `cd` and a dependent command in the same tool turn as parallel calls — parallel Bash invocations have no defined order. Either chain them with `&&` (loses allowlist match) or send them as separate sequential calls (preferred).
+- **Don't `&&`-chain or prepend `cd dir &&`.** The permission allowlist matches against the literal command string, so `cd backend && go test` doesn't match `Bash(go *)` even though both pieces are individually allowed. Run each command in its own Bash call; cwd persists.
+- **Env vars belong in `.env`, never prepended.** `DATABASE_URL=... go run ...` defeats the allowlist for the same reason. The repo-root `.env` (gitignored; template at `.env.example`) is auto-loaded by `godotenv` (resolved from both `backend/` and the repo root) and by `docker compose`. Keep `.env.example` updated when adding new keys.
 - For port-bound dev servers, always stop *by port* (`make stop` does this) — `go run` spawns a supervisor + child binary, so killing the saved PID isn't sufficient.
 
 ## Autonomous Workflow
@@ -38,8 +40,9 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 
 ## Dev Dependencies
 - Run all dev infrastructure (Postgres, Redis, queues, etc.) via Docker / `docker compose`, never native installs.
-- Native installs only for language toolchains (Go, Node, etc.).
-- If the Docker daemon isn't running, fix the daemon — don't bypass with a native install.
+- Native installs only for language toolchains (Go, Node, etc.) — universal tooling, not project state.
+- If the Docker daemon isn't running, fix the daemon (Colima / Podman / Docker Desktop) — don't bypass with a native install. When containerization is blocked, stop and ask.
+- **Project-specific CLIs live in the repo, not the system.** Migration runners, code generators, and similar tools belong as `backend/cmd/<tool>/main.go` (or equivalent), invoked via `go run ./cmd/<tool>`. Example: `cmd/migrate` wraps `golang-migrate` — no system `migrate` binary needed. A teammate cloning the repo shouldn't have to `brew install` anything beyond the language toolchain.
 
 ## Backlog Discipline
 - Do NOT fix things outside the current issue
