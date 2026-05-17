@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/plaid/plaid-go/v40/plaid"
+	"github.com/shopspring/decimal"
 )
 
 // Client is the minimum Plaid surface this project depends on. New methods
@@ -27,6 +28,34 @@ type Client interface {
 	// frontend for the durable access_token + item_id that future API calls
 	// use. The access_token is bearer-equivalent — never log it.
 	ExchangePublicToken(ctx context.Context, publicToken string) (Item, error)
+
+	// FetchAccounts pulls /accounts/get and best-effort /identity/get for
+	// the linked item. Identity is optional: if Plaid returns an error
+	// (typically PRODUCTS_NOT_SUPPORTED on sandbox banks without identity),
+	// HolderNames are empty on every account but the call still succeeds.
+	FetchAccounts(ctx context.Context, accessToken string) (AccountsResult, error)
+}
+
+// AccountsResult bundles the institution descriptor and the account list
+// returned from /accounts/get + /identity/get.
+type AccountsResult struct {
+	InstitutionID   *string
+	InstitutionName *string
+	Accounts        []DiscoveredAccount
+}
+
+// DiscoveredAccount is the slim view of one Plaid account that the
+// discovery flow needs. Holder names land here (from /identity/get) and
+// are routed into pii_store — never persisted on the accounts row.
+type DiscoveredAccount struct {
+	PlaidAccountID string
+	Name           string  // official_name preferred, then name — never a holder
+	Mask           *string // last 4 (Plaid `mask`)
+	Type           string  // raw Plaid type ("depository", "credit", ...)
+	Subtype        string  // raw Plaid subtype ("checking", "credit card", ...)
+	Currency       string  // ISO; defaults to USD if Plaid omits it
+	Balance        decimal.Decimal
+	HolderNames    []string // from /identity/get; empty when identity unavailable
 }
 
 // LinkToken is the result of /link/token/create.
@@ -77,8 +106,11 @@ func NewSDKClient(cfg Config) (*SDKClient, error) {
 	apiCfg.UseEnvironment(resolveEnv(cfg.Env))
 
 	return &SDKClient{
-		api:         plaid.NewAPIClient(apiCfg),
-		products:    []plaid.Products{plaid.PRODUCTS_TRANSACTIONS},
+		api: plaid.NewAPIClient(apiCfg),
+		// Request transactions + identity so /identity/get works after link.
+		// Auth (account/routing numbers) intentionally omitted — not every
+		// sandbox institution supports it and we don't need it yet.
+		products:    []plaid.Products{plaid.PRODUCTS_TRANSACTIONS, plaid.PRODUCTS_IDENTITY},
 		countryCode: []plaid.CountryCode{plaid.COUNTRYCODE_US},
 		clientName:  "Offbook",
 		language:    "en",
@@ -124,7 +156,75 @@ func (c *SDKClient) ExchangePublicToken(ctx context.Context, publicToken string)
 		AccessToken: resp.GetAccessToken(),
 		ItemID:      resp.GetItemId(),
 		// /item/public_token/exchange does not return institution details;
-		// they're fetched separately via /item/get in M3#60. Leaving these
-		// nil here keeps the responsibilities cleanly split.
+		// they're populated on the first FetchAccounts call instead.
 	}, nil
+}
+
+func (c *SDKClient) FetchAccounts(ctx context.Context, accessToken string) (AccountsResult, error) {
+	accReq := plaid.NewAccountsGetRequest(accessToken)
+	accResp, _, err := c.api.PlaidApi.AccountsGet(ctx).AccountsGetRequest(*accReq).Execute()
+	if err != nil {
+		return AccountsResult{}, fmt.Errorf("plaid: accounts/get: %w", err)
+	}
+
+	// Identity is best-effort. If the institution / product set doesn't
+	// support it, swallow the error and fall through with no holder names.
+	holderNamesByAcct := map[string][]string{}
+	idReq := plaid.NewIdentityGetRequest(accessToken)
+	if idResp, _, idErr := c.api.PlaidApi.IdentityGet(ctx).IdentityGetRequest(*idReq).Execute(); idErr == nil {
+		for _, ai := range idResp.GetAccounts() {
+			id := ai.GetAccountId()
+			var names []string
+			for _, owner := range ai.GetOwners() {
+				names = append(names, owner.GetNames()...)
+			}
+			if len(names) > 0 {
+				holderNamesByAcct[id] = names
+			}
+		}
+	}
+
+	item := accResp.GetItem()
+	out := AccountsResult{
+		Accounts: make([]DiscoveredAccount, 0, len(accResp.GetAccounts())),
+	}
+	if id, ok := item.GetInstitutionIdOk(); ok && id != nil && *id != "" {
+		v := *id
+		out.InstitutionID = &v
+	}
+	if name, ok := item.GetInstitutionNameOk(); ok && name != nil && *name != "" {
+		v := *name
+		out.InstitutionName = &v
+	}
+
+	for _, a := range accResp.GetAccounts() {
+		name := a.GetOfficialName()
+		if name == "" {
+			name = a.GetName()
+		}
+		var mask *string
+		if m, ok := a.GetMaskOk(); ok && m != nil && *m != "" {
+			v := *m
+			mask = &v
+		}
+		bal := a.GetBalances()
+		// Plaid returns balances as float64. Round-trip through string so
+		// shopspring/decimal preserves the JSON-side value exactly.
+		balDec := decimal.NewFromFloat(bal.GetCurrent())
+		currency := bal.GetIsoCurrencyCode()
+		if currency == "" {
+			currency = "USD"
+		}
+		out.Accounts = append(out.Accounts, DiscoveredAccount{
+			PlaidAccountID: a.GetAccountId(),
+			Name:           name,
+			Mask:           mask,
+			Type:           string(a.GetType()),
+			Subtype:        string(a.GetSubtype()),
+			Currency:       currency,
+			Balance:        balDec,
+			HolderNames:    holderNamesByAcct[a.GetAccountId()],
+		})
+	}
+	return out, nil
 }

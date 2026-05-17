@@ -25,6 +25,7 @@ func NewPlaidHandler(s *plaidsvc.Service) *PlaidHandler {
 func (h *PlaidHandler) Register(g *gin.RouterGroup) {
 	g.POST("/plaid/link/token", h.CreateLinkToken)
 	g.POST("/plaid/link/exchange", h.ExchangePublicToken)
+	g.POST("/plaid/items/:item_id/sync-accounts", h.SyncAccounts)
 }
 
 func (h *PlaidHandler) CreateLinkToken(c *gin.Context) {
@@ -71,6 +72,29 @@ func (h *PlaidHandler) ExchangePublicToken(c *gin.Context) {
 	})
 }
 
+// SyncAccounts pulls /accounts/get (+ best-effort /identity/get) for the
+// given item and upserts matching accounts rows. Response is intentionally
+// narrow: {created, updated} counts, no account details, no PII.
+func (h *PlaidHandler) SyncAccounts(c *gin.Context) {
+	plaidItemID := c.Param("item_id")
+	if plaidItemID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "item_id is required", "code": "INVALID_REQUEST"})
+		return
+	}
+	userID := auth.MustUserID(c.Request.Context())
+	result, err := h.svc.SyncAccounts(c.Request.Context(), userID, plaidItemID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"created": result.Created,
+			"updated": result.Updated,
+		},
+	})
+}
+
 func (h *PlaidHandler) writeError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, plaidsvc.ErrNotConfigured):
@@ -82,6 +106,11 @@ func (h *PlaidHandler) writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 			"code":  "INVALID_REQUEST",
+		})
+	case errors.Is(err, plaidsvc.ErrItemNotFound):
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+			"code":  "PLAID_ITEM_NOT_FOUND",
 		})
 	default:
 		c.JSON(http.StatusBadGateway, gin.H{

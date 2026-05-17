@@ -28,6 +28,10 @@ type AccountRepository interface {
 	List(ctx context.Context, userID int64, f AccountFilter) ([]model.Account, int64, error)
 	Update(ctx context.Context, a *model.Account) error
 	SoftDelete(ctx context.Context, userID, id int64) error
+	// FindByPlaidAccountID looks up a non-deleted account by its Plaid
+	// account_id, scoped to userID. Returns ErrNotFound when no row exists.
+	// Used by the Plaid discovery flow to make sync re-runs idempotent.
+	FindByPlaidAccountID(ctx context.Context, userID int64, plaidAccountID string) (*model.Account, error)
 }
 
 // ErrNotFound is returned by repository methods when no matching row exists.
@@ -105,6 +109,19 @@ func (r *accountRepo) Update(ctx context.Context, a *model.Account) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *accountRepo) FindByPlaidAccountID(ctx context.Context, userID int64, plaidAccountID string) (*model.Account, error) {
+	var a model.Account
+	if err := r.db.WithContext(ctx).
+		Where("user_id = ? AND plaid_account_id = ?", userID, plaidAccountID).
+		First(&a).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &a, nil
 }
 
 func (r *accountRepo) SoftDelete(ctx context.Context, userID, id int64) error {
