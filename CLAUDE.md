@@ -1,13 +1,17 @@
 # Offbook — Privacy-First Personal Finance
 
 ## Commands
-- Backend: `cd backend && go run cmd/server/main.go`
-- Tests: `cd backend && go test ./...`
-- Lint: `cd backend && docker run --rm -v "$PWD":/app -w /app golangci/golangci-lint:latest-alpine golangci-lint run ./...`
+- Backend dev server: `cd backend && make dev` (stops any prior instance first — kills by port to avoid collisions)
+- Backend stop: `cd backend && make stop`
+- Backend smoke (start + wait for /health): `cd backend && make smoke`
+- Tests: `cd backend && make test`
+- Lint: `cd backend && make lint`
 - Frontend: `cd frontend && pnpm dev`
 - Full stack: `docker compose up`
 - Migrations: `cd backend && go run ./cmd/migrate {up|down|down-all|version|force <ver>}` (uses `.env`)
 - Migration files: name as `migrations/{NNNNNN}_{slug}.{up|down}.sql`, 6-digit zero-padded sequence
+
+When running via Claude's Bash tool, prefix `make` with `command` (`command make dev`) — a zsh autoload stub in the shell snapshot shadows the binary. Interactive shells are unaffected.
 
 ## Autonomous Workflow
 1. Read @docs/ROADMAP.md → find current milestone

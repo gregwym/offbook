@@ -31,12 +31,17 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	transactionSvc := service.NewTransactionService(transactionRepo, accountRepo, categoryRepo)
 	transactionHandler := handler.NewTransactionHandler(transactionSvc)
 
+	dashboardRepo := repository.NewDashboardRepository(gormDB)
+	dashboardSvc := service.NewDashboardService(dashboardRepo)
+	dashboardHandler := handler.NewDashboardHandler(dashboardSvc)
+
 	v1 := r.Group("/api/v1")
 	{
 		v1.GET("/health", health.Get)
 		accountHandler.Register(v1)
 		piiHandler.RegisterAccountRoutes(v1)
 		transactionHandler.Register(v1)
+		dashboardHandler.Register(v1)
 	}
 
 	return r
