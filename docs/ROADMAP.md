@@ -41,21 +41,19 @@
 
 ---
 
-## M2 — Accounts & Transactions (Manual) [IN PROGRESS]
+## M2 — Accounts & Transactions (Manual) [DONE]
 
 **Goal:** Core data model usable through UI.
 
-- [ ] Accounts CRUD (handler + service + repo + frontend)
-- [ ] PII store: save/retrieve holder name and account number for accounts
-- [ ] Manual transaction entry (handler + service + repo + frontend)
-- [ ] Transaction list with filters (account, date range, category, search, pagination)
-- [ ] Category assignment (inline in transaction table)
-- [ ] Dashboard summary API + basic dashboard page
-- [ ] Go unit tests: account_service, transaction_service
+- [x] Accounts CRUD (handler + service + repo + frontend)
+- [x] PII store: save/retrieve holder name and account number for accounts
+- [x] Manual transaction entry (handler + service + repo + frontend)
+- [x] Transaction list with filters (account, date range, category, search, pagination)
+- [x] Category assignment (inline in transaction table)
+- [x] Dashboard summary API + basic dashboard page
+- [x] Go unit tests: account_service, transaction_service
 
 **Done criteria:** Add account, enter transaction with PII, assign category, see dashboard totals; PII accessible only via `/accounts/:id/pii`.
-
-> **Note:** The two M2 frontend issues (#31 Accounts page, #32 Transactions + Dashboard pages) are deferred until after M2.5 so they're built against scoped APIs from the start.
 
 ---
 
