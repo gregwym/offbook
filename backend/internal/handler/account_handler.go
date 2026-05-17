@@ -10,6 +10,7 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/service/auth"
 )
 
 type AccountHandler struct {
@@ -57,7 +58,7 @@ func (h *AccountHandler) Create(c *gin.Context) {
 	if req.Balance != nil {
 		in.Balance = *req.Balance
 	}
-	a, err := h.svc.Create(c.Request.Context(), in)
+	a, err := h.svc.Create(c.Request.Context(), auth.MustUserID(c.Request.Context()), in)
 	if err != nil {
 		h.writeServiceError(c, err)
 		return
@@ -70,7 +71,7 @@ func (h *AccountHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	a, err := h.svc.Get(c.Request.Context(), id)
+	a, err := h.svc.Get(c.Request.Context(), auth.MustUserID(c.Request.Context()), id)
 	if err != nil {
 		h.writeServiceError(c, err)
 		return
@@ -113,7 +114,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		f.Offset = n
 	}
 
-	accounts, total, err := h.svc.List(c.Request.Context(), f)
+	accounts, total, err := h.svc.List(c.Request.Context(), auth.MustUserID(c.Request.Context()), f)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
 		return
@@ -146,7 +147,7 @@ func (h *AccountHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
 		return
 	}
-	a, err := h.svc.Update(c.Request.Context(), id, service.UpdateAccountInput(req))
+	a, err := h.svc.Update(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, service.UpdateAccountInput(req))
 	if err != nil {
 		h.writeServiceError(c, err)
 		return
@@ -159,7 +160,7 @@ func (h *AccountHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.SoftDelete(c.Request.Context(), id); err != nil {
+	if err := h.svc.SoftDelete(c.Request.Context(), auth.MustUserID(c.Request.Context()), id); err != nil {
 		h.writeServiceError(c, err)
 		return
 	}

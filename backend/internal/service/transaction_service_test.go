@@ -17,7 +17,7 @@ import (
 // newTxSvc builds a real TransactionService backed by Postgres, plus a
 // helper account + category for tests to attach transactions to. The helper
 // rows are torn down at end-of-test via t.Cleanup.
-func newTxSvc(t *testing.T) (svc *service.TransactionService, accountID, categoryID int64, g *gorm.DB) {
+func newTxSvc(t *testing.T) (svc *service.TransactionService, userID, accountID, categoryID int64, g *gorm.DB) {
 	t.Helper()
 	g = openTestDB(t)
 	accRepo := repository.NewAccountRepository(g)
@@ -26,7 +26,9 @@ func newTxSvc(t *testing.T) (svc *service.TransactionService, accountID, categor
 	svc = service.NewTransactionService(txRepo, accRepo, catRepo)
 
 	ctx := context.Background()
+	userID = seedTestUser(t, g)
 	acc := &model.Account{
+		UserID:          userID,
 		Name:            "tx-svc-fixture-" + time.Now().Format("150405.000000"),
 		InstitutionSlug: "fixture",
 		AccountType:     "checking",
@@ -47,7 +49,7 @@ func newTxSvc(t *testing.T) (svc *service.TransactionService, accountID, categor
 	}
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, cat.ID) })
 
-	return svc, acc.ID, cat.ID, g
+	return svc, userID, acc.ID, cat.ID, g
 }
 
 func validTxInput(accountID int64) service.CreateTransactionInput {
@@ -61,12 +63,12 @@ func validTxInput(accountID int64) service.CreateTransactionInput {
 }
 
 func TestTransactionService_Create_Validation(t *testing.T) {
-	svc, accountID, categoryID, _ := newTxSvc(t)
+	svc, userID, accountID, categoryID, _ := newTxSvc(t)
 	ctx := context.Background()
 	created := []int64{}
 	t.Cleanup(func() {
 		for _, id := range created {
-			_ = svc.SoftDelete(ctx, id)
+			_ = svc.SoftDelete(ctx, userID, id)
 		}
 	})
 
@@ -124,7 +126,7 @@ func TestTransactionService_Create_Validation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			in := validTxInput(accountID)
 			tc.mutate(&in)
-			got, err := svc.Create(ctx, in)
+			got, err := svc.Create(ctx, userID, in)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Errorf("Create err = %v, want %v", err, tc.wantErr)
@@ -148,21 +150,20 @@ func TestTransactionService_Create_Validation(t *testing.T) {
 }
 
 func TestTransactionService_AmountPrecision_Preserved(t *testing.T) {
-	svc, accountID, _, _ := newTxSvc(t)
+	svc, userID, accountID, _, _ := newTxSvc(t)
 	ctx := context.Background()
 
-	// 18 fractional digits — a single satoshi-equivalent for NUMERIC(30,18).
 	wei := decimal.RequireFromString("0.000000000000000001")
 	in := validTxInput(accountID)
 	in.Amount = wei
 
-	created, err := svc.Create(ctx, in)
+	created, err := svc.Create(ctx, userID, in)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, created.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, created.ID) })
 
-	got, err := svc.Get(ctx, created.ID)
+	got, err := svc.Get(ctx, userID, created.ID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -172,40 +173,38 @@ func TestTransactionService_AmountPrecision_Preserved(t *testing.T) {
 }
 
 func TestTransactionService_SoftDelete_AndGetReturns404(t *testing.T) {
-	svc, accountID, _, _ := newTxSvc(t)
+	svc, userID, accountID, _, _ := newTxSvc(t)
 	ctx := context.Background()
 
-	created, err := svc.Create(ctx, validTxInput(accountID))
+	created, err := svc.Create(ctx, userID, validTxInput(accountID))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := svc.SoftDelete(ctx, created.ID); err != nil {
+	if err := svc.SoftDelete(ctx, userID, created.ID); err != nil {
 		t.Fatalf("first delete: %v", err)
 	}
-	if _, err := svc.Get(ctx, created.ID); !errors.Is(err, service.ErrTransactionNotFound) {
+	if _, err := svc.Get(ctx, userID, created.ID); !errors.Is(err, service.ErrTransactionNotFound) {
 		t.Errorf("Get after delete err = %v, want ErrTransactionNotFound", err)
 	}
-	if err := svc.SoftDelete(ctx, created.ID); !errors.Is(err, service.ErrTransactionNotFound) {
+	if err := svc.SoftDelete(ctx, userID, created.ID); !errors.Is(err, service.ErrTransactionNotFound) {
 		t.Errorf("second delete err = %v, want ErrTransactionNotFound", err)
 	}
 }
 
 func TestTransactionService_Update_ClearCategoryWinsOverSet(t *testing.T) {
-	svc, accountID, categoryID, _ := newTxSvc(t)
+	svc, userID, accountID, categoryID, _ := newTxSvc(t)
 	ctx := context.Background()
 
 	in := validTxInput(accountID)
 	in.CategoryID = &categoryID
-	created, err := svc.Create(ctx, in)
+	created, err := svc.Create(ctx, userID, in)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, created.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, created.ID) })
 
-	// Send both ClearCategory=true AND CategoryID=42 in the same patch.
-	// Documented behavior: clear wins.
-	bogus := int64(999999) // bogus id — must never be touched because clear wins first
-	updated, err := svc.Update(ctx, created.ID, service.UpdateTransactionInput{
+	bogus := int64(999999)
+	updated, err := svc.Update(ctx, userID, created.ID, service.UpdateTransactionInput{
 		ClearCategory: true,
 		CategoryID:    &bogus,
 	})
@@ -221,30 +220,27 @@ func TestTransactionService_Update_ClearCategoryWinsOverSet(t *testing.T) {
 }
 
 func TestTransactionService_List_PassesThroughToRepo(t *testing.T) {
-	// Repository-level filters are covered exhaustively in transaction_repo_test.go.
-	// At the service layer we only need to confirm the call delegates and that
-	// the soft-delete predicate flows through (it's enforced by gorm.DeletedAt).
-	svc, accountID, _, _ := newTxSvc(t)
+	svc, userID, accountID, _, _ := newTxSvc(t)
 	ctx := context.Background()
 
 	in1 := validTxInput(accountID)
 	in1.TransactionDate = time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
-	tx1, err := svc.Create(ctx, in1)
+	tx1, err := svc.Create(ctx, userID, in1)
 	if err != nil {
 		t.Fatalf("create tx1: %v", err)
 	}
 	in2 := validTxInput(accountID)
 	in2.TransactionDate = time.Date(2026, 5, 20, 0, 0, 0, 0, time.UTC)
-	tx2, err := svc.Create(ctx, in2)
+	tx2, err := svc.Create(ctx, userID, in2)
 	if err != nil {
 		t.Fatalf("create tx2: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = svc.SoftDelete(ctx, tx1.ID)
-		_ = svc.SoftDelete(ctx, tx2.ID)
+		_ = svc.SoftDelete(ctx, userID, tx1.ID)
+		_ = svc.SoftDelete(ctx, userID, tx2.ID)
 	})
 
-	got, total, err := svc.List(ctx, repository.TransactionFilter{
+	got, total, err := svc.List(ctx, userID, repository.TransactionFilter{
 		AccountID: int64Ptr(accountID),
 	})
 	if err != nil {
@@ -253,16 +249,14 @@ func TestTransactionService_List_PassesThroughToRepo(t *testing.T) {
 	if total != 2 {
 		t.Errorf("total = %d, want 2", total)
 	}
-	// Order is (transaction_date DESC, id DESC) so tx2 comes first.
 	if len(got) >= 2 && (got[0].ID != tx2.ID || got[1].ID != tx1.ID) {
 		t.Errorf("ordering wrong: got [%d, %d], want [%d, %d]", got[0].ID, got[1].ID, tx2.ID, tx1.ID)
 	}
 
-	// Soft-delete tx2; List for this account drops to 1.
-	if err := svc.SoftDelete(ctx, tx2.ID); err != nil {
+	if err := svc.SoftDelete(ctx, userID, tx2.ID); err != nil {
 		t.Fatalf("delete tx2: %v", err)
 	}
-	_, total, err = svc.List(ctx, repository.TransactionFilter{AccountID: int64Ptr(accountID)})
+	_, total, err = svc.List(ctx, userID, repository.TransactionFilter{AccountID: int64Ptr(accountID)})
 	if err != nil {
 		t.Fatalf("List after delete: %v", err)
 	}

@@ -25,12 +25,13 @@ type TransactionFilter struct {
 }
 
 // TransactionRepository is the data-access contract for transactions.
+// All read paths are scoped by user_id.
 type TransactionRepository interface {
 	Create(ctx context.Context, t *model.Transaction) error
-	GetByID(ctx context.Context, id int64) (*model.Transaction, error)
-	List(ctx context.Context, f TransactionFilter) ([]model.Transaction, int64, error)
+	GetByID(ctx context.Context, userID, id int64) (*model.Transaction, error)
+	List(ctx context.Context, userID int64, f TransactionFilter) ([]model.Transaction, int64, error)
 	Update(ctx context.Context, t *model.Transaction) error
-	SoftDelete(ctx context.Context, id int64) error
+	SoftDelete(ctx context.Context, userID, id int64) error
 }
 
 type transactionRepo struct {
@@ -45,9 +46,11 @@ func (r *transactionRepo) Create(ctx context.Context, t *model.Transaction) erro
 	return r.db.WithContext(ctx).Create(t).Error
 }
 
-func (r *transactionRepo) GetByID(ctx context.Context, id int64) (*model.Transaction, error) {
+func (r *transactionRepo) GetByID(ctx context.Context, userID, id int64) (*model.Transaction, error) {
 	var t model.Transaction
-	if err := r.db.WithContext(ctx).First(&t, id).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		First(&t, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
@@ -56,8 +59,8 @@ func (r *transactionRepo) GetByID(ctx context.Context, id int64) (*model.Transac
 	return &t, nil
 }
 
-func (r *transactionRepo) List(ctx context.Context, f TransactionFilter) ([]model.Transaction, int64, error) {
-	q := r.db.WithContext(ctx).Model(&model.Transaction{})
+func (r *transactionRepo) List(ctx context.Context, userID int64, f TransactionFilter) ([]model.Transaction, int64, error) {
+	q := r.db.WithContext(ctx).Model(&model.Transaction{}).Where("user_id = ?", userID)
 
 	if f.AccountID != nil {
 		q = q.Where("account_id = ?", *f.AccountID)
@@ -75,7 +78,6 @@ func (r *transactionRepo) List(ctx context.Context, f TransactionFilter) ([]mode
 		q = q.Where("transaction_date <= ?", *f.To)
 	}
 	if s := f.Search; s != "" {
-		// ILIKE %term% — no full-text index in M2.
 		pattern := "%" + s + "%"
 		q = q.Where("description ILIKE ? OR merchant_name ILIKE ?", pattern, pattern)
 	}
@@ -105,7 +107,9 @@ func (r *transactionRepo) List(ctx context.Context, f TransactionFilter) ([]mode
 }
 
 func (r *transactionRepo) Update(ctx context.Context, t *model.Transaction) error {
-	res := r.db.WithContext(ctx).Save(t)
+	res := r.db.WithContext(ctx).
+		Where("user_id = ?", t.UserID).
+		Save(t)
 	if res.Error != nil {
 		return res.Error
 	}
@@ -115,8 +119,10 @@ func (r *transactionRepo) Update(ctx context.Context, t *model.Transaction) erro
 	return nil
 }
 
-func (r *transactionRepo) SoftDelete(ctx context.Context, id int64) error {
-	res := r.db.WithContext(ctx).Delete(&model.Transaction{}, id)
+func (r *transactionRepo) SoftDelete(ctx context.Context, userID, id int64) error {
+	res := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Delete(&model.Transaction{}, id)
 	if res.Error != nil {
 		return res.Error
 	}

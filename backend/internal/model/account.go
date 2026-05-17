@@ -9,6 +9,7 @@ import (
 
 type Account struct {
 	ID               int64           `gorm:"primaryKey" json:"id"`
+	UserID           int64           `gorm:"not null" json:"user_id"`
 	Name             string          `gorm:"not null" json:"name"`
 	InstitutionSlug  string          `gorm:"not null" json:"institution_slug"`
 	AccountType      string          `gorm:"not null" json:"account_type"`

@@ -78,7 +78,7 @@ func TestDecimalRoundTrip_18Places(t *testing.T) {
 		{"large_btc_amount", "0.051234567890123456"},
 	}
 
-	acct := newTestAccount(t, g)
+	userID, acct := newTestAccount(t, g)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			want, err := decimal.NewFromString(tc.in)
@@ -87,6 +87,7 @@ func TestDecimalRoundTrip_18Places(t *testing.T) {
 			}
 			desc := "decimal round-trip test"
 			tx := model.Transaction{
+				UserID:          userID,
 				AccountID:       acct.ID,
 				Amount:          want,
 				Currency:        "USD",
@@ -112,9 +113,8 @@ func TestDecimalRoundTrip_18Places(t *testing.T) {
 
 func TestDecimalArithmetic_PreservesPrecision(t *testing.T) {
 	g := openTestDB(t)
-	acct := newTestAccount(t, g)
+	userID, acct := newTestAccount(t, g)
 
-	// Three high-precision amounts whose sum crosses carries through all 18 digits.
 	a := decimal.RequireFromString("0.111111111111111111")
 	b := decimal.RequireFromString("0.222222222222222222")
 	c := decimal.RequireFromString("0.666666666666666667")
@@ -123,6 +123,7 @@ func TestDecimalArithmetic_PreservesPrecision(t *testing.T) {
 	ids := make([]int64, 0, 3)
 	for _, amt := range []decimal.Decimal{a, b, c} {
 		tx := model.Transaction{
+			UserID:          userID,
 			AccountID:       acct.ID,
 			Amount:          amt,
 			Currency:        "USD",
@@ -156,6 +157,7 @@ func TestDecimalArithmetic_PreservesPrecision(t *testing.T) {
 	wei := decimal.RequireFromString("0.000000000000000001")
 	product := wei.Mul(decimal.NewFromInt(1_000_000))
 	tx := model.Transaction{
+		UserID:          userID,
 		AccountID:       acct.ID,
 		Amount:          product,
 		Currency:        "USD",
@@ -176,9 +178,21 @@ func TestDecimalArithmetic_PreservesPrecision(t *testing.T) {
 	}
 }
 
-func newTestAccount(t *testing.T, g *gorm.DB) model.Account {
+func newTestAccount(t *testing.T, g *gorm.DB) (int64, model.Account) {
 	t.Helper()
+	u := model.User{
+		Email:        "decimal-test-" + time.Now().UTC().Format("150405.000000000") + "@example.test",
+		PasswordHash: "x",
+		LastScope:    model.ScopePersonal,
+		DefaultScope: model.ScopePersonal,
+	}
+	if err := g.Create(&u).Error; err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.User{}, u.ID) })
+
 	acct := model.Account{
+		UserID:          u.ID,
 		Name:            "decimal-test-" + time.Now().UTC().Format("150405.000000000"),
 		InstitutionSlug: "test",
 		AccountType:     "checking",
@@ -190,5 +204,5 @@ func newTestAccount(t *testing.T, g *gorm.DB) model.Account {
 		t.Fatalf("create account: %v", err)
 	}
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Account{}, acct.ID) })
-	return acct
+	return u.ID, acct
 }

@@ -59,10 +59,11 @@ func openTestDB(t *testing.T) *gorm.DB {
 	return g
 }
 
-func newAccountSvc(t *testing.T) (*service.AccountService, *gorm.DB) {
+func newAccountSvc(t *testing.T) (*service.AccountService, int64, *gorm.DB) {
 	t.Helper()
 	g := openTestDB(t)
-	return service.NewAccountService(repository.NewAccountRepository(g)), g
+	userID := seedTestUser(t, g)
+	return service.NewAccountService(repository.NewAccountRepository(g)), userID, g
 }
 
 // validInput returns a creator that produces fresh, valid create inputs so
@@ -79,7 +80,7 @@ func validInput(suffix string) service.CreateAccountInput {
 }
 
 func TestAccountService_Create_Validation(t *testing.T) {
-	svc, _ := newAccountSvc(t)
+	svc, userID, _ := newAccountSvc(t)
 	ctx := context.Background()
 
 	cases := []struct {
@@ -134,7 +135,7 @@ func TestAccountService_Create_Validation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			in := validInput(t.Name() + "-" + tcSuffix(i))
 			tc.mutate(&in)
-			got, err := svc.Create(ctx, in)
+			got, err := svc.Create(ctx, userID, in)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Errorf("Create err = %v, want %v", err, tc.wantErr)
@@ -147,36 +148,49 @@ func TestAccountService_Create_Validation(t *testing.T) {
 			if got == nil || got.ID == 0 {
 				t.Fatalf("expected created account, got %+v", got)
 			}
-			t.Cleanup(func() { _ = svc.SoftDelete(ctx, got.ID) })
+			t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, got.ID) })
 		})
 	}
 }
 
 func TestAccountService_SoftDelete_Idempotent(t *testing.T) {
-	svc, _ := newAccountSvc(t)
+	svc, userID, _ := newAccountSvc(t)
 	ctx := context.Background()
 
-	acc, err := svc.Create(ctx, validInput("delete-idem"))
+	acc, err := svc.Create(ctx, userID, validInput("delete-idem"))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
-	if err := svc.SoftDelete(ctx, acc.ID); err != nil {
+	if err := svc.SoftDelete(ctx, userID, acc.ID); err != nil {
 		t.Fatalf("first delete: %v", err)
 	}
 
-	// Second delete must report not-found rather than silently succeeding —
-	// "idempotent" here means the second call's RESULT is predictable, not
-	// that we silently swallow the missing row. A real client retrying after
-	// a network blip would want to know the row is gone.
-	err = svc.SoftDelete(ctx, acc.ID)
+	err = svc.SoftDelete(ctx, userID, acc.ID)
 	if !errors.Is(err, service.ErrAccountNotFound) {
 		t.Errorf("second delete err = %v, want ErrAccountNotFound", err)
 	}
 
-	// And the account is invisible to Get.
-	if _, err := svc.Get(ctx, acc.ID); !errors.Is(err, service.ErrAccountNotFound) {
+	if _, err := svc.Get(ctx, userID, acc.ID); !errors.Is(err, service.ErrAccountNotFound) {
 		t.Errorf("Get after delete err = %v, want ErrAccountNotFound", err)
+	}
+}
+
+// TestAccountService_Get_TenantIsolation enforces the multi-tenant rule:
+// fetching another user's account returns ErrAccountNotFound.
+func TestAccountService_Get_TenantIsolation(t *testing.T) {
+	svc, userID, g := newAccountSvc(t)
+	ctx := context.Background()
+
+	acc, err := svc.Create(ctx, userID, validInput("tenant-iso"))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, acc.ID) })
+
+	other := seedTestUser(t, g)
+	if _, err := svc.Get(ctx, other, acc.ID); !errors.Is(err, service.ErrAccountNotFound) {
+		t.Errorf("cross-tenant Get err = %v, want ErrAccountNotFound", err)
 	}
 }
 
@@ -185,14 +199,14 @@ func TestAccountService_SoftDelete_Idempotent(t *testing.T) {
 // pii_store rows untouched, since the service deliberately does not depend
 // on pii_repo. This is the architectural cornerstone of the privacy model.
 func TestAccountService_Update_DoesNotTouchPII(t *testing.T) {
-	svc, g := newAccountSvc(t)
+	svc, userID, g := newAccountSvc(t)
 	ctx := context.Background()
 
-	acc, err := svc.Create(ctx, validInput("pii-isolation"))
+	acc, err := svc.Create(ctx, userID, validInput("pii-isolation"))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, acc.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, acc.ID) })
 
 	// Manually insert a PII row outside the service so we know exactly what's
 	// in the table before/after the update. (Going through PIIService would
@@ -217,7 +231,7 @@ func TestAccountService_Update_DoesNotTouchPII(t *testing.T) {
 	newCurr := "EUR"
 	newBalance := decimal.NewFromFloat(123.456)
 	inactive := false
-	if _, err := svc.Update(ctx, acc.ID, service.UpdateAccountInput{
+	if _, err := svc.Update(ctx, userID, acc.ID, service.UpdateAccountInput{
 		Name:        &newName,
 		AccountType: &newType,
 		Currency:    &newCurr,

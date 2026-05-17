@@ -23,7 +23,6 @@ var (
 )
 
 // validSources mirrors the CHECK constraint in migration 000001.
-// Manual entry uses 'manual'; the other values exist for future ingestion paths.
 var validSources = map[string]struct{}{
 	"manual": {},
 	"plaid":  {},
@@ -46,11 +45,10 @@ type CreateTransactionInput struct {
 	Notes           *string
 }
 
-// UpdateTransactionInput is a sparse patch. Pointer fields distinguish
-// "not provided" from "set to zero value".
+// UpdateTransactionInput is a sparse patch.
 type UpdateTransactionInput struct {
-	CategoryID      *int64           // pointer-to-pointer omitted; pass *id to set, nil-but-Provided not supported in this minimal patch — see ClearCategory
-	ClearCategory   bool             // true uncategorizes the row
+	CategoryID      *int64
+	ClearCategory   bool
 	Amount          *decimal.Decimal
 	Currency        *string
 	Description     *string
@@ -60,11 +58,11 @@ type UpdateTransactionInput struct {
 	Notes           *string
 }
 
-// TransactionService owns business rules for transactions. It depends on the
-// account and category repos only for existence checks — it never reads PII.
+// TransactionService owns business rules for transactions.
+// All read paths take the session user_id; cross-user reads are impossible.
 type TransactionService struct {
-	repo        repository.TransactionRepository
-	accountRepo repository.AccountRepository
+	repo         repository.TransactionRepository
+	accountRepo  repository.AccountRepository
 	categoryRepo repository.CategoryRepository
 }
 
@@ -76,8 +74,7 @@ func NewTransactionService(
 	return &TransactionService{repo: repo, accountRepo: accountRepo, categoryRepo: categoryRepo}
 }
 
-func (s *TransactionService) Create(ctx context.Context, in CreateTransactionInput) (*model.Transaction, error) {
-	// Source defaulting + validation. Empty == manual per the issue's "manual entry" framing.
+func (s *TransactionService) Create(ctx context.Context, userID int64, in CreateTransactionInput) (*model.Transaction, error) {
 	src := strings.TrimSpace(in.Source)
 	if src == "" {
 		src = "manual"
@@ -91,7 +88,9 @@ func (s *TransactionService) Create(ctx context.Context, in CreateTransactionInp
 	if in.TransactionDate.IsZero() {
 		return nil, ErrMissingDate
 	}
-	if err := s.assertAccountExists(ctx, in.AccountID); err != nil {
+	// Existence-check the account against the session user — this also rejects
+	// transactions targeting someone else's account.
+	if err := s.assertAccountOwned(ctx, userID, in.AccountID); err != nil {
 		return nil, err
 	}
 	if in.CategoryID != nil {
@@ -106,6 +105,7 @@ func (s *TransactionService) Create(ctx context.Context, in CreateTransactionInp
 	}
 
 	t := &model.Transaction{
+		UserID:          userID,
 		AccountID:       in.AccountID,
 		CategoryID:      in.CategoryID,
 		Amount:          in.Amount,
@@ -128,15 +128,12 @@ func (s *TransactionService) Create(ctx context.Context, in CreateTransactionInp
 	return t, nil
 }
 
-// List returns transactions matching the filter, plus the total count
-// (count uses the same WHERE clause sans limit/offset so the UI can render
-// pagination controls).
-func (s *TransactionService) List(ctx context.Context, f repository.TransactionFilter) ([]model.Transaction, int64, error) {
-	return s.repo.List(ctx, f)
+func (s *TransactionService) List(ctx context.Context, userID int64, f repository.TransactionFilter) ([]model.Transaction, int64, error) {
+	return s.repo.List(ctx, userID, f)
 }
 
-func (s *TransactionService) Get(ctx context.Context, id int64) (*model.Transaction, error) {
-	t, err := s.repo.GetByID(ctx, id)
+func (s *TransactionService) Get(ctx context.Context, userID, id int64) (*model.Transaction, error) {
+	t, err := s.repo.GetByID(ctx, userID, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrTransactionNotFound
@@ -146,8 +143,8 @@ func (s *TransactionService) Get(ctx context.Context, id int64) (*model.Transact
 	return t, nil
 }
 
-func (s *TransactionService) Update(ctx context.Context, id int64, in UpdateTransactionInput) (*model.Transaction, error) {
-	t, err := s.repo.GetByID(ctx, id)
+func (s *TransactionService) Update(ctx context.Context, userID, id int64, in UpdateTransactionInput) (*model.Transaction, error) {
+	t, err := s.repo.GetByID(ctx, userID, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrTransactionNotFound
@@ -155,8 +152,6 @@ func (s *TransactionService) Update(ctx context.Context, id int64, in UpdateTran
 		return nil, err
 	}
 
-	// Category handling: caller can either set (CategoryID != nil) or clear (ClearCategory = true).
-	// Setting + clearing in the same patch is contradictory — clear wins.
 	switch {
 	case in.ClearCategory:
 		t.CategoryID = nil
@@ -196,7 +191,6 @@ func (s *TransactionService) Update(ctx context.Context, id int64, in UpdateTran
 		t.TransactionDate = *in.TransactionDate
 	}
 	if in.PostedDate != nil {
-		// Empty time means "clear" so the caller can unset a previously-set posted_date.
 		if in.PostedDate.IsZero() {
 			t.PostedDate = nil
 		} else {
@@ -217,8 +211,8 @@ func (s *TransactionService) Update(ctx context.Context, id int64, in UpdateTran
 	return t, nil
 }
 
-func (s *TransactionService) SoftDelete(ctx context.Context, id int64) error {
-	if err := s.repo.SoftDelete(ctx, id); err != nil {
+func (s *TransactionService) SoftDelete(ctx context.Context, userID, id int64) error {
+	if err := s.repo.SoftDelete(ctx, userID, id); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return ErrTransactionNotFound
 		}
@@ -227,8 +221,8 @@ func (s *TransactionService) SoftDelete(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (s *TransactionService) assertAccountExists(ctx context.Context, id int64) error {
-	if _, err := s.accountRepo.GetByID(ctx, id); err != nil {
+func (s *TransactionService) assertAccountOwned(ctx context.Context, userID, accountID int64) error {
+	if _, err := s.accountRepo.GetByID(ctx, userID, accountID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return ErrAccountNotFound
 		}

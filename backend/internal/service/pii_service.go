@@ -44,23 +44,24 @@ func NewPIIService(repo repository.PIIRepository, accSvc *AccountService) *PIISe
 }
 
 // GetAccountPII returns all stored PII fields for the account.
-// Returns ErrAccountNotFound if the account doesn't exist (or is soft-deleted).
-func (s *PIIService) GetAccountPII(ctx context.Context, accountID int64) (map[string]string, error) {
-	if _, err := s.accSvc.Get(ctx, accountID); err != nil {
+// Returns ErrAccountNotFound if the account doesn't exist OR isn't owned by
+// userID — this is the transitive-ownership check that keeps pii_store rows
+// inaccessible to anyone but their owner.
+func (s *PIIService) GetAccountPII(ctx context.Context, userID, accountID int64) (map[string]string, error) {
+	if _, err := s.accSvc.Get(ctx, userID, accountID); err != nil {
 		return nil, err
 	}
 	return s.repo.GetAll(ctx, piiEntityAccount, accountID)
 }
 
-// SetAccountPII upserts the provided fields. Fields not in the map are left
-// untouched; pass an empty string value to clear a field's stored value
-// (we still write the row — explicit "" beats silent loss).
+// SetAccountPII upserts the provided fields. Ownership is enforced via the
+// same transitive check as GetAccountPII.
 //
 // NOTE: per ADR #21 (backlog) the orphan-cleanup policy for PII on account
 // soft-delete is not yet decided. Today, soft-deleting an account leaves
 // PII rows behind. Revisit once #21 lands.
-func (s *PIIService) SetAccountPII(ctx context.Context, accountID int64, fields map[string]string) error {
-	if _, err := s.accSvc.Get(ctx, accountID); err != nil {
+func (s *PIIService) SetAccountPII(ctx context.Context, userID, accountID int64, fields map[string]string) error {
+	if _, err := s.accSvc.Get(ctx, userID, accountID); err != nil {
 		return err
 	}
 	for field, value := range fields {

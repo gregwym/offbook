@@ -47,8 +47,7 @@ type CreateAccountInput struct {
 }
 
 // UpdateAccountInput is a sparse patch. Pointer fields distinguish "not provided"
-// from "set to zero value". Balance lives in the main accounts table per the
-// architecture (it's not PII).
+// from "set to zero value".
 type UpdateAccountInput struct {
 	Name            *string
 	InstitutionSlug *string
@@ -61,6 +60,7 @@ type UpdateAccountInput struct {
 
 // AccountService owns business rules for accounts. It deliberately does NOT
 // receive pii_repo or pii_service — PII is set via the separate pii endpoints.
+// All operations are scoped to a user_id derived from the session.
 type AccountService struct {
 	repo repository.AccountRepository
 }
@@ -69,11 +69,12 @@ func NewAccountService(repo repository.AccountRepository) *AccountService {
 	return &AccountService{repo: repo}
 }
 
-func (s *AccountService) Create(ctx context.Context, in CreateAccountInput) (*model.Account, error) {
+func (s *AccountService) Create(ctx context.Context, userID int64, in CreateAccountInput) (*model.Account, error) {
 	if in.Currency == "" {
 		in.Currency = "USD"
 	}
 	a := &model.Account{
+		UserID:          userID,
 		Name:            strings.TrimSpace(in.Name),
 		InstitutionSlug: strings.TrimSpace(in.InstitutionSlug),
 		AccountType:     strings.TrimSpace(in.AccountType),
@@ -94,8 +95,8 @@ func (s *AccountService) Create(ctx context.Context, in CreateAccountInput) (*mo
 	return a, nil
 }
 
-func (s *AccountService) Get(ctx context.Context, id int64) (*model.Account, error) {
-	a, err := s.repo.GetByID(ctx, id)
+func (s *AccountService) Get(ctx context.Context, userID, id int64) (*model.Account, error) {
+	a, err := s.repo.GetByID(ctx, userID, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrAccountNotFound
@@ -105,12 +106,12 @@ func (s *AccountService) Get(ctx context.Context, id int64) (*model.Account, err
 	return a, nil
 }
 
-func (s *AccountService) List(ctx context.Context, f repository.AccountFilter) ([]model.Account, int64, error) {
-	return s.repo.List(ctx, f)
+func (s *AccountService) List(ctx context.Context, userID int64, f repository.AccountFilter) ([]model.Account, int64, error) {
+	return s.repo.List(ctx, userID, f)
 }
 
-func (s *AccountService) Update(ctx context.Context, id int64, in UpdateAccountInput) (*model.Account, error) {
-	a, err := s.repo.GetByID(ctx, id)
+func (s *AccountService) Update(ctx context.Context, userID, id int64, in UpdateAccountInput) (*model.Account, error) {
+	a, err := s.repo.GetByID(ctx, userID, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrAccountNotFound
@@ -158,8 +159,8 @@ func (s *AccountService) Update(ctx context.Context, id int64, in UpdateAccountI
 	return a, nil
 }
 
-func (s *AccountService) SoftDelete(ctx context.Context, id int64) error {
-	if err := s.repo.SoftDelete(ctx, id); err != nil {
+func (s *AccountService) SoftDelete(ctx context.Context, userID, id int64) error {
+	if err := s.repo.SoftDelete(ctx, userID, id); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return ErrAccountNotFound
 		}

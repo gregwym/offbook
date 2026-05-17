@@ -8,6 +8,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/handler"
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/service/auth"
 )
 
 func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
@@ -15,6 +16,15 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	r.Use(gin.Logger(), gin.Recovery(), corsMiddleware(cfg.FrontendURL))
 
 	health := handler.NewHealthHandler(gormDB)
+
+	// Auth: gates every domain route. SESSION_SECRET is required from M2.5+.
+	authSvc := auth.NewService(
+		repository.NewUserRepository(gormDB),
+		repository.NewSessionRepository(gormDB),
+		repository.NewInstanceConfigRepository(gormDB),
+		cfg.SessionSecret,
+	)
+	authHandler := handler.NewAuthHandler(authSvc)
 
 	accountRepo := repository.NewAccountRepository(gormDB)
 	accountSvc := service.NewAccountService(accountRepo)
@@ -37,11 +47,18 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 
 	v1 := r.Group("/api/v1")
 	{
+		// Open routes — no session required.
 		v1.GET("/health", health.Get)
-		accountHandler.Register(v1)
-		piiHandler.RegisterAccountRoutes(v1)
-		transactionHandler.Register(v1)
-		dashboardHandler.Register(v1)
+		authHandler.RegisterPublic(v1)
+
+		// Authenticated routes — session middleware gates everything below.
+		secured := v1.Group("")
+		secured.Use(auth.RequireSession(authSvc))
+		authHandler.RegisterAuthenticated(secured)
+		accountHandler.Register(secured)
+		piiHandler.RegisterAccountRoutes(secured)
+		transactionHandler.Register(secured)
+		dashboardHandler.Register(secured)
 	}
 
 	return r

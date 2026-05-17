@@ -19,15 +19,15 @@ type AccountFilter struct {
 	Offset          int
 }
 
-// AccountRepository is the data-access contract for accounts. PII fields
-// (holder name, account number, etc.) live in pii_store and are NOT exposed
-// here — see pii_repo for that.
+// AccountRepository is the data-access contract for accounts. Every read path
+// is scoped by user_id — there is no "fetch by id" without an owning user.
+// PII fields live in pii_store and are NOT exposed here.
 type AccountRepository interface {
 	Create(ctx context.Context, a *model.Account) error
-	GetByID(ctx context.Context, id int64) (*model.Account, error)
-	List(ctx context.Context, f AccountFilter) ([]model.Account, int64, error)
+	GetByID(ctx context.Context, userID, id int64) (*model.Account, error)
+	List(ctx context.Context, userID int64, f AccountFilter) ([]model.Account, int64, error)
 	Update(ctx context.Context, a *model.Account) error
-	SoftDelete(ctx context.Context, id int64) error
+	SoftDelete(ctx context.Context, userID, id int64) error
 }
 
 // ErrNotFound is returned by repository methods when no matching row exists.
@@ -46,9 +46,11 @@ func (r *accountRepo) Create(ctx context.Context, a *model.Account) error {
 	return r.db.WithContext(ctx).Create(a).Error
 }
 
-func (r *accountRepo) GetByID(ctx context.Context, id int64) (*model.Account, error) {
+func (r *accountRepo) GetByID(ctx context.Context, userID, id int64) (*model.Account, error) {
 	var a model.Account
-	if err := r.db.WithContext(ctx).First(&a, id).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		First(&a, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
@@ -57,8 +59,8 @@ func (r *accountRepo) GetByID(ctx context.Context, id int64) (*model.Account, er
 	return &a, nil
 }
 
-func (r *accountRepo) List(ctx context.Context, f AccountFilter) ([]model.Account, int64, error) {
-	q := r.db.WithContext(ctx).Model(&model.Account{})
+func (r *accountRepo) List(ctx context.Context, userID int64, f AccountFilter) ([]model.Account, int64, error) {
+	q := r.db.WithContext(ctx).Model(&model.Account{}).Where("user_id = ?", userID)
 	if f.InstitutionSlug != "" {
 		q = q.Where("institution_slug = ?", f.InstitutionSlug)
 	}
@@ -90,10 +92,12 @@ func (r *accountRepo) List(ctx context.Context, f AccountFilter) ([]model.Accoun
 }
 
 func (r *accountRepo) Update(ctx context.Context, a *model.Account) error {
-	// Save updates all fields, including the zero values that PATCH explicitly cleared
-	// (e.g. unsetting LastFour). The handler is responsible for loading-then-patching
-	// so we never blow away fields the caller didn't intend to change.
-	res := r.db.WithContext(ctx).Save(a)
+	// Service layer is responsible for read-then-patch with a user-scoped read,
+	// so a.UserID is guaranteed to match the session user. We still scope the
+	// WHERE so a malicious mutation of a.UserID can't escape its tenant.
+	res := r.db.WithContext(ctx).
+		Where("user_id = ?", a.UserID).
+		Save(a)
 	if res.Error != nil {
 		return res.Error
 	}
@@ -103,8 +107,10 @@ func (r *accountRepo) Update(ctx context.Context, a *model.Account) error {
 	return nil
 }
 
-func (r *accountRepo) SoftDelete(ctx context.Context, id int64) error {
-	res := r.db.WithContext(ctx).Delete(&model.Account{}, id)
+func (r *accountRepo) SoftDelete(ctx context.Context, userID, id int64) error {
+	res := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Delete(&model.Account{}, id)
 	if res.Error != nil {
 		return res.Error
 	}

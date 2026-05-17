@@ -8,6 +8,7 @@ import (
 
 type Investment struct {
 	ID           int64            `gorm:"primaryKey" json:"id"`
+	UserID       int64            `gorm:"not null" json:"user_id"`
 	AccountID    int64            `gorm:"not null" json:"account_id"`
 	Ticker       string           `gorm:"not null" json:"ticker"`
 	Name         *string          `json:"name,omitempty"`

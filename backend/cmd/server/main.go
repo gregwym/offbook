@@ -18,6 +18,10 @@ import (
 func main() {
 	cfg := config.Load()
 
+	if cfg.SessionSecret == "" {
+		log.Fatal("SESSION_SECRET is empty — required from M2.5+. Generate with: openssl rand -hex 32")
+	}
+
 	gormDB, err := db.Open(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("db open: %v", err)
