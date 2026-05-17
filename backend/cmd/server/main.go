@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfg := config.MustLoad()
 
 	if cfg.SessionSecret == "" {
 		log.Fatal("SESSION_SECRET is empty — required from M2.5+. Generate with: openssl rand -hex 32")
