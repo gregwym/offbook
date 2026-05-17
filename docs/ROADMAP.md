@@ -59,20 +59,20 @@
 
 ---
 
-## M2.5 — Households Foundation [NEXT]
+## M2.5 — Households Foundation [DONE]
 
 **Goal:** Structural foundation for multi-user / household scopes — data model, auth, scope switcher, aggregator. No hi-fi UI for household surfaces yet.
 
 See [ADR-0006](ADR/0006-multi-tenant-model.md), [ADR-0007](ADR/0007-member-lifecycle.md), [ADR-0008](ADR/0008-household-aggregation-layer.md) and `docs/designs/App Hierarchy v4.html`.
 
-- [ ] Single foundation migration: `users`, `sessions`, `instance_config`, `households`, `household_members`, `household_invites`, `account_shares`, `shared_budgets`, `shared_goals`; rename `ai_conversations` → `ai_threads` with `user_id`/`household_id`/`shared_with_household`; add `user_id NOT NULL FK` to `accounts`/`transactions`/`budgets`/`savings_goals`/`investments`
-- [ ] Auth + sessions + first-`/signup`-becomes-admin + picks `signup_mode` (defaults `invite_only`); session middleware gates `/api/v1/*`
-- [ ] Household APIs: create, invite (token, gated by signup_mode), accept, leave (last-owner → 409), rejoin (auto-resume if `purged_at IS NULL`), owner sets `grace_period_days`
-- [ ] `account_shares` GET/PUT — 3-level visibility per account per household
-- [ ] `service/household/aggregator.go` — `Dashboard`, `BudgetPace`, `GoalProgress`, `AIContext`. NO `pii_repo` dependency.
-- [ ] Aggregator privacy tests: private excluded, `balance_only` excluded from category breakdown, in-grace excluded from live aggregates, no raw transactions in return types (reflection check), no cross-member chat leakage
-- [ ] `GET/PATCH /me/scope` — defaults to `household` when member, else `personal`
-- [ ] Frontend: zustand `scopeStore` + scope picker in sidebar + 6 household routes (`/h/dashboard`, `/h/budgets`, `/h/goals`, `/h/members`, `/h/ai`, `/h/settings`) as PageStubs
+- [x] Single foundation migration: `users`, `sessions`, `instance_config`, `households`, `household_members`, `household_invites`, `account_shares`, `shared_budgets`, `shared_goals`; rename `ai_conversations` → `ai_threads` with `user_id`/`household_id`/`shared_with_household`; add `user_id NOT NULL FK` to `accounts`/`transactions`/`budgets`/`savings_goals`/`investments`
+- [x] Auth + sessions + first-`/signup`-becomes-admin + picks `signup_mode` (defaults `invite_only`); session middleware gates `/api/v1/*`
+- [x] Household APIs: create, invite (token, gated by signup_mode), accept, leave (last-owner → 409), rejoin (auto-resume if `purged_at IS NULL`), owner sets `grace_period_days`
+- [x] `account_shares` GET/PUT — 3-level visibility per account per household
+- [x] `service/household/aggregator.go` — `Dashboard`, `BudgetPace`, `GoalProgress`, `AIContext`. NO `pii_repo` dependency.
+- [x] Aggregator privacy tests: private excluded, `balance_only` excluded from category breakdown, in-grace excluded from live aggregates, no raw transactions in return types (reflection check), no cross-member chat leakage
+- [x] `GET/PATCH /me/scope` — defaults to `household` when member, else `personal`
+- [x] Frontend: zustand `scopeStore` + scope picker in sidebar + 6 household routes (`/h/dashboard`, `/h/budgets`, `/h/goals`, `/h/members`, `/h/ai`, `/h/settings`) as PageStubs
 
 **Done criteria:** First boot → `/setup/admin` creates admin + picks `invite_only`. Invite a second user, both create households or join one. Account-level visibility toggles per account. Scope picker swaps the sidebar route list. Aggregator privacy tests green. Existing single-user flows still work for the bootstrap user. Members page UI, Household Dashboard layout, visibility-chip rendering, and Household AI Advisor wait for hi-fi.
 
