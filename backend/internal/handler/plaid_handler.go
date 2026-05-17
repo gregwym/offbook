@@ -26,6 +26,7 @@ func (h *PlaidHandler) Register(g *gin.RouterGroup) {
 	g.POST("/plaid/link/token", h.CreateLinkToken)
 	g.POST("/plaid/link/exchange", h.ExchangePublicToken)
 	g.POST("/plaid/items/:item_id/sync-accounts", h.SyncAccounts)
+	g.POST("/plaid/items/:item_id/sync-transactions", h.SyncTransactions)
 }
 
 func (h *PlaidHandler) CreateLinkToken(c *gin.Context) {
@@ -91,6 +92,30 @@ func (h *PlaidHandler) SyncAccounts(c *gin.Context) {
 		"data": gin.H{
 			"created": result.Created,
 			"updated": result.Updated,
+		},
+	})
+}
+
+// SyncTransactions runs /transactions/sync for the given item, persisting
+// added transactions and the resulting cursor. Response is a narrow
+// {inserted, modified, removed} count — never the transactions themselves.
+func (h *PlaidHandler) SyncTransactions(c *gin.Context) {
+	plaidItemID := c.Param("item_id")
+	if plaidItemID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "item_id is required", "code": "INVALID_REQUEST"})
+		return
+	}
+	userID := auth.MustUserID(c.Request.Context())
+	result, err := h.svc.SyncTransactions(c.Request.Context(), userID, plaidItemID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"inserted": result.Inserted,
+			"modified": result.Modified,
+			"removed":  result.Removed,
 		},
 	})
 }

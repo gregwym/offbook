@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/gregwym/offbook/backend/internal/model"
 )
@@ -32,6 +33,11 @@ type TransactionRepository interface {
 	List(ctx context.Context, userID int64, f TransactionFilter) ([]model.Transaction, int64, error)
 	Update(ctx context.Context, t *model.Transaction) error
 	SoftDelete(ctx context.Context, userID, id int64) error
+	// CreateBatch inserts many transactions in one round-trip, doing
+	// nothing on conflict with the (plaid_transaction_id) unique index.
+	// Returns the number of rows actually inserted — caller compares that
+	// to len(txns) to derive "skipped as duplicate" if needed.
+	CreateBatch(ctx context.Context, txns []model.Transaction) (int64, error)
 }
 
 type transactionRepo struct {
@@ -117,6 +123,29 @@ func (r *transactionRepo) Update(ctx context.Context, t *model.Transaction) erro
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *transactionRepo) CreateBatch(ctx context.Context, txns []model.Transaction) (int64, error) {
+	if len(txns) == 0 {
+		return 0, nil
+	}
+	// ON CONFLICT DO NOTHING on the partial unique index
+	// `uq_transactions_plaid` (defined in migration 000001 as
+	// `(plaid_transaction_id) WHERE deleted_at IS NULL AND plaid_transaction_id IS NOT NULL`).
+	// Postgres requires the conflict target to match the partial predicate
+	// exactly, hence TargetWhere — without it we get
+	// "no unique or exclusion constraint matching the ON CONFLICT specification".
+	res := r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "plaid_transaction_id"}},
+		TargetWhere: clause.Where{Exprs: []clause.Expression{
+			clause.Expr{SQL: "deleted_at IS NULL AND plaid_transaction_id IS NOT NULL"},
+		}},
+		DoNothing: true,
+	}).Create(&txns)
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
 }
 
 func (r *transactionRepo) SoftDelete(ctx context.Context, userID, id int64) error {
