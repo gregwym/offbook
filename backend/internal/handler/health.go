@@ -25,9 +25,13 @@ func (h *HealthHandler) Get(c *gin.Context) {
 
 	if h.db != nil {
 		if err := db.Ping(ctx, h.db); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "down", "db": err.Error()})
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"data":  gin.H{"status": "down", "db": err.Error()},
+				"error": "database unreachable",
+				"code":  "DB_UNAVAILABLE",
+			})
 			return
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"status": "ok"}})
 }

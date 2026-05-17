@@ -191,6 +191,8 @@ Otherwise re-importing a previously-deleted transaction fails.
 All routes under `/api/v1/`.
 
 ### Response format
+**Every** JSON response from the backend wraps. No bare-object responses, including infra/health endpoints — this keeps the frontend `ApiList<T>` / `ApiItem<T>` / `ApiError` typing uniform and avoids per-route special cases.
+
 ```json
 // Success (list)
 {"data": [...], "total": 42}
@@ -201,6 +203,8 @@ All routes under `/api/v1/`.
 // Error
 {"error": "Human-readable message", "code": "MACHINE_READABLE_CODE"}
 ```
+
+`/api/v1/health` returns `{"data": {"status": "ok"}}` on success and `{"data": {"status": "down", "db": "..."}, "error": "...", "code": "DB_UNAVAILABLE"}` on failure. Liveness probes that only care about HTTP status (e.g. `curl -sf`) keep working; consumers that parse the body get the envelope.
 
 ### Pagination
 Query params: `?limit=50&offset=0`. Default limit: 50, max: 200.
