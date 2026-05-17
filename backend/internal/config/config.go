@@ -13,6 +13,7 @@ type Config struct {
 	DatabaseURL    string
 	FrontendURL    string
 	MigrationsPath string
+	SessionSecret  string
 }
 
 func Load() Config {
@@ -27,6 +28,7 @@ func Load() Config {
 		DatabaseURL:    os.Getenv("DATABASE_URL"),
 		FrontendURL:    getenv("FRONTEND_URL", "http://localhost:5173"),
 		MigrationsPath: getenv("MIGRATIONS_PATH", "migrations"),
+		SessionSecret:  os.Getenv("SESSION_SECRET"),
 	}
 }
 

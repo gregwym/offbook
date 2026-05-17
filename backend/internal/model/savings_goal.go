@@ -9,6 +9,7 @@ import (
 
 type SavingsGoal struct {
 	ID            int64           `gorm:"primaryKey" json:"id"`
+	UserID        int64           `gorm:"not null" json:"user_id"`
 	Name          string          `gorm:"not null" json:"name"`
 	TargetAmount  decimal.Decimal `gorm:"type:numeric(30,18);not null" json:"target_amount"`
 	CurrentAmount decimal.Decimal `gorm:"type:numeric(30,18);not null;default:0" json:"current_amount"`

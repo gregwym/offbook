@@ -63,16 +63,17 @@ func openTestDB(t *testing.T) *gorm.DB {
 // seedTxFixture builds a small, deterministic transaction set spanning two
 // accounts and two categories so that filter dimensions are independent.
 //
-// Returns (accountA, accountB, categoryX, categoryY, [tx ids]) so tests can
-// reference the IDs directly. All fixture rows are registered with t.Cleanup
-// for hard deletion at end-of-test (these are integration rows, not domain
-// data — soft-delete would just clutter the test DB).
-func seedTxFixture(t *testing.T, g *gorm.DB) (int64, int64, int64, int64, []int64) {
+// Returns (userID, accountA, accountB, categoryX, categoryY, [tx ids]).
+// All fixture rows belong to a freshly-seeded user; tests pass that userID
+// into repo calls so they see only their own data.
+func seedTxFixture(t *testing.T, g *gorm.DB) (int64, int64, int64, int64, int64, []int64) {
 	t.Helper()
 	ctx := context.Background()
 
-	accA := &model.Account{Name: "fixture-A", InstitutionSlug: "fixture", AccountType: "checking", Currency: "USD"}
-	accB := &model.Account{Name: "fixture-B", InstitutionSlug: "fixture", AccountType: "credit_card", Currency: "USD"}
+	userID := seedTestUser(t, g)
+
+	accA := &model.Account{UserID: userID, Name: "fixture-A", InstitutionSlug: "fixture", AccountType: "checking", Currency: "USD"}
+	accB := &model.Account{UserID: userID, Name: "fixture-B", InstitutionSlug: "fixture", AccountType: "credit_card", Currency: "USD"}
 	if err := g.WithContext(ctx).Create(accA).Error; err != nil {
 		t.Fatalf("seed account A: %v", err)
 	}
@@ -104,24 +105,19 @@ func seedTxFixture(t *testing.T, g *gorm.DB) (int64, int64, int64, int64, []int6
 	desc := func(s string) *string { return &s }
 
 	rows := []model.Transaction{
-		// account A, cat X, date 2026-05-10, "Whole Foods market"
-		{AccountID: accA.ID, CategoryID: &catX.ID, Amount: decimal.NewFromInt(-100), Currency: "USD",
+		{UserID: userID, AccountID: accA.ID, CategoryID: &catX.ID, Amount: decimal.NewFromInt(-100), Currency: "USD",
 			Description: desc("Whole Foods market"), MerchantName: desc("Whole Foods"),
 			TransactionDate: d("2026-05-10"), Source: "manual"},
-		// account A, cat Y, date 2026-05-12, "Shell gas"
-		{AccountID: accA.ID, CategoryID: &catY.ID, Amount: decimal.NewFromInt(-40), Currency: "USD",
+		{UserID: userID, AccountID: accA.ID, CategoryID: &catY.ID, Amount: decimal.NewFromInt(-40), Currency: "USD",
 			Description: desc("Shell gas"), MerchantName: desc("Shell"),
 			TransactionDate: d("2026-05-12"), Source: "manual"},
-		// account B, no category, date 2026-05-15, "Coffee shop"
-		{AccountID: accB.ID, Amount: decimal.NewFromInt(-5), Currency: "USD",
+		{UserID: userID, AccountID: accB.ID, Amount: decimal.NewFromInt(-5), Currency: "USD",
 			Description: desc("Coffee shop"), MerchantName: desc("Blue Bottle"),
 			TransactionDate: d("2026-05-15"), Source: "manual"},
-		// account B, cat X, date 2026-05-20, "Whole Foods returns"
-		{AccountID: accB.ID, CategoryID: &catX.ID, Amount: decimal.NewFromInt(25), Currency: "USD",
+		{UserID: userID, AccountID: accB.ID, CategoryID: &catX.ID, Amount: decimal.NewFromInt(25), Currency: "USD",
 			Description: desc("Whole Foods returns"), MerchantName: desc("Whole Foods"),
 			TransactionDate: d("2026-05-20"), Source: "manual"},
-		// account A, no category, date 2026-04-01, "Old transaction"
-		{AccountID: accA.ID, Amount: decimal.NewFromInt(-1), Currency: "USD",
+		{UserID: userID, AccountID: accA.ID, Amount: decimal.NewFromInt(-1), Currency: "USD",
 			Description: desc("Old transaction"), MerchantName: desc("Misc"),
 			TransactionDate: d("2026-04-01"), Source: "manual"},
 	}
@@ -138,13 +134,13 @@ func seedTxFixture(t *testing.T, g *gorm.DB) (int64, int64, int64, int64, []int6
 		}
 	})
 
-	return accA.ID, accB.ID, catX.ID, catY.ID, ids
+	return userID, accA.ID, accB.ID, catX.ID, catY.ID, ids
 }
 
 func TestTransactionRepository_List_Filters(t *testing.T) {
 	g := openTestDB(t)
 	repo := repository.NewTransactionRepository(g)
-	accA, accB, catX, _, ids := seedTxFixture(t, g)
+	userID, accA, accB, catX, _, ids := seedTxFixture(t, g)
 
 	// Helper: assert that the returned rows are EXACTLY the expected fixture indices.
 	// idsByIndex maps fixture row index (0..4) → tx id. Tests reference indices so
@@ -239,7 +235,7 @@ func TestTransactionRepository_List_Filters(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, total, err := repo.List(context.Background(), tc.filter)
+			got, total, err := repo.List(context.Background(), userID, tc.filter)
 			if err != nil {
 				t.Fatalf("List: %v", err)
 			}
@@ -289,13 +285,13 @@ func TestTransactionRepository_List_Filters(t *testing.T) {
 func TestTransactionRepository_List_ExcludesSoftDeleted(t *testing.T) {
 	g := openTestDB(t)
 	repo := repository.NewTransactionRepository(g)
-	accA, _, _, _, ids := seedTxFixture(t, g)
+	userID, accA, _, _, _, ids := seedTxFixture(t, g)
 
 	// Soft-delete fixture row index 1 (account A, 2026-05-12).
-	if err := repo.SoftDelete(context.Background(), ids[1]); err != nil {
+	if err := repo.SoftDelete(context.Background(), userID, ids[1]); err != nil {
 		t.Fatalf("soft delete: %v", err)
 	}
-	got, total, err := repo.List(context.Background(), repository.TransactionFilter{AccountID: int64Ptr(accA)})
+	got, total, err := repo.List(context.Background(), userID, repository.TransactionFilter{AccountID: int64Ptr(accA)})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -305,6 +301,29 @@ func TestTransactionRepository_List_ExcludesSoftDeleted(t *testing.T) {
 	gotIDs := txIDSet(got)
 	if _, ok := gotIDs[ids[1]]; ok {
 		t.Errorf("soft-deleted id %d appeared in list", ids[1])
+	}
+}
+
+// TestTransactionRepository_List_TenantIsolation asserts that a different
+// user's data is never returned — the multi-tenant rule per .claude/rules/testing.md.
+func TestTransactionRepository_List_TenantIsolation(t *testing.T) {
+	g := openTestDB(t)
+	repo := repository.NewTransactionRepository(g)
+	_, accA, _, _, _, ids := seedTxFixture(t, g)
+
+	otherUserID := seedTestUser(t, g)
+
+	// Same filter, different tenant — must see nothing.
+	got, total, err := repo.List(context.Background(), otherUserID, repository.TransactionFilter{AccountID: int64Ptr(accA)})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 0 || len(got) != 0 {
+		t.Errorf("other user got %d rows (total=%d); want 0", len(got), total)
+	}
+	// And GetByID must 404 (ErrNotFound).
+	if _, err := repo.GetByID(context.Background(), otherUserID, ids[0]); err != repository.ErrNotFound {
+		t.Errorf("GetByID across tenants: err = %v, want ErrNotFound", err)
 	}
 }
 

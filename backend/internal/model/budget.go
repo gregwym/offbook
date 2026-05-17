@@ -9,6 +9,7 @@ import (
 
 type Budget struct {
 	ID         int64           `gorm:"primaryKey" json:"id"`
+	UserID     int64           `gorm:"not null" json:"user_id"`
 	CategoryID int64           `gorm:"not null" json:"category_id"`
 	Period     string          `gorm:"not null" json:"period"`
 	Amount     decimal.Decimal `gorm:"type:numeric(30,18);not null" json:"amount"`

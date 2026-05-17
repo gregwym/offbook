@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/service/auth"
 )
 
 type DashboardHandler struct {
@@ -32,7 +33,7 @@ func (h *DashboardHandler) Register(g *gin.RouterGroup) {
 // AmountDisplay component is the only place these get formatted.
 func (h *DashboardHandler) Summary(c *gin.Context) {
 	period := c.DefaultQuery("period", service.PeriodCurrentMonth)
-	summary, err := h.svc.Summarize(c.Request.Context(), period)
+	summary, err := h.svc.Summarize(c.Request.Context(), auth.MustUserID(c.Request.Context()), period)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidPeriod) {
 			c.JSON(http.StatusBadRequest, gin.H{

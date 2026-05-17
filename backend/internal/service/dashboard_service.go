@@ -64,12 +64,12 @@ func (s *DashboardService) SetClock(fn func() time.Time) {
 	s.now = fn
 }
 
-func (s *DashboardService) Summarize(ctx context.Context, period string) (*DashboardSummary, error) {
+func (s *DashboardService) Summarize(ctx context.Context, userID int64, period string) (*DashboardSummary, error) {
 	from, to, err := resolvePeriod(period, s.now())
 	if err != nil {
 		return nil, err
 	}
-	agg, err := s.repo.Summarize(ctx, from, to)
+	agg, err := s.repo.Summarize(ctx, userID, from, to)
 	if err != nil {
 		return nil, err
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/service/auth"
 )
 
 // PIIHandler exposes the deliberate, auditable PII access points.
@@ -33,7 +34,8 @@ func (h *PIIHandler) GetForAccount(c *gin.Context) {
 	if !ok {
 		return
 	}
-	pii, err := h.svc.GetAccountPII(c.Request.Context(), id)
+	uid := auth.MustUserID(c.Request.Context())
+	pii, err := h.svc.GetAccountPII(c.Request.Context(), uid, id)
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -59,12 +61,13 @@ func (h *PIIHandler) SetForAccount(c *gin.Context) {
 		})
 		return
 	}
-	if err := h.svc.SetAccountPII(c.Request.Context(), id, req); err != nil {
+	uid := auth.MustUserID(c.Request.Context())
+	if err := h.svc.SetAccountPII(c.Request.Context(), uid, id, req); err != nil {
 		h.writeError(c, err)
 		return
 	}
 	// Read back so the client sees the full current state after the upsert.
-	pii, err := h.svc.GetAccountPII(c.Request.Context(), id)
+	pii, err := h.svc.GetAccountPII(c.Request.Context(), uid, id)
 	if err != nil {
 		h.writeError(c, err)
 		return

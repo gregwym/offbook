@@ -9,6 +9,7 @@ import (
 
 type Transaction struct {
 	ID                    int64           `gorm:"primaryKey" json:"id"`
+	UserID                int64           `gorm:"not null" json:"user_id"`
 	AccountID             int64           `gorm:"not null" json:"account_id"`
 	CategoryID            *int64          `json:"category_id,omitempty"`
 	Amount                decimal.Decimal `gorm:"type:numeric(30,18);not null" json:"amount"`

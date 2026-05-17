@@ -7,7 +7,7 @@ import (
 
 type AIMessage struct {
 	ID              int64           `gorm:"primaryKey" json:"id"`
-	ConversationID  int64           `gorm:"not null" json:"conversation_id"`
+	ThreadID        int64           `gorm:"column:thread_id;not null" json:"thread_id"`
 	Role            string          `gorm:"not null" json:"role"`
 	Content         string          `gorm:"not null" json:"content"`
 	ContextSnapshot json.RawMessage `gorm:"type:jsonb" json:"context_snapshot,omitempty"`
