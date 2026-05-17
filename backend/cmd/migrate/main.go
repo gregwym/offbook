@@ -34,7 +34,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	cfg := config.Load()
+	cfg := config.MustLoad()
 	if cfg.DatabaseURL == "" {
 		log.Fatal("DATABASE_URL is empty")
 	}
