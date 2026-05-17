@@ -79,7 +79,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	// service that returns ErrNotConfigured for every call. Handler still
 	// registers either way so the frontend gets a clear PLAID_NOT_CONFIGURED
 	// error rather than a 404.
-	plaidHandler := handler.NewPlaidHandler(newPlaidService(cfg, gormDB))
+	plaidHandler := handler.NewPlaidHandler(newPlaidService(cfg, gormDB, accountRepo, piiSvc))
 
 	v1 := r.Group("/api/v1")
 	{
@@ -110,9 +110,9 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 // whose methods return ErrNotConfigured. Panics on a configured-but-broken
 // secret key — config.Load() already validated key length, so this should
 // be unreachable in practice.
-func newPlaidService(cfg config.Config, gormDB *gorm.DB) *plaidsvc.Service {
+func newPlaidService(cfg config.Config, gormDB *gorm.DB, acctRepo repository.AccountRepository, piiSvc *service.PIIService) *plaidsvc.Service {
 	if !cfg.PlaidConfigured() {
-		return plaidsvc.NewService(nil, nil, nil)
+		return plaidsvc.NewService(nil, nil, nil, nil, nil)
 	}
 	client, err := plaidsvc.NewSDKClient(plaidsvc.Config{
 		ClientID: cfg.PlaidClientID,
@@ -126,7 +126,13 @@ func newPlaidService(cfg config.Config, gormDB *gorm.DB) *plaidsvc.Service {
 	if err != nil {
 		panic("plaid: secretbox: " + err.Error())
 	}
-	return plaidsvc.NewService(client, box, repository.NewPlaidItemRepository(gormDB))
+	return plaidsvc.NewService(
+		client,
+		box,
+		repository.NewPlaidItemRepository(gormDB),
+		acctRepo,
+		piiSvc,
+	)
 }
 
 func corsMiddleware(origin string) gin.HandlerFunc {

@@ -109,7 +109,7 @@ func TestService_CreateLinkToken_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("secretbox: %v", err)
 	}
-	svc := plaidsvc.NewService(client, box, &fakeRepo{})
+	svc := plaidsvc.NewService(client, box, &fakeRepo{}, nil, nil)
 
 	tok, err := svc.CreateLinkToken(context.Background(), 42)
 	if err != nil {
@@ -134,7 +134,7 @@ func TestService_ExchangePublicToken_HappyPath(t *testing.T) {
 	client, _ := plaidsvc.NewSDKClient(plaidsvc.Config{ClientID: "cid", Secret: "csec", Env: srv.URL})
 	box, _ := crypto.NewSecretBox(newTestKey())
 	repo := &fakeRepo{}
-	svc := plaidsvc.NewService(client, box, repo)
+	svc := plaidsvc.NewService(client, box, repo, nil, nil)
 
 	item, err := svc.ExchangePublicToken(context.Background(), 7, "public-sandbox-xyz")
 	if err != nil {
@@ -173,7 +173,7 @@ func TestService_ExchangePublicToken_RejectsEmpty(t *testing.T) {
 	srv, _ := fakePlaid(t)
 	client, _ := plaidsvc.NewSDKClient(plaidsvc.Config{ClientID: "cid", Secret: "csec", Env: srv.URL})
 	box, _ := crypto.NewSecretBox(newTestKey())
-	svc := plaidsvc.NewService(client, box, &fakeRepo{})
+	svc := plaidsvc.NewService(client, box, &fakeRepo{}, nil, nil)
 
 	if _, err := svc.ExchangePublicToken(context.Background(), 1, "   "); err != plaidsvc.ErrInvalidPublicToken {
 		t.Fatalf("expected ErrInvalidPublicToken, got %v", err)
@@ -181,7 +181,7 @@ func TestService_ExchangePublicToken_RejectsEmpty(t *testing.T) {
 }
 
 func TestService_NotConfigured(t *testing.T) {
-	svc := plaidsvc.NewService(nil, nil, nil)
+	svc := plaidsvc.NewService(nil, nil, nil, nil, nil)
 	if svc.Configured() {
 		t.Fatal("expected !Configured")
 	}
