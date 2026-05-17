@@ -209,9 +209,22 @@ Query params: `?limit=50&offset=0`. Default limit: 50, max: 200.
 RFC3339 in JSON. `DATE` columns as `"2024-01-15"`. `TIMESTAMPTZ` as `"2024-01-15T10:30:00Z"`.
 
 ### Soft deletes
-All queries exclude `deleted_at IS NOT NULL` by default. GORM handles this via model embedding.
+Domain tables that carry `deleted_at TIMESTAMPTZ`: `accounts`, `transactions`, `categories`, `budgets`, `savings_goals`, `categorization_rules`, `ai_threads`. Queries exclude `deleted_at IS NOT NULL` by default (GORM `gorm.DeletedAt` embedding).
+
+Tables that do **not** carry `deleted_at` (by design):
+- `investments` — append-only snapshots; soft-deleting a snapshot silently corrupts historical state.
+- `ai_messages` — turn log; cascades on `ai_threads.deleted_at` via thread scoping.
+- `ingestion_jobs` — append-only audit trail.
+- `pii_store` — hard-delete only (right-to-forget semantics; see PII Isolation above).
+- `sessions` — short-lived auth state; hard-delete on signout/expiry.
+- `household_members` — uses `left_at` + `purged_at` for the grace-period lifecycle, not `deleted_at`. See [ADR-0007](ADR/0007-member-lifecycle.md).
+
+See also `.claude/rules/database.md`.
 
 ## Go Patterns
+
+### Transactions
+The GORM connection is opened with `SkipDefaultTransaction: true` (`backend/internal/db/db.go`) — single-row writes skip the implicit per-statement transaction for throughput. **Any service method that writes more than one row, or across more than one table, MUST wrap the work in `db.Transaction(func(tx *gorm.DB) error { ... })`** or torn updates become possible (e.g. account row created but its `pii_store` row fails to insert).
 
 ### Dependency injection
 ```go
