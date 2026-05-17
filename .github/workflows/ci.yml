@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-progress runs when a new commit lands on the same ref —
+# saves runner minutes on rapid pushes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-lint:
+    name: Backend lint (golangci-lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The official golangci-lint-action pins a binary release that is
+      # frequently behind on Go toolchain support — the v2.5.0 binary
+      # was built with Go 1.25 and refuses to lint a Go 1.26 module
+      # ("language version used to build golangci-lint is lower").
+      # The Docker image keeps pace and is the same surface `make lint`
+      # uses locally, so CI and dev see identical results.
+      - name: golangci-lint (docker)
+        run: docker run --rm -v "$PWD/backend":/app -w /app golangci/golangci-lint:latest-alpine golangci-lint run ./...
+
+  backend-test:
+    name: Backend test (go test against Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: offbook
+          POSTGRES_PASSWORD: offbook
+          POSTGRES_DB: offbook
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U offbook"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://offbook:offbook@localhost:5432/offbook?sslmode=disable
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Apply migrations
+        run: go run ./cmd/migrate up
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        # -p 1 serializes package execution. Integration tests share one
+        # DATABASE_URL, so parallel packages step on each other's rows.
+        run: go test -race -p 1 ./...
+
+  frontend-build:
+    name: Frontend build (pnpm build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      - name: Build
+        run: pnpm build
