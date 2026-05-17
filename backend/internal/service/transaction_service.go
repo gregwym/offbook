@@ -128,6 +128,13 @@ func (s *TransactionService) Create(ctx context.Context, in CreateTransactionInp
 	return t, nil
 }
 
+// List returns transactions matching the filter, plus the total count
+// (count uses the same WHERE clause sans limit/offset so the UI can render
+// pagination controls).
+func (s *TransactionService) List(ctx context.Context, f repository.TransactionFilter) ([]model.Transaction, int64, error) {
+	return s.repo.List(ctx, f)
+}
+
 func (s *TransactionService) Get(ctx context.Context, id int64) (*model.Transaction, error) {
 	t, err := s.repo.GetByID(ctx, id)
 	if err != nil {
