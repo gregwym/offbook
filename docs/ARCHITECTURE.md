@@ -8,6 +8,7 @@ Privacy-first personal finance app. All data stays local. Self-hostable via Dock
 2. **Precision over convenience** — All monetary values use PostgreSQL `NUMERIC(30,18)` and Go `shopspring/decimal`. No floats, no integer cents. Required for crypto (18 decimal places).
 3. **Local-first** — Runs on localhost. No external services except Plaid (opt-in) and AI providers (opt-in, data-minimized).
 4. **Soft deletes everywhere** — Financial data is never hard-deleted. `deleted_at TIMESTAMPTZ` on all domain tables.
+5. **Multi-tenant by structure** — Every domain row is owned by a `user_id`. Cross-user reads happen only through the household aggregator (see [ADR-0008](ADR/0008-household-aggregation-layer.md)), which enforces opt-in account sharing and excludes PII by construction.
 
 ## Tech Stack
 
@@ -32,10 +33,16 @@ backend/
 │   ├── handler/                  # Gin handlers — thin, parse request → call service → respond
 │   ├── service/                  # Business logic — receives repo interfaces
 │   │   ├── ai/                   # AI provider protocol, context builder, service
+│   │   ├── auth/                 # Session middleware, signup, first-boot wizard
+│   │   ├── household/            # Aggregator — ONLY cross-user reader (ADR-0008)
 │   │   └── pii_service.go        # ONLY service with pii_repo access
 │   ├── repository/               # DB access — interfaces + GORM implementations
 │   │   └── pii_repo.go           # Only injected into pii_service
 │   └── router/router.go          # Route registration, middleware
+├── cmd/
+│   ├── server/                   # Entry point
+│   ├── migrate/                  # golang-migrate wrapper
+│   └── household-purge/          # Grace-period purge runner (deferred — see ADR-0007)
 ├── migrations/                   # golang-migrate SQL files (000001_init.up.sql, etc.)
 ├── go.mod
 └── Dockerfile
@@ -77,6 +84,41 @@ User message → ai_service.go → context_builder.go (queries DB, EXCLUDES pii_
 
 **Critical constraint:** `context_builder.go` and `ai_service.go` must NEVER receive `pii_repo` as a dependency. This is the architectural enforcement of PII isolation.
 
+### Household Aggregation
+```
+Household surface → aggregator.go (service/household)
+                         ↓
+                    Reads: tx_repo, acct_repo, share_repo, member_repo,
+                           sb_repo, sg_repo, ai_thread_repo
+                         ↓
+                    Filters: visibility ≥ balance_only,
+                             member.left_at IS NULL (live aggregates)
+                         ↓
+                    Returns: sums, counts, percentages — never raw txns
+```
+
+**Critical constraint:** `service/household/` must NEVER import `pii_repo`. Aggregator outputs contain no PII and no raw transaction rows. See [ADR-0008](ADR/0008-household-aggregation-layer.md).
+
+## Multi-Tenant Model
+
+One instance hosts many users; each user belongs to at most one household. Two scopes — personal and household — drive mutually exclusive route lists in the sidebar. Account-level visibility (3 levels) gates what household members see. Member lifecycle is voluntary-leave + grace-period rejoin. Full rationale in [ADR-0006](ADR/0006-multi-tenant-model.md) and [ADR-0007](ADR/0007-member-lifecycle.md).
+
+**Tables added in M2.5:**
+- `users` — auth principal. `email`, `password_hash`, `is_admin`, `last_scope`, `default_scope`
+- `sessions` — cookie-backed; rotated on signin
+- `instance_config` — singleton row; `signup_mode` ∈ {`local_multi_tenant`, `invite_only`}
+- `households` — `name`, `owner_id`, `grace_period_days` (default 30)
+- `household_members` — `household_id`, `user_id`, `role` ∈ {`owner`, `contributor`, `view_only`}, `joined_at`, `left_at`, `purged_at`. Soft-delete-safe unique on `(household_id, user_id) WHERE purged_at IS NULL`.
+- `household_invites` — token-based invites for `invite_only` mode
+- `account_shares` — `account_id`, `household_id`, `visibility` ∈ {`private`, `balance_only`, `balance_and_txns`}. Absence of row = `private`. Unique on `(account_id, household_id) WHERE deleted_at IS NULL`.
+- `shared_budgets`, `shared_goals` — household-scoped versions of personal counterparts (tables only in M2.5; CRUD/UI later)
+
+**Tables augmented in M2.5:**
+- `accounts`, `transactions`, `budgets`, `savings_goals`, `investments` — add `user_id BIGINT NOT NULL REFERENCES users(id)`. All M2-era endpoints derive `user_id` from session.
+- `ai_conversations` is renamed to `ai_threads` and gains `user_id`, `household_id NULL`, `shared_with_household BOOLEAN DEFAULT false`. `ai_messages.conversation_id` becomes `thread_id`.
+
+**Scope state:** `users.last_scope` ∈ {`personal`, `household`}. `GET /me/scope` returns active + available scopes. `PATCH /me/scope` persists the switch. Defaults to `household` if the user is a member of one, else `personal`.
+
 ## PII Isolation
 
 ### Table: `pii_store`
@@ -95,7 +137,9 @@ UNIQUE (entity_type, entity_id, field_name)
 - `pii_repo.go` — the ONLY repository that reads/writes `pii_store`
 - `pii_service.go` — the ONLY service that receives `pii_repo`
 - All other services and the AI layer CANNOT access PII
+- The household aggregator (`service/household/`) CANNOT access PII
 - Frontend accesses PII via explicit `/accounts/:id/pii` endpoint — deliberate, auditable
+- Ownership of a `pii_store` row is transitive through `entity_id`: PII belongs to whichever user owns the referenced account/transaction. `pii_service.go` must check the entity's `user_id` matches the session before returning the row.
 
 ### What goes in pii_store vs main tables
 
@@ -136,9 +180,10 @@ Otherwise re-importing a previously-deleted transaction fails.
 - **budgets** — `category_id, period ('monthly'|'weekly'|'annual'), amount, rollover, is_active`
 - **savings_goals** — `name, target_amount, current_amount, target_date, account_id`
 - **investments** — append-only snapshots: `account_id, ticker, name, asset_class, quantity, cost_basis, market_value, snapshot_date, source`
-- **ai_conversations** — `id, title, created_at, updated_at`
-- **ai_messages** — `conversation_id, role, content, context_snapshot (JSONB), provider, model_name, created_at`
+- **ai_threads** — `id, user_id, household_id NULL, shared_with_household BOOL DEFAULT false, title, created_at, updated_at, deleted_at` (renamed from `ai_conversations` in M2.5)
+- **ai_messages** — `thread_id, role, content, context_snapshot (JSONB), provider, model_name, created_at`
 - **pii_store** — see PII Isolation section
+- **users / sessions / instance_config / households / household_members / household_invites / account_shares / shared_budgets / shared_goals** — see Multi-Tenant Model section
 
 ## API Conventions
 
@@ -223,6 +268,7 @@ func (h *AccountHandler) Create(c *gin.Context) {
 | `PORT` | No | Backend port (default: 8000) |
 | `FRONTEND_URL` | No | CORS origin (default: http://localhost:5173) |
 | `MIGRATIONS_PATH` | No | Path to golang-migrate SQL dir (default: `migrations`) |
+| `SESSION_SECRET` | Yes (M2.5+) | HMAC key for cookie sessions. Generate with `openssl rand -hex 32`. |
 | `PLAID_CLIENT_ID` | No | Plaid API client ID |
 | `PLAID_SECRET` | No | Plaid API secret |
 | `PLAID_ENV` | No | Plaid environment: sandbox, development, production |
@@ -241,3 +287,10 @@ func (h *AccountHandler) Create(c *gin.Context) {
 2. Add provider config to `config.go`
 3. Register in `ai_service.go` provider map
 4. **Never inject pii_repo into the provider**
+
+### Adding a new household surface
+1. Add a method to `service/household/aggregator.go` (e.g. `CashflowByMonth`)
+2. Define a return struct with only aggregated fields (no `model.Transaction`, no `model.Account` rows)
+3. Add a privacy test in `aggregator_test.go` asserting: private accounts excluded, in-grace members excluded from live aggregates, no raw transactions in return type
+4. Add the handler under `/h/...` and have it call only the aggregator — never repositories directly
+5. **Never import `pii_repo` into `service/household/`**

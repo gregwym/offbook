@@ -49,6 +49,16 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 - Instead: `gh issue create --title "..." --body "..." --label backlog`
 - Then return to current work
 
+## Scopes & Households (M2.5+)
+- Every domain row (account, transaction, budget, savings goal, investment, AI thread) carries `user_id NOT NULL`. Always derive `user_id` from the session, never trust it in the request body.
+- Two scopes per user: **personal** (own book) and **household** (shared). Mutually exclusive route lists. Default at login: `household` if member of one, else `personal`. Persists per user in `users.last_scope`.
+- A user belongs to **at most one household**. Many households can coexist on the same instance without seeing each other.
+- Account-level visibility, 3 states: `private` (default; no `account_shares` row) | `balance_only` | `balance_and_txns`. Set per account per household. Sharing an account shares all its transactions; there's no per-transaction toggle.
+- **Cross-user reads only via the aggregator** (`internal/service/household/aggregator.go`). Handlers under `/h/...` call the aggregator, not repositories. The aggregator never imports `pii_repo`, never returns raw transaction rows, and excludes `private` accounts and in-grace members from live aggregates. Live = current period; historical = preserved across grace expiry and purge.
+- **Auth modes set at first boot:** `local_multi_tenant` (anyone signs up) or `invite_only` (admin issues tokens). Default = `invite_only`. The first user to hit `/setup/admin` becomes admin and picks the mode.
+- **Lifecycle:** voluntary leave is self-service (no owner approval). Last/only owner leaving → `409 LAST_OWNER`. Rejoin within `grace_period_days` (default 30, owner-configurable) auto-resumes prior shares and shared-thread visibility. After grace expires, links are purged but past contributions remain in historical aggregates.
+- See [ADR-0006](docs/ADR/0006-multi-tenant-model.md), [ADR-0007](docs/ADR/0007-member-lifecycle.md), [ADR-0008](docs/ADR/0008-household-aggregation-layer.md), and `docs/designs/App Hierarchy v4.html`.
+
 ## Key References
 - Architecture: @docs/ARCHITECTURE.md
 - Decisions: @docs/ADR/
