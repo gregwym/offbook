@@ -6,8 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	plaidsvc "github.com/gregwym/offbook/backend/internal/service/plaid"
 	"github.com/gregwym/offbook/backend/internal/service/auth"
+	plaidsvc "github.com/gregwym/offbook/backend/internal/service/plaid"
 )
 
 type PlaidHandler struct {
@@ -63,10 +63,10 @@ func (h *PlaidHandler) ExchangePublicToken(c *gin.Context) {
 	// reference this connection in subsequent calls.
 	c.JSON(http.StatusCreated, gin.H{
 		"data": gin.H{
-			"id":            item.ID,
-			"item_id":       item.PlaidItemID,
-			"institution":   item.InstitutionName,
-			"status":        item.Status,
+			"id":          item.ID,
+			"item_id":     item.PlaidItemID,
+			"institution": item.InstitutionName,
+			"status":      item.Status,
 		},
 	})
 }
