@@ -175,9 +175,12 @@ Otherwise re-importing a previously-deleted transaction fails.
 - **accounts** — `id, name, institution_slug, account_type, currency, balance, last_four, plaid_account_id, plaid_item_id, is_active, created_at, updated_at, deleted_at`
 - **transactions** — `id, account_id, category_id, amount, currency, description, description_clean, merchant_name, transaction_date, posted_date, source, external_id, plaid_transaction_id, categorization_method, is_transfer, transfer_pair_id, notes, created_at, updated_at, deleted_at`
   - `source`: `'plaid' | 'csv' | 'pdf' | 'manual'`
+  - `categorization_method`: `'manual'` (user picked) | `'plaid_default'` (auto-assigned from `plaid_category_map` at Plaid sync). Null when the row is uncategorized. Manual always wins on merge — see `service/plaid/transaction_mapping.go::MergePlaidUpdate`.
   - Partial unique index on `(account_id, external_id) WHERE deleted_at IS NULL` for deduplication (see Soft-delete-safe uniqueness above)
+  - Partial unique index on `(user_id, plaid_transaction_id) WHERE deleted_at IS NULL AND plaid_transaction_id IS NOT NULL` (migration 000004) — user-scoped Plaid dedup
 - **categories** — hierarchical via `parent_id`, seeded with ~20 system categories
 - **categorization_rules** — `pattern, category_id, match_type ('contains'|'regex'|'exact'), priority`
+- **plaid_category_map** — `plaid_primary, plaid_detailed, category_id`. Static lookup table (migration 000005) mapping the Plaid `personal_finance_category` taxonomy to local categories. Editable by SQL migration only — keeps the mapping reviewable in git. Loaded once into a `CategoryMapper` at service construction.
 - **budgets** — `category_id, period ('monthly'|'weekly'|'annual'), amount, rollover, is_active`
 - **savings_goals** — `name, target_amount, current_amount, target_date, account_id`
 - **investments** — append-only snapshots: `account_id, ticker, name, asset_class, quantity, cost_basis, market_value, snapshot_date, source`

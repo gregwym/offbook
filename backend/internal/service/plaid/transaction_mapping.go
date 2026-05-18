@@ -26,7 +26,12 @@ import (
 //
 // userID + accountID are supplied by the service after resolving the
 // session user and matching the Plaid account_id to a local accounts.id.
-func MapPlaidTransaction(p PlaidTransaction, userID, accountID int64) (model.Transaction, error) {
+//
+// The mapper is optional (nil = no auto-categorization). When non-nil and
+// the (PFCPrimary, PFCDetailed) pair resolves, CategoryID is set and
+// CategorizationMethod is "plaid_default". User-edited values always win
+// on subsequent updates — see MergePlaidUpdate.
+func MapPlaidTransaction(p PlaidTransaction, userID, accountID int64, mapper *CategoryMapper) (model.Transaction, error) {
 	if p.PlaidTransactionID == "" {
 		return model.Transaction{}, fmt.Errorf("plaid: transaction_id empty")
 	}
@@ -58,7 +63,7 @@ func MapPlaidTransaction(p PlaidTransaction, userID, accountID int64) (model.Tra
 		description = &v
 	}
 
-	return model.Transaction{
+	out := model.Transaction{
 		UserID:             userID,
 		AccountID:          accountID,
 		Amount:             p.Amount.Neg(), // sign flip, see header
@@ -70,7 +75,14 @@ func MapPlaidTransaction(p PlaidTransaction, userID, accountID int64) (model.Tra
 		Source:             source,
 		ExternalID:         &externalID,
 		PlaidTransactionID: &plaidID,
-	}, nil
+	}
+
+	if catID, ok := mapper.MapPlaidCategory(p.PFCPrimary, p.PFCDetailed); ok {
+		out.CategoryID = &catID
+		method := CategorizationMethodPlaidDefault
+		out.CategorizationMethod = &method
+	}
+	return out, nil
 }
 
 // MergePlaidUpdate overlays an incoming /transactions/sync `modified` entry
@@ -86,8 +98,8 @@ func MapPlaidTransaction(p PlaidTransaction, userID, accountID int64) (model.Tra
 // The function is pure — it returns the merged row without writing. Caller
 // passes the result to the repo's update method. accountID is supplied
 // (rather than re-derived) so the merge stays independent of repo state.
-func MergePlaidUpdate(existing model.Transaction, incoming PlaidTransaction, accountID int64) (model.Transaction, error) {
-	mapped, err := MapPlaidTransaction(incoming, existing.UserID, accountID)
+func MergePlaidUpdate(existing model.Transaction, incoming PlaidTransaction, accountID int64, mapper *CategoryMapper) (model.Transaction, error) {
+	mapped, err := MapPlaidTransaction(incoming, existing.UserID, accountID, mapper)
 	if err != nil {
 		return model.Transaction{}, err
 	}
@@ -100,11 +112,19 @@ func MergePlaidUpdate(existing model.Transaction, incoming PlaidTransaction, acc
 	merged.MerchantName = mapped.MerchantName
 	merged.TransactionDate = mapped.TransactionDate
 	merged.PostedDate = mapped.PostedDate
+	// Category: a non-null existing CategoryID is sacred — that's either
+	// the user's manual pick OR a prior plaid_default that the user has
+	// implicitly accepted. Only fill from the mapper when the row has no
+	// category yet (e.g., previously imported before the mapper existed,
+	// or Plaid only just classified this transaction).
+	if existing.CategoryID == nil && mapped.CategoryID != nil {
+		merged.CategoryID = mapped.CategoryID
+		merged.CategorizationMethod = mapped.CategorizationMethod
+	}
 	// User-edited fields — preserve. Intentionally not enumerated as
 	// "deny-list overlay" because the safer default for unknown future
 	// fields is "leave it alone".
-	//   existing.Notes, existing.CategoryID, existing.IsTransfer,
-	//   existing.TransferPairID, existing.CategorizationMethod
+	//   existing.Notes, existing.IsTransfer, existing.TransferPairID
 	// remain on `merged`.
 	return merged, nil
 }

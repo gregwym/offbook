@@ -146,7 +146,7 @@ func TestService_SyncTransactions_PaginatesAndPersistsCursor(t *testing.T) {
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, nil, g)
 
 	// First full pull
 	r, err := svc.SyncTransactions(context.Background(), userID, "item-sync-1")
@@ -238,7 +238,7 @@ func TestService_SyncTransactions_UnknownAccountErrors(t *testing.T) {
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, nil, g)
 	_, err := svc.SyncTransactions(context.Background(), userID, "item-orphan")
 	if err == nil {
 		t.Fatal("expected error when plaid_account_id can't resolve to a local account")

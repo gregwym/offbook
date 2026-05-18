@@ -22,7 +22,7 @@ func TestMapPlaidTransaction_SignFlipAndDates(t *testing.T) {
 		Date:               "2026-05-16",
 		AuthorizedDate:     &authDate,
 	}
-	got, err := plaidsvc.MapPlaidTransaction(in, 7, 42)
+	got, err := plaidsvc.MapPlaidTransaction(in, 7, 42, nil)
 	if err != nil {
 		t.Fatalf("MapPlaidTransaction: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestMapPlaidTransaction_NilAuthorizedDate(t *testing.T) {
 		Name:               "Payroll deposit",
 		Date:               "2026-05-01",
 	}
-	got, err := plaidsvc.MapPlaidTransaction(in, 1, 2)
+	got, err := plaidsvc.MapPlaidTransaction(in, 1, 2, nil)
 	if err != nil {
 		t.Fatalf("MapPlaidTransaction: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestMapPlaidTransaction_PrecisionPreserved(t *testing.T) {
 		Name:     "Micro txn",
 		Date:     "2026-05-01",
 	}
-	got, err := plaidsvc.MapPlaidTransaction(in, 1, 2)
+	got, err := plaidsvc.MapPlaidTransaction(in, 1, 2, nil)
 	if err != nil {
 		t.Fatalf("MapPlaidTransaction: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestMapPlaidTransaction_RejectsBadDate(t *testing.T) {
 		Amount:             decimal.NewFromInt(1),
 		Date:               "not-a-date",
 	}
-	if _, err := plaidsvc.MapPlaidTransaction(in, 1, 2); err == nil {
+	if _, err := plaidsvc.MapPlaidTransaction(in, 1, 2, nil); err == nil {
 		t.Fatal("expected parse error for malformed date")
 	}
 }
@@ -119,7 +119,7 @@ func TestMapPlaidTransaction_DateIsUTC(t *testing.T) {
 		Amount:             decimal.NewFromInt(1),
 		Date:               "2026-01-31",
 	}
-	got, err := plaidsvc.MapPlaidTransaction(in, 1, 2)
+	got, err := plaidsvc.MapPlaidTransaction(in, 1, 2, nil)
 	if err != nil {
 		t.Fatalf("MapPlaidTransaction: %v", err)
 	}
