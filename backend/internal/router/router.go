@@ -51,7 +51,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	categorySvc := service.NewCategoryService(categoryRepo)
 	categoryHandler := handler.NewCategoryHandler(categorySvc)
 
-	ruleSvc := service.NewCategorizationRuleService(ruleRepo, categoryRepo)
+	ruleSvc := service.NewCategorizationRuleService(ruleRepo, categoryRepo).WithBulkApply(transactionRepo, gormDB)
 	ruleHandler := handler.NewCategorizationRuleHandler(ruleSvc)
 
 	dashboardRepo := repository.NewDashboardRepository(gormDB)
