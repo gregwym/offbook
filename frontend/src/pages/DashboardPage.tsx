@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertTriangle } from 'lucide-react'
 import { AmountDisplay } from '../components/AmountDisplay'
+import { CashFlowChart, NetWorthChart, SpendByCategoryChart } from '../components/DashboardCharts'
 import { getBudgetAlerts, getDashboardSummary } from '../api/dashboard'
 import {
   DASHBOARD_PERIODS,
@@ -122,6 +123,14 @@ export function DashboardPage() {
           {summary.period.from.slice(0, 10)} → {summary.period.to.slice(0, 10)}
         </p>
       )}
+
+      <div className="mt-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <SpendByCategoryChart />
+        <NetWorthChart />
+      </div>
+      <div className="mt-4">
+        <CashFlowChart />
+      </div>
     </div>
   )
 }

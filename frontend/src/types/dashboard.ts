@@ -25,3 +25,25 @@ export type BudgetAlert = {
   pct: number
   severity: 'warning' | 'over'
 }
+
+// Chart payload types — mirror service.SpendByCategoryItem, CashFlowMonth,
+// NetWorthPoint. Money fields are decimal strings; parse to Number only at
+// the chart boundary.
+export type SpendByCategoryItem = {
+  category_id: number | null
+  name: string
+  color?: string
+  amount: string
+}
+
+export type CashFlowMonth = {
+  month: string // YYYY-MM-DD (first of month)
+  inflow: string
+  outflow: string
+  net: string
+}
+
+export type NetWorthPoint = {
+  date: string // YYYY-MM-DD (month-end)
+  total: string
+}
