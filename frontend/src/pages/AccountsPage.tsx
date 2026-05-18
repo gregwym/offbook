@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { PIIPanel } from '../components/PIIPanel'
+import { SyncStatusPill } from '../components/SyncStatusPill'
 import { useAccountsStore } from '../store/accountsStore'
 import {
   ACCOUNT_TYPES,
@@ -52,15 +53,16 @@ export function AccountsPage() {
               <th className="px-4 py-2 text-left">Last 4</th>
               <th className="px-4 py-2 text-right">Balance</th>
               <th className="px-4 py-2 text-center">Active</th>
+              <th className="px-4 py-2 text-left">Sync</th>
               <th className="px-4 py-2"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading && accounts.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>
+              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>
             )}
             {!loading && accounts.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">No accounts yet.</td></tr>
+              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">No accounts yet.</td></tr>
             )}
             {accounts.map((a) => (
               <tr key={a.id} className="hover:bg-gray-50">
@@ -75,6 +77,9 @@ export function AccountsPage() {
                   <span className={a.is_active ? 'text-emerald-700' : 'text-gray-400'}>
                     {a.is_active ? 'yes' : 'no'}
                   </span>
+                </td>
+                <td className="px-4 py-2">
+                  <SyncStatusPill account={a} />
                 </td>
                 <td className="px-4 py-2 text-right">
                   <button

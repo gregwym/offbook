@@ -23,7 +23,10 @@ type PlaidItem struct {
 	Status          string         `gorm:"not null;default:active" json:"status"`
 	Cursor          *string        `json:"-"`
 	LastSyncedAt    *time.Time     `gorm:"column:last_synced_at" json:"last_synced_at,omitempty"`
-	LastError       *string        `gorm:"column:last_error" json:"last_error,omitempty"`
+	LastSyncError   *string        `gorm:"column:last_sync_error" json:"last_sync_error,omitempty"`
+	// LastSyncStatus: 'never' | 'syncing' | 'ok' | 'error'. The lifecycle
+	// is owned by service/plaid — handlers should not write this directly.
+	LastSyncStatus string `gorm:"column:last_sync_status;not null;default:never" json:"last_sync_status"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`

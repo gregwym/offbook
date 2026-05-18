@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/plaid/plaid-go/v40/plaid"
 	"gorm.io/gorm"
 
 	"github.com/gregwym/offbook/backend/internal/crypto"
@@ -14,6 +16,11 @@ import (
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
 )
+
+// requestIDPattern strips Plaid `request_id=...` tokens (and JSON `"request_id":"..."`)
+// from raw error strings before they're surfaced to users — they're internal-
+// trace identifiers, not user-actionable.
+var requestIDPattern = regexp.MustCompile(`(?i)(?:[, ]?\brequest_id\b\s*[:=]\s*"?[A-Za-z0-9_-]+"?)`)
 
 // Domain errors. Handlers map these to HTTP status codes.
 var (
@@ -310,6 +317,47 @@ func zeroBytes(b []byte) {
 	}
 }
 
+// safeSyncErrorMessage extracts a user-presentable string from a sync error.
+//
+// Preference order:
+//  1. If the chain contains a Plaid GenericOpenAPIError, surface the
+//     structured `error_code` + `display_message` (already polished by Plaid).
+//  2. Otherwise fall back to the error string with two redactions: any
+//     `request_id=...` token gets dropped, and the result is capped so a
+//     pathological wrapped error doesn't blow out the TEXT column or UI pill.
+//
+// Internal stack frames are already absent — `fmt.Errorf("plaid: ... %w")`
+// only contains our own prefixes, which are safe to expose.
+func safeSyncErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	for cur := err; cur != nil; cur = errors.Unwrap(cur) {
+		if pe, convErr := plaid.ToPlaidError(cur); convErr == nil {
+			msg := pe.ErrorCode
+			if pe.DisplayMessage.IsSet() && pe.DisplayMessage.Get() != nil {
+				dm := strings.TrimSpace(*pe.DisplayMessage.Get())
+				if dm != "" {
+					msg = pe.ErrorCode + ": " + dm
+				}
+			}
+			return capErrorMessage(msg)
+		}
+	}
+	// No structured Plaid error → redact request_id from the wrapped text.
+	return capErrorMessage(requestIDPattern.ReplaceAllString(err.Error(), ""))
+}
+
+// capErrorMessage trims and caps to keep the TEXT column + UI pill sane.
+func capErrorMessage(s string) string {
+	s = strings.TrimSpace(s)
+	const max = 500
+	if len(s) > max {
+		s = s[:max] + "…"
+	}
+	return s
+}
+
 // SyncTransactions runs /transactions/sync for the given item. Works
 // identically for the first-time historical pull (empty cursor) and for
 // incremental refreshes (persisted cursor) — the same Plaid endpoint
@@ -325,7 +373,7 @@ func zeroBytes(b []byte) {
 // If anything in the DB phase fails, the cursor stays put and next run
 // re-fetches the same delta — safe because added uses ON CONFLICT DO
 // NOTHING and modified/removed are idempotent on plaid_transaction_id.
-func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemID string) (SyncTransactionsResult, error) {
+func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemID string) (result SyncTransactionsResult, retErr error) {
 	if !s.Configured() || s.acctRepo == nil || s.txRepo == nil || s.db == nil {
 		return SyncTransactionsResult{}, ErrNotConfigured
 	}
@@ -337,6 +385,27 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 		}
 		return SyncTransactionsResult{}, fmt.Errorf("plaid: lookup item: %w", err)
 	}
+
+	// Per-sync lifecycle: flip to 'syncing' up front. On success, UpdateCursor
+	// (inside the DB transaction below) flips to 'ok' and clears the error.
+	// On error/panic, the defer flips to 'error' with a user-safe message.
+	// Use a background ctx for the status writes so a request cancel doesn't
+	// leave the row stuck in 'syncing'.
+	statusCtx := context.WithoutCancel(ctx)
+	if err := s.itemRepo.UpdateSyncStatus(statusCtx, userID, item.ID, "syncing", nil); err != nil {
+		return SyncTransactionsResult{}, fmt.Errorf("plaid: mark syncing: %w", err)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprintf("panic during sync: %v", r)
+			_ = s.itemRepo.UpdateSyncStatus(statusCtx, userID, item.ID, "error", &msg)
+			panic(r)
+		}
+		if retErr != nil {
+			msg := safeSyncErrorMessage(retErr)
+			_ = s.itemRepo.UpdateSyncStatus(statusCtx, userID, item.ID, "error", &msg)
+		}
+	}()
 
 	tokenBytes, err := s.box.Decrypt(item.AccessTokenEnc)
 	if err != nil {
@@ -368,7 +437,6 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 		}
 	}
 
-	var result SyncTransactionsResult
 	// Phase 2: one transaction for all writes. Tx-bound repos so every
 	// statement hits the same Postgres transaction; rollback on any error
 	// reverts the entire sync including the cursor advance.

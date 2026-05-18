@@ -90,6 +90,9 @@ func (r *fakeRepo) SoftDelete(context.Context, int64, int64) error { return nil 
 func (r *fakeRepo) UpdateCursor(context.Context, int64, int64, string, time.Time) error {
 	return nil
 }
+func (r *fakeRepo) UpdateSyncStatus(context.Context, int64, int64, string, *string) error {
+	return nil
+}
 
 // (fakeRepo implements PlaidItemRepository — the transaction-repo methods
 // added in #62 / #63 live on a separate interface and aren't exercised here.)

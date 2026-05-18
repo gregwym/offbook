@@ -32,7 +32,8 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	authHandler := handler.NewAuthHandler(authSvc)
 
 	accountRepo := repository.NewAccountRepository(gormDB)
-	accountSvc := service.NewAccountService(accountRepo)
+	plaidItemRepo := repository.NewPlaidItemRepository(gormDB)
+	accountSvc := service.NewAccountService(accountRepo).WithPlaidItemRepo(plaidItemRepo)
 	accountHandler := handler.NewAccountHandler(accountSvc)
 
 	// PII flow: pii_repo is wired ONLY into pii_service, which is wired ONLY
@@ -81,7 +82,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	// service that returns ErrNotConfigured for every call. Handler still
 	// registers either way so the frontend gets a clear PLAID_NOT_CONFIGURED
 	// error rather than a 404.
-	plaidHandler := handler.NewPlaidHandler(newPlaidService(cfg, gormDB, accountRepo, transactionRepo, piiSvc))
+	plaidHandler := handler.NewPlaidHandler(newPlaidService(cfg, gormDB, plaidItemRepo, accountRepo, transactionRepo, piiSvc))
 
 	v1 := r.Group("/api/v1")
 	{
@@ -115,6 +116,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 func newPlaidService(
 	cfg config.Config,
 	gormDB *gorm.DB,
+	itemRepo repository.PlaidItemRepository,
 	acctRepo repository.AccountRepository,
 	txRepo repository.TransactionRepository,
 	piiSvc *service.PIIService,
@@ -144,7 +146,7 @@ func newPlaidService(
 	return plaidsvc.NewService(
 		client,
 		box,
-		repository.NewPlaidItemRepository(gormDB),
+		itemRepo,
 		acctRepo,
 		txRepo,
 		piiSvc,

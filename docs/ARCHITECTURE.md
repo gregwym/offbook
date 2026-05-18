@@ -181,6 +181,7 @@ Otherwise re-importing a previously-deleted transaction fails.
 - **categories** — hierarchical via `parent_id`, seeded with ~20 system categories
 - **categorization_rules** — `pattern, category_id, match_type ('contains'|'regex'|'exact'), priority`
 - **plaid_category_map** — `plaid_primary, plaid_detailed, category_id`. Static lookup table (migration 000005) mapping the Plaid `personal_finance_category` taxonomy to local categories. Editable by SQL migration only — keeps the mapping reviewable in git. Loaded once into a `CategoryMapper` at service construction.
+- **plaid_items** — link to one Plaid Item per user (`access_token_enc`, institution metadata, cursor). Carries per-sync lifecycle fields: `last_sync_status` (enum `never|syncing|ok|error`), `last_synced_at`, `last_sync_error`. Lifecycle is owned by `service/plaid`: `UpdateSyncStatus("syncing")` at start, `UpdateCursor(...)` flips to `ok` and clears the error on success (same transaction as txn writes), deferred `UpdateSyncStatus("error", msg)` on panic/error. See ADR-0010 for token encryption.
 - **budgets** — `category_id, period ('monthly'|'weekly'|'annual'), amount, rollover, is_active`
 - **savings_goals** — `name, target_amount, current_amount, target_date, account_id`
 - **investments** — append-only snapshots: `account_id, ticker, name, asset_class, quantity, cost_basis, market_value, snapshot_date, source`
