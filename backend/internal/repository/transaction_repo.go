@@ -38,6 +38,20 @@ type TransactionRepository interface {
 	// Returns the number of rows actually inserted — caller compares that
 	// to len(txns) to derive "skipped as duplicate" if needed.
 	CreateBatch(ctx context.Context, txns []model.Transaction) (int64, error)
+	// UpdateByPlaidTransactionID overwrites a row keyed by user_id +
+	// plaid_transaction_id. The caller supplies the post-merge row; this
+	// repo does not enforce field-level merge semantics — see
+	// plaid.MergePlaidUpdate for the policy.
+	// Returns ErrNotFound if no matching row exists (e.g. a `modified`
+	// for a transaction we never saw because it was added+modified+removed
+	// across syncs).
+	UpdateByPlaidTransactionID(ctx context.Context, userID int64, plaidTxnID string, merged model.Transaction) error
+	// SoftDeleteByPlaidTransactionID flips deleted_at for a transaction
+	// matched by user_id + plaid_transaction_id. Returns ErrNotFound when
+	// no live row exists. Idempotent: re-applying on an already-deleted
+	// row returns ErrNotFound (because the soft-delete partial index
+	// hides the row from the scope).
+	SoftDeleteByPlaidTransactionID(ctx context.Context, userID int64, plaidTxnID string) error
 }
 
 type transactionRepo struct {
@@ -146,6 +160,48 @@ func (r *transactionRepo) CreateBatch(ctx context.Context, txns []model.Transact
 		return 0, res.Error
 	}
 	return res.RowsAffected, nil
+}
+
+func (r *transactionRepo) UpdateByPlaidTransactionID(ctx context.Context, userID int64, plaidTxnID string, merged model.Transaction) error {
+	// Save() needs the row's ID populated to issue an UPDATE rather than
+	// an INSERT; callers should be passing the merged row from a prior
+	// read so ID is set. Defensive: re-resolve if it isn't.
+	if merged.ID == 0 {
+		var existing model.Transaction
+		if err := r.db.WithContext(ctx).
+			Where("user_id = ? AND plaid_transaction_id = ?", userID, plaidTxnID).
+			First(&existing).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		merged.ID = existing.ID
+		merged.CreatedAt = existing.CreatedAt
+	}
+	res := r.db.WithContext(ctx).
+		Where("user_id = ? AND plaid_transaction_id = ?", userID, plaidTxnID).
+		Save(&merged)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *transactionRepo) SoftDeleteByPlaidTransactionID(ctx context.Context, userID int64, plaidTxnID string) error {
+	res := r.db.WithContext(ctx).
+		Where("user_id = ? AND plaid_transaction_id = ?", userID, plaidTxnID).
+		Delete(&model.Transaction{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *transactionRepo) SoftDelete(ctx context.Context, userID, id int64) error {

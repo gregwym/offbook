@@ -118,7 +118,7 @@ func newPlaidService(
 	piiSvc *service.PIIService,
 ) *plaidsvc.Service {
 	if !cfg.PlaidConfigured() {
-		return plaidsvc.NewService(nil, nil, nil, nil, nil, nil)
+		return plaidsvc.NewService(nil, nil, nil, nil, nil, nil, nil)
 	}
 	client, err := plaidsvc.NewSDKClient(plaidsvc.Config{
 		ClientID: cfg.PlaidClientID,
@@ -139,6 +139,7 @@ func newPlaidService(
 		acctRepo,
 		txRepo,
 		piiSvc,
+		gormDB,
 	)
 }
 

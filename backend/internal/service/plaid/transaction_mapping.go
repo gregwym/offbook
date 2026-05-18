@@ -72,3 +72,39 @@ func MapPlaidTransaction(p PlaidTransaction, userID, accountID int64) (model.Tra
 		PlaidTransactionID: &plaidID,
 	}, nil
 }
+
+// MergePlaidUpdate overlays an incoming /transactions/sync `modified` entry
+// onto the existing row. Plaid-controlled fields (amount, description,
+// merchant_name, posted_date, transaction_date) are taken from the new
+// payload; user-edited fields (notes, category_id, is_transfer, transfer
+// pairing) are preserved untouched.
+//
+// This is what makes "pending → posted" transitions safe: Plaid updates the
+// amount and posted_date when a hold clears, but the user's categorization
+// and notes survive.
+//
+// The function is pure — it returns the merged row without writing. Caller
+// passes the result to the repo's update method. accountID is supplied
+// (rather than re-derived) so the merge stays independent of repo state.
+func MergePlaidUpdate(existing model.Transaction, incoming PlaidTransaction, accountID int64) (model.Transaction, error) {
+	mapped, err := MapPlaidTransaction(incoming, existing.UserID, accountID)
+	if err != nil {
+		return model.Transaction{}, err
+	}
+	merged := existing
+	// Plaid-owned fields — overwrite.
+	merged.AccountID = accountID
+	merged.Amount = mapped.Amount
+	merged.Currency = mapped.Currency
+	merged.Description = mapped.Description
+	merged.MerchantName = mapped.MerchantName
+	merged.TransactionDate = mapped.TransactionDate
+	merged.PostedDate = mapped.PostedDate
+	// User-edited fields — preserve. Intentionally not enumerated as
+	// "deny-list overlay" because the safer default for unknown future
+	// fields is "leave it alone".
+	//   existing.Notes, existing.CategoryID, existing.IsTransfer,
+	//   existing.TransferPairID, existing.CategorizationMethod
+	// remain on `merged`.
+	return merged, nil
+}

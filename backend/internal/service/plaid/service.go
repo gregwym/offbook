@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/gregwym/offbook/backend/internal/crypto"
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
@@ -61,13 +63,21 @@ type Service struct {
 	acctRepo repository.AccountRepository
 	txRepo   repository.TransactionRepository
 	piiSvc   *service.PIIService
+	// db is a deliberate exception to the "services don't see *gorm.DB"
+	// guideline. SyncTransactions needs a single atomic wrap across
+	// transactions + plaid_items updates per ADR-N/A (per-item sync is
+	// all-or-nothing — see issue #62 spec) and the repo abstraction
+	// doesn't currently expose a unit-of-work surface. Inside the
+	// transaction callback we construct fresh tx-bound repo instances
+	// so all writes hit the same transaction.
+	db *gorm.DB
 }
 
 // NewService constructs a Service. Pass nil for client/box/repos to
 // indicate the instance is not Plaid-enabled — calls then return
-// ErrNotConfigured. txRepo and piiSvc are only needed for the discovery
-// and transaction-sync surfaces; link-only setups can pass nil and the
-// affected methods will error out cleanly.
+// ErrNotConfigured. txRepo, piiSvc, and db are only needed for the
+// discovery and transaction-sync surfaces; link-only setups can pass nil
+// and the affected methods will error out cleanly.
 func NewService(
 	client Client,
 	box *crypto.SecretBox,
@@ -75,6 +85,7 @@ func NewService(
 	acctRepo repository.AccountRepository,
 	txRepo repository.TransactionRepository,
 	piiSvc *service.PIIService,
+	db *gorm.DB,
 ) *Service {
 	return &Service{
 		client:   client,
@@ -83,6 +94,7 @@ func NewService(
 		acctRepo: acctRepo,
 		txRepo:   txRepo,
 		piiSvc:   piiSvc,
+		db:       db,
 	}
 }
 
@@ -287,20 +299,23 @@ func zeroBytes(b []byte) {
 	}
 }
 
-// SyncTransactions paginates /transactions/sync for the given item,
-// translating each page through MapPlaidTransaction and bulk-inserting
-// into the transactions table. The cursor + last_synced_at on the item
-// are updated after EVERY page so a crash mid-pull resumes cleanly.
+// SyncTransactions runs /transactions/sync for the given item. Works
+// identically for the first-time historical pull (empty cursor) and for
+// incremental refreshes (persisted cursor) — the same Plaid endpoint
+// covers both via the cursor handshake.
 //
-// First-time pull: pass an item whose cursor is empty. Subsequent runs
-// re-use the persisted cursor and only fetch deltas. The sign convention
-// flip and date mapping happen in MapPlaidTransaction.
+// Per #62, the entire per-item sync is wrapped in one db.Transaction:
+//   - all pages are drained from Plaid first (no DB writes)
+//   - then `added` rows are inserted, `modified` rows merged into existing
+//     rows (preserving user-edited category_id / notes), and `removed`
+//     rows soft-deleted
+//   - cursor + last_synced_at advance ONLY if all of the above succeed
 //
-// Idempotency: the bulk insert uses ON CONFLICT (plaid_transaction_id)
-// DO NOTHING, so re-running against the same upstream is a no-op rather
-// than an error.
+// If anything in the DB phase fails, the cursor stays put and next run
+// re-fetches the same delta — safe because added uses ON CONFLICT DO
+// NOTHING and modified/removed are idempotent on plaid_transaction_id.
 func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemID string) (SyncTransactionsResult, error) {
-	if !s.Configured() || s.acctRepo == nil || s.txRepo == nil {
+	if !s.Configured() || s.acctRepo == nil || s.txRepo == nil || s.db == nil {
 		return SyncTransactionsResult{}, ErrNotConfigured
 	}
 
@@ -324,60 +339,137 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 		cursor = *item.Cursor
 	}
 
-	// Cache plaid_account_id → local accounts.id lookups so we don't hit
-	// the DB once per transaction. The same accountID-resolution miss is
-	// also surfaced as an error so we don't silently drop transactions
-	// belonging to an account that wasn't discovered first.
-	accountIDByPlaidID := map[string]int64{}
-
-	var result SyncTransactionsResult
+	// Phase 1: drain every page from Plaid into memory. No DB writes
+	// happen here so a Plaid failure can't leave the DB half-updated.
+	var added, modified []PlaidTransaction
+	var removed []string
 	for {
 		page, err := s.client.SyncTransactions(ctx, accessToken, cursor)
 		if err != nil {
-			return result, err
+			return SyncTransactionsResult{}, err
 		}
-
-		batch := make([]model.Transaction, 0, len(page.Added))
-		for _, pt := range page.Added {
-			localID, err := s.resolveAccountID(ctx, userID, pt.PlaidAccountID, accountIDByPlaidID)
-			if err != nil {
-				return result, err
-			}
-			row, err := MapPlaidTransaction(pt, userID, localID)
-			if err != nil {
-				return result, err
-			}
-			batch = append(batch, row)
-		}
-		if len(batch) > 0 {
-			n, err := s.txRepo.CreateBatch(ctx, batch)
-			if err != nil {
-				return result, fmt.Errorf("plaid: insert batch: %w", err)
-			}
-			result.Inserted += n
-		}
-		result.Modified += len(page.Modified)
-		result.Removed += len(page.Removed)
-
+		added = append(added, page.Added...)
+		modified = append(modified, page.Modified...)
+		removed = append(removed, page.Removed...)
 		cursor = page.NextCursor
-		if err := s.itemRepo.UpdateCursor(ctx, userID, item.ID, cursor, time.Now().UTC()); err != nil {
-			return result, fmt.Errorf("plaid: persist cursor: %w", err)
-		}
 		if !page.HasMore {
 			break
 		}
+	}
+
+	var result SyncTransactionsResult
+	// Phase 2: one transaction for all writes. Tx-bound repos so every
+	// statement hits the same Postgres transaction; rollback on any error
+	// reverts the entire sync including the cursor advance.
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepo := repository.NewTransactionRepository(tx)
+		itemRepo := repository.NewPlaidItemRepository(tx)
+		acctRepo := repository.NewAccountRepository(tx)
+		accountIDCache := map[string]int64{}
+
+		// Inserts (uses ON CONFLICT DO NOTHING — defense in depth on top
+		// of the partial unique index).
+		if len(added) > 0 {
+			batch := make([]model.Transaction, 0, len(added))
+			for _, pt := range added {
+				localID, err := resolveAccountID(ctx, acctRepo, userID, pt.PlaidAccountID, accountIDCache)
+				if err != nil {
+					return err
+				}
+				row, err := MapPlaidTransaction(pt, userID, localID)
+				if err != nil {
+					return err
+				}
+				batch = append(batch, row)
+			}
+			n, err := txRepo.CreateBatch(ctx, batch)
+			if err != nil {
+				return fmt.Errorf("plaid: insert batch: %w", err)
+			}
+			result.Inserted = n
+		}
+
+		// Modifications: merge with the existing row so user-edited
+		// fields survive.
+		for _, pt := range modified {
+			localID, err := resolveAccountID(ctx, acctRepo, userID, pt.PlaidAccountID, accountIDCache)
+			if err != nil {
+				return err
+			}
+			var existing model.Transaction
+			err = tx.WithContext(ctx).
+				Where("user_id = ? AND plaid_transaction_id = ?", userID, pt.PlaidTransactionID).
+				First(&existing).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// Plaid sent a `modified` for something we never
+				// recorded. Treat as a fresh insert so we don't lose it.
+				row, mapErr := MapPlaidTransaction(pt, userID, localID)
+				if mapErr != nil {
+					return mapErr
+				}
+				if _, batchErr := txRepo.CreateBatch(ctx, []model.Transaction{row}); batchErr != nil {
+					return fmt.Errorf("plaid: insert modified-as-new: %w", batchErr)
+				}
+				result.Inserted++
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("plaid: read existing for modify: %w", err)
+			}
+			merged, err := MergePlaidUpdate(existing, pt, localID)
+			if err != nil {
+				return err
+			}
+			if err := txRepo.UpdateByPlaidTransactionID(ctx, userID, pt.PlaidTransactionID, merged); err != nil {
+				return fmt.Errorf("plaid: update modified: %w", err)
+			}
+			result.Modified++
+		}
+
+		// Removals: soft-delete. ErrNotFound is benign (already deleted
+		// or never seen) and shouldn't roll back the transaction.
+		for _, ptxID := range removed {
+			err := txRepo.SoftDeleteByPlaidTransactionID(ctx, userID, ptxID)
+			switch {
+			case errors.Is(err, repository.ErrNotFound):
+				// Already gone — count it anyway so the response number
+				// matches what Plaid asked us to forget.
+				result.Removed++
+			case err != nil:
+				return fmt.Errorf("plaid: soft-delete removed: %w", err)
+			default:
+				result.Removed++
+			}
+		}
+
+		// Cursor advance — final write inside the same transaction.
+		if err := itemRepo.UpdateCursor(ctx, userID, item.ID, cursor, time.Now().UTC()); err != nil {
+			return fmt.Errorf("plaid: persist cursor: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return SyncTransactionsResult{}, err
 	}
 	return result, nil
 }
 
 // resolveAccountID maps a Plaid account_id to the local accounts.id,
-// memoizing in the per-call cache. Returns an error if no local account
-// exists — the caller should run /sync-accounts first.
-func (s *Service) resolveAccountID(ctx context.Context, userID int64, plaidAcctID string, cache map[string]int64) (int64, error) {
+// memoizing in a per-call cache. Returns an error if no local account
+// exists — the caller should run /sync-accounts first. Operates against
+// the supplied AccountRepository so transactional callers can pass a
+// tx-bound instance.
+func resolveAccountID(
+	ctx context.Context,
+	repo repository.AccountRepository,
+	userID int64,
+	plaidAcctID string,
+	cache map[string]int64,
+) (int64, error) {
 	if id, ok := cache[plaidAcctID]; ok {
 		return id, nil
 	}
-	a, err := s.acctRepo.FindByPlaidAccountID(ctx, userID, plaidAcctID)
+	a, err := repo.FindByPlaidAccountID(ctx, userID, plaidAcctID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return 0, fmt.Errorf("plaid: no local account for plaid_account_id=%s (run sync-accounts first)", plaidAcctID)
