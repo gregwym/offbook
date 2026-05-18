@@ -109,14 +109,14 @@ See [ADR-0006](ADR/0006-multi-tenant-model.md), [ADR-0007](ADR/0007-member-lifec
 
 ---
 
-## M5 — Budgets & Savings Goals [NOT STARTED]
+## M5 — Budgets & Savings Goals [DONE]
 
 **Goal:** Planning and tracking features complete.
 
-- [ ] Budget CRUD + current period spend calculation (NUMERIC arithmetic)
-- [ ] Savings goals + contribution tracking
-- [ ] Budget alerts in dashboard (>80% warning, >100% over-budget)
-- [ ] Charts: spending by category (pie), cash flow by month (bar), net worth over time (line)
+- [x] Budget CRUD + current period spend calculation (NUMERIC arithmetic)
+- [x] Savings goals + contribution tracking
+- [x] Budget alerts in dashboard (>80% warning, >100% over-budget)
+- [x] Charts: spending by category (pie), cash flow by month (bar), net worth over time (line)
 
 **Done criteria:** Set $700 grocery budget, import transactions, see >100% warning; net worth chart shows trend.
 
