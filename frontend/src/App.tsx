@@ -13,6 +13,7 @@ import { HouseholdSettingsPage } from './pages/HouseholdSettingsPage'
 import { ImportPage } from './pages/ImportPage'
 import { InvestmentsPage } from './pages/InvestmentsPage'
 import { PlaidConnectPage } from './pages/PlaidConnectPage'
+import { RulesPage } from './pages/RulesPage'
 import { SavingsGoalsPage } from './pages/SavingsGoalsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { TransactionsPage } from './pages/TransactionsPage'
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="/accounts" element={<AccountsPage />} />
         <Route path="/connect" element={<PlaidConnectPage />} />
         <Route path="/transactions" element={<TransactionsPage />} />
+        <Route path="/rules" element={<RulesPage />} />
         <Route path="/budgets" element={<BudgetsPage />} />
         <Route path="/savings-goals" element={<SavingsGoalsPage />} />
         <Route path="/investments" element={<InvestmentsPage />} />
