@@ -16,6 +16,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/service/categorization"
 )
 
 // requestIDPattern strips Plaid `request_id=...` tokens (and JSON `"request_id":"..."`)
@@ -83,6 +84,10 @@ type Service struct {
 	// catMapper resolves Plaid PFCs to local categories at sync time.
 	// Nil = no auto-categorization (rows land uncategorized; user picks).
 	catMapper *CategoryMapper
+	// ruleRepo lets the sync path load the user's categorization rules
+	// once per drain and apply them ahead of the Plaid PFC default.
+	// Nil = rules feature not wired in this build; sync still works.
+	ruleRepo repository.CategorizationRuleRepository
 	// db is a deliberate exception to the "services don't see *gorm.DB"
 	// guideline. SyncTransactions needs to wrap the per-item drain in a
 	// single Postgres transaction so it can use savepoints around each
@@ -121,6 +126,28 @@ func NewService(
 		catMapper:   catMapper,
 		db:          db,
 	}
+}
+
+// WithRuleRepo wires the user-rule repository so SyncTransactions applies
+// rules ahead of Plaid's PFC default. Optional; without it the sync still
+// works and rows fall back to plaid_default / uncategorized.
+func (s *Service) WithRuleRepo(r repository.CategorizationRuleRepository) *Service {
+	s.ruleRepo = r
+	return s
+}
+
+// loadUserRules returns the user's active rules in priority order,
+// precompiled. Returns nil when the rule repo isn't wired or the user has
+// no rules — callers feed nil straight into MapPlaidTransaction.
+func (s *Service) loadUserRules(ctx context.Context, userID int64) ([]categorization.CompiledRule, error) {
+	if s == nil || s.ruleRepo == nil {
+		return nil, nil
+	}
+	rules, err := s.ruleRepo.List(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("plaid: load rules: %w", err)
+	}
+	return categorization.Compile(rules), nil
 }
 
 // Configured reports whether the service has the wiring to actually call
@@ -483,6 +510,14 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 		}
 	}
 
+	// Load the user's categorization rules once for the whole drain.
+	// Doing this before the DB transaction means a rule-repo failure
+	// fails the sync cleanly without leaving the txn half-open.
+	userRules, err := s.loadUserRules(ctx, userID)
+	if err != nil {
+		return SyncTransactionsResult{}, err
+	}
+
 	// Phase 2: one transaction for all writes. Tx-bound repos so every
 	// statement hits the same Postgres transaction. Per-row savepoints
 	// isolate individual failures — see SAVEPOINT helper below.
@@ -597,7 +632,7 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 					if err != nil {
 						return err
 					}
-					merged, err := MergePlaidUpdate(existing, incoming, localID, s.catMapper)
+					merged, err := MergePlaidUpdate(existing, incoming, localID, s.catMapper, userRules)
 					if err != nil {
 						return err
 					}
@@ -625,7 +660,7 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 					if err != nil {
 						return err
 					}
-					row, err := MapPlaidTransaction(pt, userID, localID, s.catMapper)
+					row, err := MapPlaidTransaction(pt, userID, localID, s.catMapper, userRules)
 					if err != nil {
 						return err
 					}
@@ -661,7 +696,7 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					// Plaid sent a `modified` for something we never
 					// recorded. Treat as a fresh insert so we don't lose it.
-					row, mapErr := MapPlaidTransaction(pt, userID, localID, s.catMapper)
+					row, mapErr := MapPlaidTransaction(pt, userID, localID, s.catMapper, userRules)
 					if mapErr != nil {
 						return mapErr
 					}
@@ -674,7 +709,7 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 				if err != nil {
 					return err
 				}
-				merged, err := MergePlaidUpdate(existing, pt, localID, s.catMapper)
+				merged, err := MergePlaidUpdate(existing, pt, localID, s.catMapper, userRules)
 				if err != nil {
 					return err
 				}

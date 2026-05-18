@@ -44,13 +44,13 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 
 	transactionRepo := repository.NewTransactionRepository(gormDB)
 	categoryRepo := repository.NewCategoryRepository(gormDB)
-	transactionSvc := service.NewTransactionService(transactionRepo, accountRepo, categoryRepo)
+	ruleRepo := repository.NewCategorizationRuleRepository(gormDB)
+	transactionSvc := service.NewTransactionService(transactionRepo, accountRepo, categoryRepo).WithRuleRepo(ruleRepo)
 	transactionHandler := handler.NewTransactionHandler(transactionSvc)
 
 	categorySvc := service.NewCategoryService(categoryRepo)
 	categoryHandler := handler.NewCategoryHandler(categorySvc)
 
-	ruleRepo := repository.NewCategorizationRuleRepository(gormDB)
 	ruleSvc := service.NewCategorizationRuleService(ruleRepo, categoryRepo)
 	ruleHandler := handler.NewCategorizationRuleHandler(ruleSvc)
 
@@ -87,7 +87,8 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	// registers either way so the frontend gets a clear PLAID_NOT_CONFIGURED
 	// error rather than a 404.
 	plaidSyncErrRepo := repository.NewPlaidSyncErrorRepository(gormDB)
-	plaidHandler := handler.NewPlaidHandler(newPlaidService(cfg, gormDB, plaidItemRepo, accountRepo, transactionRepo, plaidSyncErrRepo, piiSvc))
+	plaidSvc := newPlaidService(cfg, gormDB, plaidItemRepo, accountRepo, transactionRepo, plaidSyncErrRepo, piiSvc).WithRuleRepo(ruleRepo)
+	plaidHandler := handler.NewPlaidHandler(plaidSvc)
 
 	v1 := r.Group("/api/v1")
 	{

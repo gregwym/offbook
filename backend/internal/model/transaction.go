@@ -23,6 +23,7 @@ type Transaction struct {
 	ExternalID           *string         `gorm:"column:external_id" json:"external_id,omitempty"`
 	PlaidTransactionID   *string         `gorm:"column:plaid_transaction_id" json:"plaid_transaction_id,omitempty"`
 	CategorizationMethod *string         `json:"categorization_method,omitempty"`
+	CategorizationRuleID *int64          `json:"categorization_rule_id,omitempty"`
 	IsTransfer           bool            `gorm:"not null;default:false" json:"is_transfer"`
 	TransferPairID       *int64          `json:"transfer_pair_id,omitempty"`
 	Notes                *string         `json:"notes,omitempty"`

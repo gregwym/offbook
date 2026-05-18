@@ -11,6 +11,7 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
+	"github.com/gregwym/offbook/backend/internal/service/categorization"
 )
 
 // Domain errors for transactions.
@@ -64,6 +65,10 @@ type TransactionService struct {
 	repo         repository.TransactionRepository
 	accountRepo  repository.AccountRepository
 	categoryRepo repository.CategoryRepository
+	// ruleRepo lets Create apply the user's categorization rules when the
+	// caller didn't supply a CategoryID. Optional — when nil, manual rows
+	// land uncategorized (the M2-era behavior).
+	ruleRepo repository.CategorizationRuleRepository
 }
 
 func NewTransactionService(
@@ -72,6 +77,13 @@ func NewTransactionService(
 	categoryRepo repository.CategoryRepository,
 ) *TransactionService {
 	return &TransactionService{repo: repo, accountRepo: accountRepo, categoryRepo: categoryRepo}
+}
+
+// WithRuleRepo wires the user-rule repository so Create applies rules to
+// uncategorized inserts. Returns the receiver for one-liner construction.
+func (s *TransactionService) WithRuleRepo(r repository.CategorizationRuleRepository) *TransactionService {
+	s.ruleRepo = r
+	return s
 }
 
 func (s *TransactionService) Create(ctx context.Context, userID int64, in CreateTransactionInput) (*model.Transaction, error) {
@@ -120,6 +132,16 @@ func (s *TransactionService) Create(ctx context.Context, userID int64, in Create
 	if in.CategoryID != nil {
 		method := "manual"
 		t.CategorizationMethod = &method
+	} else if s.ruleRepo != nil {
+		// No user-picked category — try the user's rules. We load and
+		// compile per-Create because manual-entry volume is low (a few
+		// rows per day per user); the cost is negligible and avoids
+		// stale-cache bugs when the user has just edited a rule.
+		rules, err := s.ruleRepo.List(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("load rules: %w", err)
+		}
+		categorization.Apply(t, categorization.Compile(rules))
 	}
 
 	if err := s.repo.Create(ctx, t); err != nil {

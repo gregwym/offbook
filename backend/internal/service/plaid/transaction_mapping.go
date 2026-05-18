@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gregwym/offbook/backend/internal/model"
+	"github.com/gregwym/offbook/backend/internal/service/categorization"
 )
 
 // MapPlaidTransaction reshapes a Plaid transaction into our row format.
@@ -27,11 +28,13 @@ import (
 // userID + accountID are supplied by the service after resolving the
 // session user and matching the Plaid account_id to a local accounts.id.
 //
-// The mapper is optional (nil = no auto-categorization). When non-nil and
-// the (PFCPrimary, PFCDetailed) pair resolves, CategoryID is set and
-// CategorizationMethod is "plaid_default". User-edited values always win
-// on subsequent updates — see MergePlaidUpdate.
-func MapPlaidTransaction(p PlaidTransaction, userID, accountID int64, mapper *CategoryMapper) (model.Transaction, error) {
+// The mapper is optional (nil = no Plaid-PFC fallback). User rules win
+// over Plaid defaults: if any compiled rule matches, CategoryID gets the
+// rule's category, CategorizationMethod is "rule", and CategorizationRuleID
+// records which rule fired. Otherwise we fall through to the Plaid PFC
+// mapper (CategorizationMethod="plaid_default"). User-edited values always
+// win on subsequent updates — see MergePlaidUpdate.
+func MapPlaidTransaction(p PlaidTransaction, userID, accountID int64, mapper *CategoryMapper, rules []categorization.CompiledRule) (model.Transaction, error) {
 	if p.PlaidTransactionID == "" {
 		return model.Transaction{}, fmt.Errorf("plaid: transaction_id empty")
 	}
@@ -77,10 +80,13 @@ func MapPlaidTransaction(p PlaidTransaction, userID, accountID int64, mapper *Ca
 		PlaidTransactionID: &plaidID,
 	}
 
-	if catID, ok := mapper.MapPlaidCategory(p.PFCPrimary, p.PFCDetailed); ok {
-		out.CategoryID = &catID
-		method := CategorizationMethodPlaidDefault
-		out.CategorizationMethod = &method
+	// Rules first — a matching rule overrides the Plaid PFC default.
+	if _, applied := categorization.Apply(&out, rules); !applied {
+		if catID, ok := mapper.MapPlaidCategory(p.PFCPrimary, p.PFCDetailed); ok {
+			out.CategoryID = &catID
+			method := CategorizationMethodPlaidDefault
+			out.CategorizationMethod = &method
+		}
 	}
 	return out, nil
 }
@@ -98,8 +104,8 @@ func MapPlaidTransaction(p PlaidTransaction, userID, accountID int64, mapper *Ca
 // The function is pure — it returns the merged row without writing. Caller
 // passes the result to the repo's update method. accountID is supplied
 // (rather than re-derived) so the merge stays independent of repo state.
-func MergePlaidUpdate(existing model.Transaction, incoming PlaidTransaction, accountID int64, mapper *CategoryMapper) (model.Transaction, error) {
-	mapped, err := MapPlaidTransaction(incoming, existing.UserID, accountID, mapper)
+func MergePlaidUpdate(existing model.Transaction, incoming PlaidTransaction, accountID int64, mapper *CategoryMapper, rules []categorization.CompiledRule) (model.Transaction, error) {
+	mapped, err := MapPlaidTransaction(incoming, existing.UserID, accountID, mapper, rules)
 	if err != nil {
 		return model.Transaction{}, err
 	}
@@ -113,13 +119,13 @@ func MergePlaidUpdate(existing model.Transaction, incoming PlaidTransaction, acc
 	merged.TransactionDate = mapped.TransactionDate
 	merged.PostedDate = mapped.PostedDate
 	// Category: a non-null existing CategoryID is sacred — that's either
-	// the user's manual pick OR a prior plaid_default that the user has
-	// implicitly accepted. Only fill from the mapper when the row has no
-	// category yet (e.g., previously imported before the mapper existed,
-	// or Plaid only just classified this transaction).
+	// the user's manual pick, a previously-fired rule, or a prior
+	// plaid_default that the user has implicitly accepted. Only fill from
+	// the rule engine / mapper when the row has no category yet.
 	if existing.CategoryID == nil && mapped.CategoryID != nil {
 		merged.CategoryID = mapped.CategoryID
 		merged.CategorizationMethod = mapped.CategorizationMethod
+		merged.CategorizationRuleID = mapped.CategorizationRuleID
 	}
 	// User-edited fields — preserve. Intentionally not enumerated as
 	// "deny-list overlay" because the safer default for unknown future
