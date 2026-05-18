@@ -95,15 +95,15 @@ See [ADR-0006](ADR/0006-multi-tenant-model.md), [ADR-0007](ADR/0007-member-lifec
 
 ---
 
-## M4 — Categorization Engine [NOT STARTED]
+## M4 — Categorization Engine [DONE]
 
 **Goal:** Smart auto-categorization beyond Plaid defaults.
 
-- [ ] Categorization rules CRUD (contains|regex|exact, priority-ordered)
-- [ ] Rules applied on transaction import
-- [ ] Bulk re-categorize endpoint
-- [ ] Rules management UI
-- [ ] "Create rule from this transaction" shortcut in transaction table
+- [x] Categorization rules CRUD (contains|regex|exact, priority-ordered)
+- [x] Rules applied on transaction import
+- [x] Bulk re-categorize endpoint
+- [x] Rules management UI
+- [x] "Create rule from this transaction" shortcut in transaction table
 
 **Done criteria:** Create rule "WHOLEFDS → Groceries", re-apply to all transactions, verify mapping.
 
