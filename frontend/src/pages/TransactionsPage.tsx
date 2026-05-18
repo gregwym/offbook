@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Sparkles, Trash2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
+import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
 import { useAccountsStore } from '../store/accountsStore'
 import { useCategoriesStore } from '../store/categoriesStore'
+import { useRulesStore } from '../store/rulesStore'
 import { useTransactionsStore } from '../store/transactionsStore'
 import { useDebounce } from '../hooks/useDebounce'
 import type { Account } from '../types/account'
 import type { Category } from '../types/category'
+import type { CreateRuleInput } from '../types/categorizationRule'
 import type { CreateTransactionInput, Transaction, TransactionSource } from '../types/transaction'
 import { TRANSACTION_SOURCES } from '../types/transaction'
 
@@ -18,6 +22,17 @@ export function TransactionsPage() {
   } = useTransactionsStore()
   const { accounts, fetch: fetchAccounts } = useAccountsStore()
   const { categories, fetch: fetchCategories } = useCategoriesStore()
+  const {
+    rules,
+    fetch: fetchRules,
+    create: createRule,
+    apply: applyRules,
+  } = useRulesStore()
+  const [ruleSeed, setRuleSeed] = useState<RuleFormDefaults | null>(null)
+  // After a successful rule create from a txn, surface a toast with two
+  // actions: jump to /rules, or re-apply to existing transactions.
+  const [createdRuleToast, setCreatedRuleToast] = useState<string | null>(null)
+  const [applyToastBusy, setApplyToastBusy] = useState(false)
 
   // Local filter inputs — synced into the store via setFilter on change.
   const [accountID, setAccountID] = useState<string>(String(filter.account_id ?? ''))
@@ -33,8 +48,31 @@ export function TransactionsPage() {
   useEffect(() => {
     void fetchAccounts()
     void fetchCategories()
+    void fetchRules()
     void fetch()
-  }, [fetch, fetchAccounts, fetchCategories])
+  }, [fetch, fetchAccounts, fetchCategories, fetchRules])
+
+  // Same priority heuristic as RulesPage — new rules outrank existing ones
+  // by default so the "create from this txn" shortcut wins immediately on
+  // the next sync.
+  const nextPriority = useMemo(() => {
+    if (rules.length === 0) return 10
+    return rules.reduce((m, r) => Math.max(m, r.priority), 0) + 10
+  }, [rules])
+
+  const openRuleFromTxn = (t: Transaction) => {
+    const pattern =
+      (t.merchant_name && t.merchant_name.trim()) ||
+      (t.description_clean && t.description_clean.trim()) ||
+      (t.description && t.description.trim()) ||
+      ''
+    setRuleSeed({
+      pattern,
+      match_type: 'contains',
+      category_id: t.category_id ?? undefined,
+      priority: nextPriority,
+    })
+  }
 
   // Propagate the typed inputs into the store filter. setFilter resets page to 0.
   useEffect(() => {
@@ -125,6 +163,7 @@ export function TransactionsPage() {
                 categories={categories}
                 currentCategory={t.category_id ? categoryByID.get(t.category_id) : undefined}
                 onCategoryChange={(catID) => { void setCategory(t.id, catID) }}
+                onCreateRule={() => openRuleFromTxn(t)}
                 onDelete={async () => {
                   if (window.confirm('Delete this transaction?')) {
                     await remove(t.id)
@@ -163,6 +202,67 @@ export function TransactionsPage() {
           }}
         />
       )}
+
+      {ruleSeed && (
+        <RuleFormModal
+          mode="create"
+          categories={categories}
+          defaults={ruleSeed}
+          onClose={() => setRuleSeed(null)}
+          onSubmit={async (input) => {
+            await createRule(input as CreateRuleInput)
+            setRuleSeed(null)
+            setCreatedRuleToast(`Rule "${(input as CreateRuleInput).pattern}" created.`)
+          }}
+        />
+      )}
+
+      {createdRuleToast && (
+        <div className="fixed bottom-4 right-4 z-30 flex max-w-md items-start gap-3 rounded-md border border-emerald-200 bg-white px-4 py-3 text-sm shadow-lg">
+          <Sparkles size={18} className="mt-0.5 text-emerald-600" />
+          <div className="flex-1">
+            <div className="font-medium text-gray-900">{createdRuleToast}</div>
+            <div className="mt-2 flex gap-2">
+              <Link
+                to="/rules"
+                className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                onClick={() => setCreatedRuleToast(null)}
+              >
+                View rules
+              </Link>
+              <button
+                type="button"
+                disabled={applyToastBusy}
+                onClick={async () => {
+                  setApplyToastBusy(true)
+                  try {
+                    const result = await applyRules()
+                    setCreatedRuleToast(
+                      `Re-applied: scanned ${result.scanned}, updated ${result.updated}` +
+                        (result.skipped_manual > 0 ? `, skipped ${result.skipped_manual} manual.` : '.'),
+                    )
+                    // Refresh the transactions list so the new categorization shows up.
+                    await fetch()
+                  } catch {
+                    // ignore — error toast handled by rules store
+                  } finally {
+                    setApplyToastBusy(false)
+                  }
+                }}
+                className="rounded-md bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {applyToastBusy ? 'Applying…' : 'Apply to existing transactions'}
+              </button>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCreatedRuleToast(null)}
+            className="ml-1 text-gray-400 hover:text-gray-700"
+            aria-label="Dismiss"
+          >×</button>
+        </div>
+      )}
     </div>
   )
 }
@@ -173,10 +273,11 @@ type RowProps = {
   categories: Category[]
   currentCategory?: Category
   onCategoryChange: (catID: number | null) => void
+  onCreateRule: () => void
   onDelete: () => Promise<void>
 }
 
-function TransactionRow({ tx, account, categories, currentCategory, onCategoryChange, onDelete }: RowProps) {
+function TransactionRow({ tx, account, categories, currentCategory, onCategoryChange, onCreateRule, onDelete }: RowProps) {
   return (
     <tr className="hover:bg-gray-50">
       <td className="px-3 py-2 text-gray-700">{tx.transaction_date}</td>
@@ -200,6 +301,15 @@ function TransactionRow({ tx, account, categories, currentCategory, onCategoryCh
         </select>
       </td>
       <td className="px-3 py-2 text-right">
+        <button
+          type="button"
+          onClick={onCreateRule}
+          className="mr-2 text-gray-500 hover:text-indigo-700"
+          aria-label="Create rule from this transaction"
+          title="Create rule from this transaction"
+        >
+          <Sparkles size={16} />
+        </button>
         <button
           type="button"
           onClick={onDelete}
