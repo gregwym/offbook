@@ -62,6 +62,10 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	budgetSvc := service.NewBudgetService(budgetRepo, categoryRepo)
 	budgetHandler := handler.NewBudgetHandler(budgetSvc)
 
+	savingsGoalRepo := repository.NewSavingsGoalRepository(gormDB)
+	savingsGoalSvc := service.NewSavingsGoalService(savingsGoalRepo, accountRepo)
+	savingsGoalHandler := handler.NewSavingsGoalHandler(savingsGoalSvc)
+
 	householdRepo := repository.NewHouseholdRepository(gormDB)
 	memberRepo := repository.NewHouseholdMemberRepository(gormDB)
 	userRepo := repository.NewUserRepository(gormDB)
@@ -111,6 +115,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		ruleHandler.Register(secured)
 		dashboardHandler.Register(secured)
 		budgetHandler.Register(secured)
+		savingsGoalHandler.Register(secured)
 		householdHandler.Register(secured)
 		aggregatorHandler.Register(secured)
 		scopeHandler.Register(secured)
