@@ -26,6 +26,12 @@ type BudgetRepository interface {
 	// only: amount < 0 in the codebase's sign convention. Returns 0 (not an
 	// error) when no transactions match.
 	CurrentPeriodSpend(ctx context.Context, userID, categoryID int64, from, to time.Time) (decimal.Decimal, error)
+	// SpendByCategoryInRange returns SUM(-amount) FILTER (amount < 0) grouped
+	// by category over [from, to), restricted to the given category_ids.
+	// One query for the whole batch — avoids N round-trips when computing
+	// alerts across many budgets. Categories with no matching transactions
+	// are simply absent from the result map.
+	SpendByCategoryInRange(ctx context.Context, userID int64, categoryIDs []int64, from, to time.Time) (map[int64]decimal.Decimal, error)
 }
 
 type budgetRepo struct {
@@ -88,6 +94,43 @@ func (r *budgetRepo) SoftDelete(ctx context.Context, userID, id int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *budgetRepo) SpendByCategoryInRange(ctx context.Context, userID int64, categoryIDs []int64, from, to time.Time) (map[int64]decimal.Decimal, error) {
+	if len(categoryIDs) == 0 {
+		return map[int64]decimal.Decimal{}, nil
+	}
+	type row struct {
+		CategoryID int64
+		Spent      string
+	}
+	var rows []row
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			category_id                                          AS category_id,
+			COALESCE(SUM(-amount) FILTER (WHERE amount < 0), 0)::text AS spent
+		FROM transactions
+		WHERE deleted_at IS NULL
+		  AND user_id = ?
+		  AND category_id IN ?
+		  AND is_transfer = FALSE
+		  AND transaction_date >= ?
+		  AND transaction_date <  ?
+		GROUP BY category_id
+	`, userID, categoryIDs, from, to).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[int64]decimal.Decimal, len(rows))
+	for _, r := range rows {
+		d, err := decimal.NewFromString(r.Spent)
+		if err != nil {
+			return nil, err
+		}
+		// Only positive (outflow) totals are meaningful — a category whose
+		// rows are all inflows in the window returns 0 here.
+		out[r.CategoryID] = d
+	}
+	return out, nil
 }
 
 func (r *budgetRepo) CurrentPeriodSpend(ctx context.Context, userID, categoryID int64, from, to time.Time) (decimal.Decimal, error) {

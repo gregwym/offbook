@@ -56,11 +56,12 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 
 	dashboardRepo := repository.NewDashboardRepository(gormDB)
 	dashboardSvc := service.NewDashboardService(dashboardRepo)
-	dashboardHandler := handler.NewDashboardHandler(dashboardSvc)
 
 	budgetRepo := repository.NewBudgetRepository(gormDB)
 	budgetSvc := service.NewBudgetService(budgetRepo, categoryRepo)
 	budgetHandler := handler.NewBudgetHandler(budgetSvc)
+
+	dashboardHandler := handler.NewDashboardHandler(dashboardSvc, budgetSvc)
 
 	savingsGoalRepo := repository.NewSavingsGoalRepository(gormDB)
 	savingsGoalSvc := service.NewSavingsGoalService(savingsGoalRepo, accountRepo)

@@ -225,6 +225,134 @@ func (s *BudgetService) Spend(ctx context.Context, userID, id int64) (*BudgetSpe
 	}, nil
 }
 
+// BudgetAlertSeverity classifies a budget over its threshold. "warning"
+// applies in [0.8, 1.0); "over" applies at pct ≥ 1.0.
+type BudgetAlertSeverity string
+
+const (
+	AlertWarning BudgetAlertSeverity = "warning"
+	AlertOver    BudgetAlertSeverity = "over"
+)
+
+// BudgetAlert is one item in the dashboard alerts response. The frontend
+// renders these as cards, color-coded by severity, linking back to the
+// budget on /budgets.
+type BudgetAlert struct {
+	BudgetID     int64               `json:"budget_id"`
+	CategoryID   int64               `json:"category_id"`
+	CategoryName string              `json:"category_name"`
+	Period       string              `json:"period"`
+	Spent        decimal.Decimal     `json:"spent"`
+	Limit        decimal.Decimal     `json:"limit"`
+	Pct          float64             `json:"pct"`
+	Severity     BudgetAlertSeverity `json:"severity"`
+}
+
+// Alerts returns all of the user's active budgets that are at 80%+ of their
+// limit for the current period. Excludes soft-deleted and inactive budgets,
+// and excludes anything under 80%.
+//
+// Implementation: one DB hit per distinct period (typically just monthly).
+// We deliberately do NOT call Spend() per budget — that would be N
+// round-trips for a hot dashboard endpoint.
+func (s *BudgetService) Alerts(ctx context.Context, userID int64) ([]BudgetAlert, error) {
+	budgets, err := s.repo.List(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list budgets: %w", err)
+	}
+	// Active only — repo returns both for the budgets page, but alerts
+	// shouldn't surface a paused budget.
+	active := budgets[:0]
+	for _, b := range budgets {
+		if b.IsActive {
+			active = append(active, b)
+		}
+	}
+	if len(active) == 0 {
+		return []BudgetAlert{}, nil
+	}
+
+	// Bucket budgets by period so we issue exactly one spend-by-category
+	// query per distinct period. Most users only have one period, so this
+	// is one query.
+	byPeriod := map[string][]model.Budget{}
+	for _, b := range active {
+		byPeriod[b.Period] = append(byPeriod[b.Period], b)
+	}
+
+	// We also need category names for the response. One round-trip for the
+	// distinct ids.
+	catIDs := make([]int64, 0, len(active))
+	seen := map[int64]struct{}{}
+	for _, b := range active {
+		if _, ok := seen[b.CategoryID]; ok {
+			continue
+		}
+		seen[b.CategoryID] = struct{}{}
+		catIDs = append(catIDs, b.CategoryID)
+	}
+	catNames := map[int64]string{}
+	for _, id := range catIDs {
+		c, err := s.catRepo.GetByID(ctx, id)
+		if err != nil {
+			// Category was deleted out from under the budget — fall back
+			// to "#<id>" so the alert still renders.
+			catNames[id] = fmt.Sprintf("#%d", id)
+			continue
+		}
+		catNames[id] = c.Name
+	}
+
+	now := s.now()
+	out := make([]BudgetAlert, 0, len(active))
+	for period, bucket := range byPeriod {
+		from, to := budgetPeriodWindow(period, now)
+		// Distinct categories in this bucket.
+		bucketCatIDs := make([]int64, 0, len(bucket))
+		seen := map[int64]struct{}{}
+		for _, b := range bucket {
+			if _, ok := seen[b.CategoryID]; ok {
+				continue
+			}
+			seen[b.CategoryID] = struct{}{}
+			bucketCatIDs = append(bucketCatIDs, b.CategoryID)
+		}
+		spend, err := s.repo.SpendByCategoryInRange(ctx, userID, bucketCatIDs, from, to)
+		if err != nil {
+			return nil, fmt.Errorf("spend by category: %w", err)
+		}
+		for _, b := range bucket {
+			spent, ok := spend[b.CategoryID]
+			if !ok {
+				spent = decimal.Zero
+			}
+			pct := 0.0
+			if b.Amount.IsPositive() {
+				p, _ := spent.Div(b.Amount).Float64()
+				pct = p
+			}
+			if pct < 0.8 {
+				continue
+			}
+			sev := AlertWarning
+			if pct >= 1.0 {
+				sev = AlertOver
+			}
+			out = append(out, BudgetAlert{
+				BudgetID:     b.ID,
+				CategoryID:   b.CategoryID,
+				CategoryName: catNames[b.CategoryID],
+				Period:       b.Period,
+				Spent:        spent,
+				Limit:        b.Amount,
+				Pct:          pct,
+				Severity:     sev,
+			})
+		}
+	}
+	return out, nil
+}
+
 // budgetPeriodWindow returns [from, to) for the budget's current period
 // relative to `now`. UTC throughout — budgets are user-private and a
 // stable definition beats per-user time-zone gymnastics.
