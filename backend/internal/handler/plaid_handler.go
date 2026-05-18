@@ -155,7 +155,7 @@ func (h *PlaidHandler) ListSyncErrors(c *gin.Context) {
 	}
 	// Default to unresolved-only — the badge-driven flow wants actionable
 	// rows. ?status=all opens the door for an audit view later.
-	unresolvedOnly := true
+	var unresolvedOnly bool
 	switch c.Query("status") {
 	case "", "unresolved":
 		unresolvedOnly = true
