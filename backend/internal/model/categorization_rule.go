@@ -8,6 +8,7 @@ import (
 
 type CategorizationRule struct {
 	ID         int64          `gorm:"primaryKey" json:"id"`
+	UserID     int64          `gorm:"not null;index" json:"user_id"`
 	Pattern    string         `gorm:"not null" json:"pattern"`
 	CategoryID int64          `gorm:"not null" json:"category_id"`
 	MatchType  string         `gorm:"not null" json:"match_type"`
