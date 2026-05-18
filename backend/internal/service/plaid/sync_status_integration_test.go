@@ -114,7 +114,7 @@ func TestPlaidSync_StatusFlipsOnErrorThenClearsOnSuccess(t *testing.T) {
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, nil, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), piiSvc, nil, g)
 
 	// Phase 1: forced error.
 	if _, err := svc.SyncTransactions(context.Background(), userID, "item-status"); err == nil {

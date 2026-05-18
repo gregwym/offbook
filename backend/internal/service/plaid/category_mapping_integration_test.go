@@ -127,7 +127,7 @@ func TestPlaidSync_CategoryMappingFirstPass_AndPreservesUserChoiceOnReSync(t *te
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, mapper, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), piiSvc, mapper, g)
 
 	// First sync: row is created with the Plaid default category.
 	if _, err := svc.SyncTransactions(context.Background(), userID, "item-pfc"); err != nil {
@@ -234,7 +234,7 @@ func TestPlaidSync_NoMappingLeavesCategoryNull(t *testing.T) {
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, mapper, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), piiSvc, mapper, g)
 	if _, err := svc.SyncTransactions(context.Background(), userID, "item-no-pfc"); err != nil {
 		t.Fatalf("sync: %v", err)
 	}

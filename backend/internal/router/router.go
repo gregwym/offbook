@@ -82,7 +82,8 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	// service that returns ErrNotConfigured for every call. Handler still
 	// registers either way so the frontend gets a clear PLAID_NOT_CONFIGURED
 	// error rather than a 404.
-	plaidHandler := handler.NewPlaidHandler(newPlaidService(cfg, gormDB, plaidItemRepo, accountRepo, transactionRepo, piiSvc))
+	plaidSyncErrRepo := repository.NewPlaidSyncErrorRepository(gormDB)
+	plaidHandler := handler.NewPlaidHandler(newPlaidService(cfg, gormDB, plaidItemRepo, accountRepo, transactionRepo, plaidSyncErrRepo, piiSvc))
 
 	v1 := r.Group("/api/v1")
 	{
@@ -119,10 +120,11 @@ func newPlaidService(
 	itemRepo repository.PlaidItemRepository,
 	acctRepo repository.AccountRepository,
 	txRepo repository.TransactionRepository,
+	syncErrRepo repository.PlaidSyncErrorRepository,
 	piiSvc *service.PIIService,
 ) *plaidsvc.Service {
 	if !cfg.PlaidConfigured() {
-		return plaidsvc.NewService(nil, nil, nil, nil, nil, nil, nil, nil)
+		return plaidsvc.NewService(nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	}
 	client, err := plaidsvc.NewSDKClient(plaidsvc.Config{
 		ClientID: cfg.PlaidClientID,
@@ -149,6 +151,7 @@ func newPlaidService(
 		itemRepo,
 		acctRepo,
 		txRepo,
+		syncErrRepo,
 		piiSvc,
 		mapper,
 		gormDB,
