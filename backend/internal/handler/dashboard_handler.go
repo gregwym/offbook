@@ -11,15 +11,29 @@ import (
 )
 
 type DashboardHandler struct {
-	svc *service.DashboardService
+	svc       *service.DashboardService
+	budgetSvc *service.BudgetService
 }
 
-func NewDashboardHandler(s *service.DashboardService) *DashboardHandler {
-	return &DashboardHandler{svc: s}
+func NewDashboardHandler(s *service.DashboardService, b *service.BudgetService) *DashboardHandler {
+	return &DashboardHandler{svc: s, budgetSvc: b}
 }
 
 func (h *DashboardHandler) Register(g *gin.RouterGroup) {
 	g.GET("/dashboard/summary", h.Summary)
+	g.GET("/dashboard/budget-alerts", h.BudgetAlerts)
+}
+
+// BudgetAlerts returns the user's active budgets at ≥80% spend for the
+// current period (warning) or ≥100% (over). Empty list when nothing
+// trips the thresholds.
+func (h *DashboardHandler) BudgetAlerts(c *gin.Context) {
+	alerts, err := h.budgetSvc.Alerts(c.Request.Context(), auth.MustUserID(c.Request.Context()))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": alerts, "total": int64(len(alerts))})
 }
 
 // Summary handles GET /dashboard/summary.
