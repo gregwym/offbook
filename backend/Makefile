@@ -13,18 +13,20 @@ PIDFILE    ?= /tmp/offbook-server.pid
 LOGFILE    ?= /tmp/offbook-server.log
 HEALTH_URL  = http://localhost:$(PORT)/api/v1/health
 
-.PHONY: help dev stop restart smoke test test-v lint vet build clean routes logs
+.PHONY: help dev stop restart smoke test test-v test-fast lint vet build verify clean routes logs
 
 help:
 	@echo "make dev        - start backend (stops any previous instance first)"
 	@echo "make stop       - kill any process bound to :$(PORT)"
 	@echo "make restart    - stop + dev"
 	@echo "make smoke      - dev + wait for /health + report URL"
-	@echo "make test       - go test ./..."
-	@echo "make test-v     - go test -v ./..."
+	@echo "make test       - go test -race -p 1 ./... (matches CI)"
+	@echo "make test-fast  - go test ./... (no -race, parallel; for tight dev loops)"
+	@echo "make test-v     - go test -race -p 1 -v ./..."
 	@echo "make lint       - golangci-lint via Docker"
 	@echo "make vet        - go vet ./..."
 	@echo "make build      - go build ./..."
+	@echo "make verify     - full CI mirror: backend vet+test, frontend lint+build"
 	@echo "make routes     - print routes from the last server log"
 	@echo "make logs       - tail $(LOGFILE)"
 
@@ -57,11 +59,17 @@ smoke: dev
 	tail -n 50 $(LOGFILE); \
 	exit 1
 
+# -race -p 1 mirrors CI exactly. Integration tests share one DATABASE_URL,
+# so parallel packages step on each other's rows. Use `make test-fast` for
+# tight dev loops on a single package, but `make test` is what CI sees.
 test:
+	@go test -race -p 1 ./...
+
+test-fast:
 	@go test ./...
 
 test-v:
-	@go test -v ./...
+	@go test -race -p 1 -v ./...
 
 lint:
 	@docker run --rm -v "$$PWD":/app -w /app golangci/golangci-lint:latest-alpine golangci-lint run ./...
@@ -71,6 +79,25 @@ vet:
 
 build:
 	@go build ./...
+
+# Full CI mirror. Run before opening a PR if you want to catch CI failures
+# locally. Skips frontend if ../frontend doesn't exist (early-milestone safety).
+verify:
+	@echo "== backend vet =="
+	@go vet ./...
+	@echo "== backend lint =="
+	@$(MAKE) lint
+	@echo "== backend test =="
+	@$(MAKE) test
+	@if [ -d ../frontend ] && [ -f ../frontend/package.json ]; then \
+		echo "== frontend lint =="; \
+		(cd ../frontend && pnpm lint) || exit 1; \
+		echo "== frontend build =="; \
+		(cd ../frontend && pnpm build) || exit 1; \
+	else \
+		echo "(skipping frontend — no ../frontend)"; \
+	fi
+	@echo "verify OK"
 
 routes:
 	@grep "GIN-debug" $(LOGFILE) || echo "no routes logged yet (try: make smoke)"

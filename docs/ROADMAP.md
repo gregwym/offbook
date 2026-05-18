@@ -149,3 +149,35 @@ See [ADR-0006](ADR/0006-multi-tenant-model.md), [ADR-0007](ADR/0007-member-lifec
 - [ ] Settings page: Claude API key, Ollama URL
 
 **Done criteria:** Chat with AI; context preview shows only aggregated data; pii_store data absent from context; switch to Ollama and chat works.
+
+---
+
+## Frontend Hi-Fi Milestones
+
+Backend-first milestones (M2.5, M4–M7) intentionally ship with stub or
+minimal UI to keep autonomous progress moving on data model and APIs. Each
+backend milestone spawns a corresponding frontend milestone that turns the
+stubs into real user flows. The yardstick is each issue's **Product Goal**
+(see `.github/ISSUE_TEMPLATE/feature.md`) — done = a user can complete the
+goal through the UI, not just that the endpoint exists.
+
+### M8 — Frontend Hi-Fi: Auth & Households [NOT STARTED]
+
+**Goal:** Replace M2.5 PageStubs with real UI for the auth + household surfaces.
+
+- [ ] First-boot `/setup/admin` page (admin creation + signup_mode picker)
+- [ ] `/signin` page + session cookie handling + redirect logic
+- [ ] `/signup` page (gated by `signup_mode`; invite-token form in invite_only mode)
+- [ ] `/h/members` — list members, roles, in-grace badges, owner actions (invite, remove, set `grace_period_days`)
+- [ ] `/h/dashboard` — household-aggregate dashboard layout (consumes `aggregator.Dashboard`)
+- [ ] Account visibility chips on `/accounts` (per-household: private / balance-only / balance-and-txns)
+- [ ] `/h/settings` — household name, owner transfer, grace period, leave button
+- [ ] Scope-switcher polish: empty-state when not in a household, "create or join" CTA
+
+**Done criteria:** Fresh `docker compose up` → admin signup → invite a second user → second user joins → both see members page + household dashboard with real aggregate data → second user leaves → admin sees them in-grace → admin sets grace to 0 → purge runs. Every step clickable in the UI.
+
+### M9+ — Frontend Hi-Fi: Per-Feature [DEFERRED]
+
+Each future backend milestone (M4 categorization, M5 budgets, M6 investments, M7 AI) gets a paired frontend milestone filed when the backend milestone closes. Pattern:
+- File each FE issue with a one-sentence **Product Goal** (see issue template)
+- Done = a user can reach the product goal through the UI
