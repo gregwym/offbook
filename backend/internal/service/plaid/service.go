@@ -133,6 +133,39 @@ func (s *Service) CreateLinkToken(ctx context.Context, userID int64) (LinkToken,
 	return s.client.CreateLinkToken(ctx, userID)
 }
 
+// ListItems returns the user's linked Plaid items (excluding soft-deleted).
+// The access_token is never serialized — see model.PlaidItem json tags.
+func (s *Service) ListItems(ctx context.Context, userID int64) ([]model.PlaidItem, error) {
+	if s == nil || s.itemRepo == nil {
+		return nil, ErrNotConfigured
+	}
+	return s.itemRepo.ListByUser(ctx, userID)
+}
+
+// DisconnectItem soft-deletes a plaid_items row by plaid_item_id. Accounts
+// previously synced from this item stay visible (and historical) — only the
+// upstream connection is severed. Idempotent: deleting an already-deleted
+// item returns ErrItemNotFound.
+func (s *Service) DisconnectItem(ctx context.Context, userID int64, plaidItemID string) error {
+	if s == nil || s.itemRepo == nil {
+		return ErrNotConfigured
+	}
+	item, err := s.itemRepo.GetByPlaidItemID(ctx, userID, plaidItemID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrItemNotFound
+		}
+		return fmt.Errorf("plaid: lookup item: %w", err)
+	}
+	if err := s.itemRepo.SoftDelete(ctx, userID, item.ID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrItemNotFound
+		}
+		return fmt.Errorf("plaid: soft-delete item: %w", err)
+	}
+	return nil
+}
+
 // ExchangePublicToken trades a public_token from Plaid Link for a durable
 // access_token + item_id, encrypts the access_token, and persists a new
 // plaid_items row scoped to userID.

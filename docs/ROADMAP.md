@@ -78,18 +78,18 @@ See [ADR-0006](ADR/0006-multi-tenant-model.md), [ADR-0007](ADR/0007-member-lifec
 
 ---
 
-## M3 — Plaid Sandbox Integration [NOT STARTED]
+## M3 — Plaid Sandbox Integration [DONE]
 
 **Goal:** Real financial data flowing in via Plaid.
 
-- [ ] Plaid Link token endpoint + token exchange
-- [ ] Account discovery and creation from Plaid (PII → pii_store)
-- [ ] Transaction sync: initial full pull
-- [ ] Transaction sync: incremental (cursor-based)
-- [ ] Deduplication via plaid_transaction_id
-- [ ] Plaid category → internal category mapping
-- [ ] Sync status indicator per account
-- [ ] Frontend: PlaidConnect page with Plaid Link button
+- [x] Plaid Link token endpoint + token exchange
+- [x] Account discovery and creation from Plaid (PII → pii_store)
+- [x] Transaction sync: initial full pull
+- [x] Transaction sync: incremental (cursor-based)
+- [x] Deduplication via plaid_transaction_id
+- [x] Plaid category → internal category mapping
+- [x] Sync status indicator per account
+- [x] Frontend: PlaidConnect page with Plaid Link button
 
 **Done criteria:** Connect Chase sandbox, transactions appear, re-sync = no duplicates; account holder name in pii_store.
 

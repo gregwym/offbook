@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/service/auth"
 	plaidsvc "github.com/gregwym/offbook/backend/internal/service/plaid"
 )
@@ -25,6 +26,8 @@ func NewPlaidHandler(s *plaidsvc.Service) *PlaidHandler {
 func (h *PlaidHandler) Register(g *gin.RouterGroup) {
 	g.POST("/plaid/link/token", h.CreateLinkToken)
 	g.POST("/plaid/link/exchange", h.ExchangePublicToken)
+	g.GET("/plaid/items", h.ListItems)
+	g.DELETE("/plaid/items/:item_id", h.DisconnectItem)
 	g.POST("/plaid/items/:item_id/sync-accounts", h.SyncAccounts)
 	g.POST("/plaid/items/:item_id/sync-transactions", h.SyncTransactions)
 }
@@ -118,6 +121,38 @@ func (h *PlaidHandler) SyncTransactions(c *gin.Context) {
 			"removed":  result.Removed,
 		},
 	})
+}
+
+// ListItems returns the user's linked Plaid items for the Settings page.
+// Response shape: standard list envelope with total. AccessToken is never
+// included — model.PlaidItem has `json:"-"` on AccessTokenEnc.
+func (h *PlaidHandler) ListItems(c *gin.Context) {
+	userID := auth.MustUserID(c.Request.Context())
+	items, err := h.svc.ListItems(c.Request.Context(), userID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	if items == nil {
+		items = []model.PlaidItem{}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items, "total": len(items)})
+}
+
+// DisconnectItem soft-deletes the link. Accounts previously synced remain
+// visible; only the upstream connection is severed. 204 on success.
+func (h *PlaidHandler) DisconnectItem(c *gin.Context) {
+	plaidItemID := c.Param("item_id")
+	if plaidItemID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "item_id is required", "code": "INVALID_REQUEST"})
+		return
+	}
+	userID := auth.MustUserID(c.Request.Context())
+	if err := h.svc.DisconnectItem(c.Request.Context(), userID, plaidItemID); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (h *PlaidHandler) writeError(c *gin.Context, err error) {
