@@ -14,19 +14,22 @@ import (
 // invisible to API queries but stays around for historical reconciliation
 // until a hard purge.
 type PlaidItem struct {
-	ID              int64          `gorm:"primaryKey" json:"id"`
-	UserID          int64          `gorm:"not null" json:"user_id"`
-	PlaidItemID     string         `gorm:"column:plaid_item_id;not null" json:"plaid_item_id"`
-	AccessTokenEnc  []byte         `gorm:"column:access_token_enc;type:bytea;not null" json:"-"`
-	InstitutionID   *string        `gorm:"column:institution_id" json:"institution_id,omitempty"`
-	InstitutionName *string        `gorm:"column:institution_name" json:"institution_name,omitempty"`
-	Status          string         `gorm:"not null;default:active" json:"status"`
-	Cursor          *string        `json:"-"`
-	LastSyncedAt    *time.Time     `gorm:"column:last_synced_at" json:"last_synced_at,omitempty"`
-	LastError       *string        `gorm:"column:last_error" json:"last_error,omitempty"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
-	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
+	ID              int64      `gorm:"primaryKey" json:"id"`
+	UserID          int64      `gorm:"not null" json:"user_id"`
+	PlaidItemID     string     `gorm:"column:plaid_item_id;not null" json:"plaid_item_id"`
+	AccessTokenEnc  []byte     `gorm:"column:access_token_enc;type:bytea;not null" json:"-"`
+	InstitutionID   *string    `gorm:"column:institution_id" json:"institution_id,omitempty"`
+	InstitutionName *string    `gorm:"column:institution_name" json:"institution_name,omitempty"`
+	Status          string     `gorm:"not null;default:active" json:"status"`
+	Cursor          *string    `json:"-"`
+	LastSyncedAt    *time.Time `gorm:"column:last_synced_at" json:"last_synced_at,omitempty"`
+	LastSyncError   *string    `gorm:"column:last_sync_error" json:"last_sync_error,omitempty"`
+	// LastSyncStatus: 'never' | 'syncing' | 'ok' | 'error'. The lifecycle
+	// is owned by service/plaid — handlers should not write this directly.
+	LastSyncStatus string         `gorm:"column:last_sync_status;not null;default:never" json:"last_sync_status"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (PlaidItem) TableName() string { return "plaid_items" }

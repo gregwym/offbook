@@ -18,11 +18,18 @@ type PlaidItemRepository interface {
 	GetByID(ctx context.Context, userID, id int64) (*model.PlaidItem, error)
 	GetByPlaidItemID(ctx context.Context, userID int64, plaidItemID string) (*model.PlaidItem, error)
 	ListByUser(ctx context.Context, userID int64) ([]model.PlaidItem, error)
-	UpdateStatus(ctx context.Context, userID, id int64, status string, lastError *string) error
+	UpdateStatus(ctx context.Context, userID, id int64, status string, lastSyncError *string) error
 	// UpdateCursor persists the /transactions/sync cursor + last sync time.
 	// Called after each successful pagination flush so a crash mid-pull
-	// resumes from the last committed page.
+	// resumes from the last committed page. Also flips last_sync_status to
+	// 'ok' and clears last_sync_error — the cursor only advances on a
+	// successful drain.
 	UpdateCursor(ctx context.Context, userID, id int64, cursor string, lastSyncedAt time.Time) error
+	// UpdateSyncStatus writes the per-sync lifecycle fields. Called at the
+	// start of a sync ('syncing') and on failure ('error' with the message).
+	// Success is recorded by UpdateCursor inside the same DB transaction as
+	// the rest of the sync, so there's no separate UpdateSyncStatus('ok').
+	UpdateSyncStatus(ctx context.Context, userID, id int64, status string, syncError *string) error
 	SoftDelete(ctx context.Context, userID, id int64) error
 }
 
@@ -75,13 +82,13 @@ func (r *plaidItemRepo) ListByUser(ctx context.Context, userID int64) ([]model.P
 	return items, nil
 }
 
-func (r *plaidItemRepo) UpdateStatus(ctx context.Context, userID, id int64, status string, lastError *string) error {
+func (r *plaidItemRepo) UpdateStatus(ctx context.Context, userID, id int64, status string, lastSyncError *string) error {
 	res := r.db.WithContext(ctx).
 		Model(&model.PlaidItem{}).
 		Where("user_id = ? AND id = ?", userID, id).
 		Updates(map[string]any{
-			"status":     status,
-			"last_error": lastError,
+			"status":          status,
+			"last_sync_error": lastSyncError,
 		})
 	if res.Error != nil {
 		return res.Error
@@ -93,12 +100,35 @@ func (r *plaidItemRepo) UpdateStatus(ctx context.Context, userID, id int64, stat
 }
 
 func (r *plaidItemRepo) UpdateCursor(ctx context.Context, userID, id int64, cursor string, lastSyncedAt time.Time) error {
+	// The cursor only advances on a successful drain — so this is also the
+	// success terminus for the per-sync lifecycle. Clear any prior error and
+	// flip status to 'ok' in the same write so the UI doesn't have to stitch
+	// these together across rows.
 	res := r.db.WithContext(ctx).
 		Model(&model.PlaidItem{}).
 		Where("user_id = ? AND id = ?", userID, id).
 		Updates(map[string]any{
-			"cursor":         cursor,
-			"last_synced_at": lastSyncedAt,
+			"cursor":           cursor,
+			"last_synced_at":   lastSyncedAt,
+			"last_sync_status": "ok",
+			"last_sync_error":  nil,
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *plaidItemRepo) UpdateSyncStatus(ctx context.Context, userID, id int64, status string, syncError *string) error {
+	res := r.db.WithContext(ctx).
+		Model(&model.PlaidItem{}).
+		Where("user_id = ? AND id = ?", userID, id).
+		Updates(map[string]any{
+			"last_sync_status": status,
+			"last_sync_error":  syncError,
 		})
 	if res.Error != nil {
 		return res.Error

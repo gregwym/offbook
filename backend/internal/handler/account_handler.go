@@ -71,7 +71,7 @@ func (h *AccountHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	a, err := h.svc.Get(c.Request.Context(), auth.MustUserID(c.Request.Context()), id)
+	a, err := h.svc.GetResponse(c.Request.Context(), auth.MustUserID(c.Request.Context()), id)
 	if err != nil {
 		h.writeServiceError(c, err)
 		return
@@ -114,7 +114,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 		f.Offset = n
 	}
 
-	accounts, total, err := h.svc.List(c.Request.Context(), auth.MustUserID(c.Request.Context()), f)
+	accounts, total, err := h.svc.ListResponse(c.Request.Context(), auth.MustUserID(c.Request.Context()), f)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
 		return

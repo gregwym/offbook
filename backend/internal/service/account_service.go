@@ -61,12 +61,25 @@ type UpdateAccountInput struct {
 // AccountService owns business rules for accounts. It deliberately does NOT
 // receive pii_repo or pii_service — PII is set via the separate pii endpoints.
 // All operations are scoped to a user_id derived from the session.
+//
+// plaidItemRepo is an optional dependency used solely to join sync status
+// into account response payloads (#65). Nil = no Plaid wiring on this
+// instance; the response fields will be nil for every account.
 type AccountService struct {
-	repo repository.AccountRepository
+	repo          repository.AccountRepository
+	plaidItemRepo repository.PlaidItemRepository
 }
 
 func NewAccountService(repo repository.AccountRepository) *AccountService {
 	return &AccountService{repo: repo}
+}
+
+// WithPlaidItemRepo lets the router inject the optional dependency without
+// breaking every caller of NewAccountService. Returns the service so the
+// construction stays a one-liner.
+func (s *AccountService) WithPlaidItemRepo(p repository.PlaidItemRepository) *AccountService {
+	s.plaidItemRepo = p
+	return s
 }
 
 func (s *AccountService) Create(ctx context.Context, userID int64, in CreateAccountInput) (*model.Account, error) {
@@ -157,6 +170,72 @@ func (s *AccountService) Update(ctx context.Context, userID, id int64, in Update
 		return nil, fmt.Errorf("update account: %w", err)
 	}
 	return a, nil
+}
+
+// GetResponse returns the enriched DTO for one account.
+func (s *AccountService) GetResponse(ctx context.Context, userID, id int64) (*AccountResponse, error) {
+	a, err := s.Get(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	items, err := s.loadPlaidItems(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	resp := s.buildResponse(a, items)
+	return &resp, nil
+}
+
+// ListResponse mirrors List but returns enriched DTOs.
+func (s *AccountService) ListResponse(ctx context.Context, userID int64, f repository.AccountFilter) ([]AccountResponse, int64, error) {
+	accounts, total, err := s.List(ctx, userID, f)
+	if err != nil {
+		return nil, 0, err
+	}
+	items, err := s.loadPlaidItems(ctx, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]AccountResponse, 0, len(accounts))
+	for i := range accounts {
+		out = append(out, s.buildResponse(&accounts[i], items))
+	}
+	return out, total, nil
+}
+
+// loadPlaidItems indexes the user's PlaidItem rows by plaid_item_id (the
+// Plaid-issued string ID stored on accounts.plaid_item_id). Returns nil
+// when this instance has no Plaid wiring — caller handles that as "no
+// sync status on any account".
+func (s *AccountService) loadPlaidItems(ctx context.Context, userID int64) (map[string]*model.PlaidItem, error) {
+	if s.plaidItemRepo == nil {
+		return nil, nil
+	}
+	items, err := s.plaidItemRepo.ListByUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("load plaid items: %w", err)
+	}
+	out := make(map[string]*model.PlaidItem, len(items))
+	for i := range items {
+		out[items[i].PlaidItemID] = &items[i]
+	}
+	return out, nil
+}
+
+func (s *AccountService) buildResponse(a *model.Account, items map[string]*model.PlaidItem) AccountResponse {
+	resp := AccountResponse{Account: a}
+	if a.PlaidItemID == nil || items == nil {
+		return resp
+	}
+	item, ok := items[*a.PlaidItemID]
+	if !ok {
+		return resp
+	}
+	status := item.LastSyncStatus
+	resp.LastSyncStatus = &status
+	resp.LastSyncedAt = item.LastSyncedAt
+	resp.LastSyncError = item.LastSyncError
+	return resp
 }
 
 func (s *AccountService) SoftDelete(ctx context.Context, userID, id int64) error {

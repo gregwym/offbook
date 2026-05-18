@@ -1,5 +1,9 @@
 // Account mirrors backend model.Account. Money fields arrive as decimal
 // strings (NUMERIC(30,18)) — never parse into Number; format via AmountDisplay.
+//
+// The three last_sync_* fields are joined from the underlying plaid_items
+// row server-side (#65). They are `null` for accounts not linked to Plaid
+// (manual entries) — the frontend uses that as the signal to hide the pill.
 export type Account = {
   id: number
   user_id: number
@@ -14,7 +18,15 @@ export type Account = {
   is_active: boolean
   created_at: string
   updated_at: string
+  last_sync_status: SyncStatus | null
+  last_synced_at: string | null
+  last_sync_error: string | null
 }
+
+// SyncStatus mirrors the CHECK constraint in migration 000006 on
+// plaid_items.last_sync_status.
+export const SYNC_STATUSES = ['never', 'syncing', 'ok', 'error'] as const
+export type SyncStatus = (typeof SYNC_STATUSES)[number]
 
 // Mirrors the CHECK constraint in migration 000001 + service.validAccountTypes.
 export const ACCOUNT_TYPES = [
