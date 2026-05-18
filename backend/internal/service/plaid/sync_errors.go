@@ -135,6 +135,11 @@ func (s *Service) RetrySyncError(ctx context.Context, userID, errorID int64) err
 		return fmt.Errorf("%w: bad raw_payload: %v", ErrSyncErrorReplay, err)
 	}
 
+	userRules, err := s.loadUserRules(ctx, userID)
+	if err != nil {
+		return err
+	}
+
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepo := repository.NewTransactionRepository(tx)
 		acctRepo := repository.NewAccountRepository(tx)
@@ -151,7 +156,7 @@ func (s *Service) RetrySyncError(ctx context.Context, userID, errorID int64) err
 			if err != nil {
 				return fmt.Errorf("%w: %v", ErrSyncErrorReplay, err)
 			}
-			merged, err := MergePlaidUpdate(soft[0], pt, localID, s.catMapper)
+			merged, err := MergePlaidUpdate(soft[0], pt, localID, s.catMapper, userRules)
 			if err != nil {
 				return fmt.Errorf("%w: %v", ErrSyncErrorReplay, err)
 			}
@@ -163,7 +168,7 @@ func (s *Service) RetrySyncError(ctx context.Context, userID, errorID int64) err
 			if err != nil {
 				return fmt.Errorf("%w: %v", ErrSyncErrorReplay, err)
 			}
-			mapped, err := MapPlaidTransaction(pt, userID, localID, s.catMapper)
+			mapped, err := MapPlaidTransaction(pt, userID, localID, s.catMapper, userRules)
 			if err != nil {
 				return fmt.Errorf("%w: %v", ErrSyncErrorReplay, err)
 			}
