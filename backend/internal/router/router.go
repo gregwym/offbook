@@ -58,6 +58,10 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	dashboardSvc := service.NewDashboardService(dashboardRepo)
 	dashboardHandler := handler.NewDashboardHandler(dashboardSvc)
 
+	budgetRepo := repository.NewBudgetRepository(gormDB)
+	budgetSvc := service.NewBudgetService(budgetRepo, categoryRepo)
+	budgetHandler := handler.NewBudgetHandler(budgetSvc)
+
 	householdRepo := repository.NewHouseholdRepository(gormDB)
 	memberRepo := repository.NewHouseholdMemberRepository(gormDB)
 	userRepo := repository.NewUserRepository(gormDB)
@@ -106,6 +110,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		categoryHandler.Register(secured)
 		ruleHandler.Register(secured)
 		dashboardHandler.Register(secured)
+		budgetHandler.Register(secured)
 		householdHandler.Register(secured)
 		aggregatorHandler.Register(secured)
 		scopeHandler.Register(secured)
