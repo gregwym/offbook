@@ -64,7 +64,30 @@ type TransactionRepository interface {
 	// (live or soft-deleted) for the key. The caller is expected to pass a
 	// row produced by plaid.MergePlaidUpdate so user-edited fields survive.
 	ResurrectByPlaidTransactionID(ctx context.Context, userID int64, plaidTxnID string, merged model.Transaction) error
+	// ListForCategorizationScope returns a chunk of non-deleted transactions
+	// for the user, ordered by id ASC for cursor-style pagination. Callers
+	// drive a loop by passing the last returned row's id as afterID on the
+	// next call. The empty slice signals end-of-scan.
+	//
+	// scope filters the underlying query:
+	//   - "all"           — every non-deleted transaction
+	//   - "uncategorized" — category_id IS NULL
+	//   - "plaid_default" — categorization_method = 'plaid_default'
+	//
+	// Manual rows (categorization_method = 'manual') are NOT filtered out
+	// here — the bulk-apply service inspects each row so it can count
+	// "skipped_manual" for the response. For scope='plaid_default' the
+	// method filter inherently excludes manual rows.
+	ListForCategorizationScope(ctx context.Context, userID int64, scope string, afterID int64, limit int) ([]model.Transaction, error)
 }
+
+// CategorizationScopes enumerates the valid `scope` values for
+// ListForCategorizationScope and the bulk re-categorize endpoint.
+const (
+	CategorizationScopeAll           = "all"
+	CategorizationScopeUncategorized = "uncategorized"
+	CategorizationScopePlaidDefault  = "plaid_default"
+)
 
 type transactionRepo struct {
 	db *gorm.DB
@@ -263,6 +286,33 @@ func (r *transactionRepo) ResurrectByPlaidTransactionID(ctx context.Context, use
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *transactionRepo) ListForCategorizationScope(ctx context.Context, userID int64, scope string, afterID int64, limit int) ([]model.Transaction, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	q := r.db.WithContext(ctx).
+		Model(&model.Transaction{}).
+		Where("user_id = ?", userID)
+	if afterID > 0 {
+		q = q.Where("id > ?", afterID)
+	}
+	switch scope {
+	case CategorizationScopeUncategorized:
+		q = q.Where("category_id IS NULL")
+	case CategorizationScopePlaidDefault:
+		q = q.Where("categorization_method = ?", "plaid_default")
+	case CategorizationScopeAll, "":
+		// no extra predicate
+	default:
+		return nil, errors.New("unknown categorization scope: " + scope)
+	}
+	var out []model.Transaction
+	if err := q.Order("id ASC").Limit(limit).Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *transactionRepo) SoftDelete(ctx context.Context, userID, id int64) error {

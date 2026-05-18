@@ -24,6 +24,29 @@ func (h *CategorizationRuleHandler) Register(g *gin.RouterGroup) {
 	g.GET("/categorization-rules/:id", h.Get)
 	g.PATCH("/categorization-rules/:id", h.Update)
 	g.DELETE("/categorization-rules/:id", h.Delete)
+	g.POST("/categorization-rules/apply", h.Apply)
+}
+
+type applyRulesRequest struct {
+	Scope string `json:"scope"`
+}
+
+// Apply runs the bulk re-categorize endpoint. Empty body defaults to
+// scope="all"; explicit scope ∈ {all, uncategorized, plaid_default}.
+func (h *CategorizationRuleHandler) Apply(c *gin.Context) {
+	var req applyRulesRequest
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+			return
+		}
+	}
+	result, err := h.svc.Apply(c.Request.Context(), auth.MustUserID(c.Request.Context()), req.Scope)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
 type createRuleRequest struct {
@@ -122,6 +145,8 @@ func (h *CategorizationRuleHandler) writeServiceError(c *gin.Context, err error)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REGEX"})
 	case errors.Is(err, service.ErrUnknownCategory):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "UNKNOWN_CATEGORY"})
+	case errors.Is(err, service.ErrInvalidApplyScope):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_SCOPE"})
 	case errors.Is(err, service.ErrEmptyPattern),
 		errors.Is(err, service.ErrInvalidMatchType),
 		errors.Is(err, service.ErrInvalidPriority):
