@@ -50,6 +50,10 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	categorySvc := service.NewCategoryService(categoryRepo)
 	categoryHandler := handler.NewCategoryHandler(categorySvc)
 
+	ruleRepo := repository.NewCategorizationRuleRepository(gormDB)
+	ruleSvc := service.NewCategorizationRuleService(ruleRepo, categoryRepo)
+	ruleHandler := handler.NewCategorizationRuleHandler(ruleSvc)
+
 	dashboardRepo := repository.NewDashboardRepository(gormDB)
 	dashboardSvc := service.NewDashboardService(dashboardRepo)
 	dashboardHandler := handler.NewDashboardHandler(dashboardSvc)
@@ -99,6 +103,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		piiHandler.RegisterAccountRoutes(secured)
 		transactionHandler.Register(secured)
 		categoryHandler.Register(secured)
+		ruleHandler.Register(secured)
 		dashboardHandler.Register(secured)
 		householdHandler.Register(secured)
 		aggregatorHandler.Register(secured)
