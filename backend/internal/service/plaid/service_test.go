@@ -91,6 +91,9 @@ func (r *fakeRepo) UpdateCursor(context.Context, int64, int64, string, time.Time
 	return nil
 }
 
+// (fakeRepo implements PlaidItemRepository — the transaction-repo methods
+// added in #62 / #63 live on a separate interface and aren't exercised here.)
+
 func newTestKey() []byte {
 	k := make([]byte, 32)
 	for i := range k {

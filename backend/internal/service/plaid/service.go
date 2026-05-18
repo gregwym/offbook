@@ -41,12 +41,16 @@ type SyncAccountsResult struct {
 
 // SyncTransactionsResult summarizes a /transactions/sync drain. Inserted
 // is the count of rows actually written (i.e., excludes duplicates that
-// hit the ON CONFLICT DO NOTHING path). Removed is the count of Plaid
-// IDs we were told to forget — for the initial pull this is always 0.
+// hit the ON CONFLICT DO NOTHING path). Resurrected counts `added` rows
+// whose plaid_transaction_id matched a previously-soft-deleted local row —
+// they are undeleted in place rather than inserted as duplicates (see #63).
+// Removed is the count of Plaid IDs we were told to forget — for the
+// initial pull this is always 0.
 type SyncTransactionsResult struct {
-	Inserted int64 `json:"inserted"`
-	Modified int   `json:"modified"`
-	Removed  int   `json:"removed"`
+	Inserted    int64 `json:"inserted"`
+	Resurrected int   `json:"resurrected"`
+	Modified    int   `json:"modified"`
+	Removed     int   `json:"removed"`
 }
 
 // Service orchestrates the Plaid Link flow: issue link tokens, exchange
@@ -367,11 +371,57 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 		acctRepo := repository.NewAccountRepository(tx)
 		accountIDCache := map[string]int64{}
 
-		// Inserts (uses ON CONFLICT DO NOTHING — defense in depth on top
-		// of the partial unique index).
+		// Inserts. Two cases per `added`:
+		//   1. plaid_transaction_id matches a soft-deleted local row →
+		//      resurrect (clear deleted_at + overlay via MergePlaidUpdate
+		//      so user-edited notes/category survive the round-trip).
+		//   2. otherwise → batch insert with ON CONFLICT DO NOTHING.
+		// The resurrect pass is what gives #63 its "re-sync of a previously
+		// deleted Plaid row restores in place" guarantee — without it, the
+		// partial unique index (which excludes deleted rows) would silently
+		// let a duplicate land.
 		if len(added) > 0 {
-			batch := make([]model.Transaction, 0, len(added))
+			plaidIDs := make([]string, 0, len(added))
+			addedByPlaidID := make(map[string]PlaidTransaction, len(added))
 			for _, pt := range added {
+				plaidIDs = append(plaidIDs, pt.PlaidTransactionID)
+				addedByPlaidID[pt.PlaidTransactionID] = pt
+			}
+
+			deleted, err := txRepo.FindSoftDeletedByPlaidTransactionIDs(ctx, userID, plaidIDs)
+			if err != nil {
+				return fmt.Errorf("plaid: lookup soft-deleted for resurrect: %w", err)
+			}
+			resurrectedIDs := make(map[string]struct{}, len(deleted))
+			for _, existing := range deleted {
+				if existing.PlaidTransactionID == nil {
+					continue
+				}
+				ptxID := *existing.PlaidTransactionID
+				incoming, ok := addedByPlaidID[ptxID]
+				if !ok {
+					continue
+				}
+				localID, err := resolveAccountID(ctx, acctRepo, userID, incoming.PlaidAccountID, accountIDCache)
+				if err != nil {
+					return err
+				}
+				merged, err := MergePlaidUpdate(existing, incoming, localID)
+				if err != nil {
+					return err
+				}
+				if err := txRepo.ResurrectByPlaidTransactionID(ctx, userID, ptxID, merged); err != nil {
+					return fmt.Errorf("plaid: resurrect %s: %w", ptxID, err)
+				}
+				resurrectedIDs[ptxID] = struct{}{}
+				result.Resurrected++
+			}
+
+			batch := make([]model.Transaction, 0, len(added)-len(resurrectedIDs))
+			for _, pt := range added {
+				if _, done := resurrectedIDs[pt.PlaidTransactionID]; done {
+					continue
+				}
 				localID, err := resolveAccountID(ctx, acctRepo, userID, pt.PlaidAccountID, accountIDCache)
 				if err != nil {
 					return err
@@ -382,11 +432,13 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 				}
 				batch = append(batch, row)
 			}
-			n, err := txRepo.CreateBatch(ctx, batch)
-			if err != nil {
-				return fmt.Errorf("plaid: insert batch: %w", err)
+			if len(batch) > 0 {
+				n, err := txRepo.CreateBatch(ctx, batch)
+				if err != nil {
+					return fmt.Errorf("plaid: insert batch: %w", err)
+				}
+				result.Inserted = n
 			}
-			result.Inserted = n
 		}
 
 		// Modifications: merge with the existing row so user-edited
