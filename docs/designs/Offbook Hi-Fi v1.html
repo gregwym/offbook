@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Offbook — Hi-Fi Designs</title>
+  <link rel="icon" type="image/svg+xml" href="assets/offbook-mark.svg" />
+  <link rel="stylesheet" href="colors_and_type.css" />
+  <link rel="stylesheet" href="kit-styles.css" />
+  <link rel="stylesheet" href="styles-hifi.css" />
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="components/icons.jsx"></script>
+  <script type="text/babel" src="components/Primitives.jsx"></script>
+  <script type="text/babel" src="components/Charts.jsx"></script>
+  <script type="text/babel" src="components/AppShell.jsx"></script>
+  <script type="text/babel" src="components/DashboardPage.jsx"></script>
+  <script type="text/babel" src="components/AccountsPage.jsx"></script>
+  <script type="text/babel" src="components/TransactionsPage.jsx"></script>
+  <script type="text/babel" src="components/AIPage.jsx"></script>
+  <script type="text/babel" src="components/HouseholdPage.jsx"></script>
+  <script type="text/babel" src="components/MembersPage.jsx"></script>
+
+  <script type="text/babel" src="design-canvas.jsx"></script>
+
+  <script type="text/babel">
+    // Artboard wraps a single page in an AppShell so each card looks like a
+    // live screenshot of the app at that route.
+    function Artboard({ page, scope: initialScope = 'personal', current }) {
+      const [scope, setScope] = React.useState(initialScope);
+      const [route, setRoute] = React.useState(current);
+
+      let body;
+      switch (page) {
+        case 'dashboard':    body = <DashboardPage />; break;
+        case 'accounts':     body = <AccountsPage />; break;
+        case 'transactions': body = <TransactionsPage />; break;
+        case 'ai':           body = <AIPage />; break;
+        case 'household':    body = <HouseholdPage />; break;
+        case 'members':      body = <MembersPage />; break;
+        default: body = <div style={{ padding: 40, color: 'var(--fg-3)' }}>Coming soon</div>;
+      }
+      return (
+        <div className="artboard-host">
+          <AppShellV4
+            scope={scope}
+            onScopeChange={setScope}
+            current={route}
+            onNavigate={setRoute}
+          >
+            {body}
+          </AppShellV4>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <DesignCanvas>
+          <DCSection
+            id="personal"
+            title="Personal scope"
+            subtitle="What Alex sees in 👤 Just me. v4 adds the scope picker at the top of the sidebar and the user chip at the bottom."
+          >
+            <DCArtboard id="dashboard" label="Dashboard" width={1280} height={860}>
+              <Artboard page="dashboard" scope="personal" current="dashboard" />
+            </DCArtboard>
+            <DCArtboard id="accounts" label="Accounts · PII + visibility chip" width={1280} height={860}>
+              <Artboard page="accounts" scope="personal" current="accounts" />
+            </DCArtboard>
+            <DCArtboard id="transactions" label="Transactions" width={1280} height={860}>
+              <Artboard page="transactions" scope="personal" current="transactions" />
+            </DCArtboard>
+            <DCArtboard id="ai" label="AI Advisor · with context preview" width={1280} height={860}>
+              <Artboard page="ai" scope="personal" current="ai" />
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection
+            id="household"
+            title="Household scope"
+            subtitle="What Alex sees in 🏠 Smith — aggregates only, never raw data from other members."
+          >
+            <DCArtboard id="household-dashboard" label="Household · Dashboard" width={1280} height={860}>
+              <Artboard page="household" scope="household" current="household" />
+            </DCArtboard>
+            <DCArtboard id="household-members" label="Household · Members + lifecycle" width={1280} height={860}>
+              <Artboard page="members" scope="household" current="members" />
+            </DCArtboard>
+          </DCSection>
+        </DesignCanvas>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

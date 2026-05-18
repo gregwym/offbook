@@ -35,7 +35,7 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 
 ## Git Discipline
 - Auto-commit completed work without asking.
-- On `main`: push freely to preserve work. On feature branches: push when opening/updating a PR.
+- **`main` is protected — all changes land via PR.** Never commit directly to `main`; always work on a feature branch (`{type}/{issue-number}-{slug}`) and push when opening/updating the PR.
 - **PRs may be merged without external review** — owner has pre-authorized self-merge for autonomous workflow. Prefer `gh pr merge --squash --delete-branch` once CI (if any) is green and the branch is mergeable.
 - NEVER `git commit --amend`, `git reset --hard`, or `git push --force` (any variant). No exceptions.
 - Fix mistakes with new commits, not history rewrites.
