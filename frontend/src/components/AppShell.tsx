@@ -1,6 +1,7 @@
 import {
   ArrowDownToLine,
   Bot,
+  Landmark,
   LayoutDashboard,
   PiggyBank,
   Receipt,
@@ -22,6 +23,7 @@ type NavItem = { to: string; label: string; icon: typeof LayoutDashboard }
 const PERSONAL_NAV: NavItem[] = [
   { to: '/dashboard',     label: 'Dashboard',     icon: LayoutDashboard },
   { to: '/accounts',      label: 'Accounts',      icon: Wallet },
+  { to: '/connect',       label: 'Connect Bank',  icon: Landmark },
   { to: '/transactions',  label: 'Transactions',  icon: Receipt },
   { to: '/budgets',       label: 'Budgets',       icon: Target },
   { to: '/savings-goals', label: 'Savings Goals', icon: PiggyBank },

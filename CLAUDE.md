@@ -46,6 +46,12 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 - If the Docker daemon isn't running, fix the daemon (Colima / Podman / Docker Desktop) — don't bypass with a native install. When containerization is blocked, stop and ask.
 - **Project-specific CLIs live in the repo, not the system.** Migration runners, code generators, and similar tools belong as `backend/cmd/<tool>/main.go` (or equivalent), invoked via `go run ./cmd/<tool>`. Example: `cmd/migrate` wraps `golang-migrate` — no system `migrate` binary needed. A teammate cloning the repo shouldn't have to `brew install` anything beyond the language toolchain.
 
+## Plaid Sandbox
+- Set `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV=sandbox`, and `PLAID_TOKEN_KEY` (32-byte hex, `openssl rand -hex 32`) in `.env`.
+- Frontend entry point is `/connect` ("Connect Bank" in the personal sidebar). Click → Plaid Link opens → pick any sandbox institution (e.g. Chase) → sign in with `user_good` / `pass_good`. The page chains exchange → sync-accounts → sync-transactions, then navigates to `/accounts`.
+- Settings → "Linked Institutions" lists each `plaid_items` row and exposes a per-item Disconnect (soft-delete; accounts and historical transactions remain).
+- All Plaid surfaces are personal-scope only — sharing into a household is per-account via `account_shares`, not per-item.
+
 ## Backlog Discipline
 - Do NOT fix things outside the current issue
 - Instead: `gh issue create --title "..." --body "..." --label backlog`
