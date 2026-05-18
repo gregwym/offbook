@@ -19,10 +19,20 @@ if [[ "$CMD" =~ ^[[:space:]]*git[[:space:]]+checkout[[:space:]]+-b[[:space:]]+ ]
   fi
 fi
 
-# --- Check 2: go vet before `git commit ...` ---
+# --- Check 2: go vet + gofmt before `git commit ...` ---
 # Skip silently if backend/ doesn't exist yet (pre-M1).
+# gofmt is cheap and catches the most common CI lint failure (unformatted
+# files); vet catches type/compile errors. Tests stay out of the hook to
+# keep commit latency reasonable — run `make verify` before opening a PR.
 if [[ "$CMD" =~ ^[[:space:]]*git[[:space:]]+commit ]]; then
   if [ -d backend ] && [ -f backend/go.mod ]; then
+    UNFORMATTED=$(cd backend && gofmt -l . 2>/dev/null)
+    if [ -n "$UNFORMATTED" ]; then
+      echo "gofmt found unformatted files:" >&2
+      echo "$UNFORMATTED" >&2
+      echo "Fix with: cd backend && gofmt -w ." >&2
+      exit 2
+    fi
     if ! (cd backend && go vet ./...) 2>&1; then
       exit 2
     fi
