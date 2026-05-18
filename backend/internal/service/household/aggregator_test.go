@@ -1,3 +1,21 @@
+// Aggregator privacy suite — covers the five scenarios from
+// .claude/rules/testing.md ("Aggregator privacy tests"):
+//
+//	(a) private accounts excluded from aggregates
+//	    → TestAggregator_ExcludesPrivateAccounts
+//	(b) balance_only excluded from category-level aggregates
+//	    → TestAggregator_BalanceOnlyExcludedFromCategory
+//	(c) in-grace members excluded from live aggregates but present in historical
+//	    → TestAggregator_InGraceExcludedFromLive       (Dashboard)
+//	    → TestAggregator_InGraceExcludedFromBudgetPace (BudgetPace)
+//	    → TestAggregator_HistoricalIncludesInGrace    (historical/count contract)
+//	(d) return types contain no raw transaction rows (reflection check)
+//	    → TestAggregator_NoRawTransactionRows
+//	(e) AIContext for member A never includes member B's non-shared threads
+//	    → TestAggregator_AIContextNoCrossMemberLeak
+//
+// The static "household package does not import pii_repo" guard lives in
+// TestHouseholdPackage_DoesNotImportPIIRepo and backs ADR-0008.
 package household_test
 
 import (
@@ -100,11 +118,10 @@ func setBalance(t *testing.T, g *gorm.DB, acct *model.Account, balance string) {
 	}
 }
 
-// TestHouseholdPackage_DoesNotImportPIIRepo is the static check from
-// .claude/rules/testing.md item (a) — fails if any non-test file in the
-// household package imports the PII layer (pii_repo or pii_service).
-// Test files are allowed to import service/ for assembling integration
-// fixtures.
+// TestHouseholdPackage_DoesNotImportPIIRepo is the static guard backing
+// ADR-0008 — fails if any non-test file in the household package imports
+// the PII layer (pii_repo or pii_service). Test files are allowed to
+// import service/ for assembling integration fixtures.
 func TestHouseholdPackage_DoesNotImportPIIRepo(t *testing.T) {
 	dir, err := filepath.Abs(".")
 	if err != nil {
@@ -133,7 +150,7 @@ func TestHouseholdPackage_DoesNotImportPIIRepo(t *testing.T) {
 	}
 }
 
-// TestAggregator_ExcludesPrivateAccounts covers privacy item (c).
+// TestAggregator_ExcludesPrivateAccounts covers scenario (a).
 func TestAggregator_ExcludesPrivateAccounts(t *testing.T) {
 	agg, g := newAggregator(t)
 	ctx := context.Background()
@@ -171,7 +188,7 @@ func TestAggregator_ExcludesPrivateAccounts(t *testing.T) {
 	}
 }
 
-// TestAggregator_BalanceOnlyExcludedFromCategory covers item (d):
+// TestAggregator_BalanceOnlyExcludedFromCategory covers scenario (b):
 // balance_only contributes to net worth but never to per-category aggregates.
 func TestAggregator_BalanceOnlyExcludedFromCategory(t *testing.T) {
 	agg, g := newAggregator(t)
@@ -213,8 +230,10 @@ func TestAggregator_BalanceOnlyExcludedFromCategory(t *testing.T) {
 	}
 }
 
-// TestAggregator_InGraceExcludedFromLive covers item (e). A member who left
-// within grace must not contribute to live aggregates.
+// TestAggregator_InGraceExcludedFromLive covers scenario (c) for the Dashboard
+// surface: a member who left within grace must not contribute to live
+// aggregates. See TestAggregator_InGraceExcludedFromBudgetPace for BudgetPace
+// and TestAggregator_HistoricalIncludesInGrace for the historical/count side.
 func TestAggregator_InGraceExcludedFromLive(t *testing.T) {
 	agg, g := newAggregator(t)
 	ctx := context.Background()
@@ -259,8 +278,74 @@ func TestAggregator_InGraceExcludedFromLive(t *testing.T) {
 	}
 }
 
-// TestAggregator_NoRawTransactionRows covers item (f) — reflection walk over
-// every aggregator return type asserts no model.Transaction or
+// TestAggregator_InGraceExcludedFromBudgetPace extends scenario (c) to the
+// BudgetPace surface: a shared_budget's Spent value rolls up ONLY across live
+// members' transactions, so an in-grace leaver's spend in the same category
+// must not bleed into the live pace.
+func TestAggregator_InGraceExcludedFromBudgetPace(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+
+	ownerID := seedUser(t, g, "bp-owner")
+	leaverID := seedUser(t, g, "bp-leaver")
+
+	hh := seedHouseholdRow(t, g, ownerID, "BP House", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+	leftAt := time.Now().Add(-7 * 24 * time.Hour) // well within 30d grace
+	addMember(t, g, hh.ID, leaverID, model.RoleContributor, &leftAt)
+
+	ownerAcct := seedAccount(t, g, ownerID, "bp-owner-acct")
+	leaverAcct := seedAccount(t, g, leaverID, "bp-leaver-acct")
+	setShare(t, g, ownerAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
+	setShare(t, g, leaverAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
+
+	cat := &model.Category{Name: "BP Groceries", Slug: fmt.Sprintf("bp-groceries-%d", time.Now().UnixNano())}
+	if err := g.Create(cat).Error; err != nil {
+		t.Fatalf("seed category: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, cat.ID) })
+
+	budgetAmt, _ := decimal.NewFromString("100")
+	budget := &model.SharedBudget{
+		HouseholdID: hh.ID,
+		CategoryID:  cat.ID,
+		Period:      "monthly",
+		Amount:      budgetAmt,
+		IsActive:    true,
+	}
+	if err := g.Create(budget).Error; err != nil {
+		t.Fatalf("seed shared budget: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.SharedBudget{}, budget.ID) })
+
+	when := time.Now().Add(-time.Hour)
+	seedTxn(t, g, ownerID, ownerAcct.ID, "-10", &cat.ID, when)
+	seedTxn(t, g, leaverID, leaverAcct.ID, "-555", &cat.ID, when) // must not count
+
+	items, err := agg.BudgetPace(ctx, hh.ID, household.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("BudgetPace: %v", err)
+	}
+	var got *household.BudgetPaceItem
+	for i := range items {
+		if items[i].BudgetID == budget.ID {
+			got = &items[i]
+			break
+		}
+	}
+	if got == nil {
+		t.Fatalf("BudgetPace did not return our budget; got %+v", items)
+	}
+	if got.Spent != "10" {
+		t.Errorf("Spent = %q, want 10 (leaver in grace must be excluded)", got.Spent)
+	}
+	if got.Pace != "0.1" {
+		t.Errorf("Pace = %q, want 0.1 (10/100)", got.Pace)
+	}
+}
+
+// TestAggregator_NoRawTransactionRows covers scenario (d) — reflection walk
+// over every aggregator return type asserts no model.Transaction or
 // []model.Transaction shapes are reachable.
 func TestAggregator_NoRawTransactionRows(t *testing.T) {
 	forbid := reflect.TypeOf(model.Transaction{})
@@ -300,7 +385,7 @@ func walkType(t *testing.T, path string, ty, forbid reflect.Type, seen map[refle
 	}
 }
 
-// TestAggregator_AIContextNoCrossMemberLeak covers item (g) — Member A's
+// TestAggregator_AIContextNoCrossMemberLeak covers scenario (e) — Member A's
 // AIContext never includes Member B's non-shared threads.
 func TestAggregator_AIContextNoCrossMemberLeak(t *testing.T) {
 	agg, g := newAggregator(t)
