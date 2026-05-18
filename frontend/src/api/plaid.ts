@@ -3,6 +3,7 @@ import type {
   ExchangeResponse,
   LinkTokenResponse,
   PlaidItem,
+  PlaidSyncError,
   SyncAccountsResponse,
   SyncTransactionsResponse,
 } from '../types/plaid'
@@ -45,4 +46,26 @@ export async function listItems(): Promise<{ items: PlaidItem[]; total: number }
 
 export async function disconnectItem(itemID: string): Promise<void> {
   await apiClient.delete(`/plaid/items/${encodeURIComponent(itemID)}`)
+}
+
+// listSyncErrors returns DLQ rows for one Plaid item. Default
+// `status=unresolved` matches the badge-driven flow; pass 'all' for an
+// audit view.
+export async function listSyncErrors(
+  itemID: string,
+  status: 'unresolved' | 'all' = 'unresolved',
+): Promise<{ errors: PlaidSyncError[]; total: number }> {
+  const res = await apiClient.get<ApiList<PlaidSyncError>>(
+    `/plaid/items/${encodeURIComponent(itemID)}/errors`,
+    { params: { status } },
+  )
+  return { errors: res.data.data, total: res.data.total }
+}
+
+export async function retrySyncError(errorID: number): Promise<void> {
+  await apiClient.post(`/plaid/errors/${errorID}/retry`)
+}
+
+export async function dismissSyncError(errorID: number): Promise<void> {
+  await apiClient.post(`/plaid/errors/${errorID}/dismiss`)
 }

@@ -3,10 +3,10 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/service/auth"
 	plaidsvc "github.com/gregwym/offbook/backend/internal/service/plaid"
 )
@@ -30,6 +30,9 @@ func (h *PlaidHandler) Register(g *gin.RouterGroup) {
 	g.DELETE("/plaid/items/:item_id", h.DisconnectItem)
 	g.POST("/plaid/items/:item_id/sync-accounts", h.SyncAccounts)
 	g.POST("/plaid/items/:item_id/sync-transactions", h.SyncTransactions)
+	g.GET("/plaid/items/:item_id/errors", h.ListSyncErrors)
+	g.POST("/plaid/errors/:error_id/retry", h.RetrySyncError)
+	g.POST("/plaid/errors/:error_id/dismiss", h.DismissSyncError)
 }
 
 func (h *PlaidHandler) CreateLinkToken(c *gin.Context) {
@@ -101,7 +104,9 @@ func (h *PlaidHandler) SyncAccounts(c *gin.Context) {
 
 // SyncTransactions runs /transactions/sync for the given item, persisting
 // added transactions and the resulting cursor. Response is a narrow
-// {inserted, modified, removed} count — never the transactions themselves.
+// {inserted, modified, removed, failed} count — never the transactions
+// themselves. failed > 0 means rows landed in plaid_sync_errors; see
+// GET /plaid/items/:id/errors.
 func (h *PlaidHandler) SyncTransactions(c *gin.Context) {
 	plaidItemID := c.Param("item_id")
 	if plaidItemID == "" {
@@ -119,24 +124,99 @@ func (h *PlaidHandler) SyncTransactions(c *gin.Context) {
 			"inserted": result.Inserted,
 			"modified": result.Modified,
 			"removed":  result.Removed,
+			"failed":   result.Failed,
 		},
 	})
 }
 
-// ListItems returns the user's linked Plaid items for the Settings page.
-// Response shape: standard list envelope with total. AccessToken is never
+// ListItems returns the user's linked Plaid items for the Settings page,
+// each annotated with its unresolved DLQ count so the UI can render the
+// ⚠️ badge in one round trip (no per-item N+1). AccessToken is never
 // included — model.PlaidItem has `json:"-"` on AccessTokenEnc.
 func (h *PlaidHandler) ListItems(c *gin.Context) {
 	userID := auth.MustUserID(c.Request.Context())
-	items, err := h.svc.ListItems(c.Request.Context(), userID)
+	items, err := h.svc.ListItemsWithSyncErrors(c.Request.Context(), userID)
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
-	if items == nil {
-		items = []model.PlaidItem{}
-	}
 	c.JSON(http.StatusOK, gin.H{"data": items, "total": len(items)})
+}
+
+// ListSyncErrors returns the DLQ rows for one Plaid item. Query parameter
+// ?status=unresolved (default) hides retried/dismissed rows; ?status=all
+// returns the full history. The raw_payload is the full Plaid transaction
+// JSON, echoed back so the modal can show it as-is.
+func (h *PlaidHandler) ListSyncErrors(c *gin.Context) {
+	plaidItemID := c.Param("item_id")
+	if plaidItemID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "item_id is required", "code": "INVALID_REQUEST"})
+		return
+	}
+	// Default to unresolved-only — the badge-driven flow wants actionable
+	// rows. ?status=all opens the door for an audit view later.
+	unresolvedOnly := true
+	switch c.Query("status") {
+	case "", "unresolved":
+		unresolvedOnly = true
+	case "all":
+		unresolvedOnly = false
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "status must be 'unresolved' or 'all'", "code": "INVALID_REQUEST"})
+		return
+	}
+	userID := auth.MustUserID(c.Request.Context())
+	rows, err := h.svc.ListSyncErrors(c.Request.Context(), userID, plaidItemID, unresolvedOnly)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rows, "total": len(rows)})
+}
+
+// RetrySyncError replays the row's raw_payload through the same mapping
+// path as a live sync. On success the row is marked resolved=retried_ok
+// (204). On a known replay failure (payload still bad) the row stays
+// unresolved and the handler returns 422 so the UI can keep the row in
+// the list.
+func (h *PlaidHandler) RetrySyncError(c *gin.Context) {
+	id, ok := parseErrorID(c)
+	if !ok {
+		return
+	}
+	userID := auth.MustUserID(c.Request.Context())
+	if err := h.svc.RetrySyncError(c.Request.Context(), userID, id); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// DismissSyncError marks the row resolved=dismissed without replaying it.
+// 204 on success; 404 if the row is missing or already resolved.
+func (h *PlaidHandler) DismissSyncError(c *gin.Context) {
+	id, ok := parseErrorID(c)
+	if !ok {
+		return
+	}
+	userID := auth.MustUserID(c.Request.Context())
+	if err := h.svc.DismissSyncError(c.Request.Context(), userID, id); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// parseErrorID extracts and validates the :error_id path param.
+// Writes the 400 response itself; returns ok=false when invalid.
+func parseErrorID(c *gin.Context) (int64, bool) {
+	raw := c.Param("error_id")
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "error_id must be a positive integer", "code": "INVALID_REQUEST"})
+		return 0, false
+	}
+	return id, true
 }
 
 // DisconnectItem soft-deletes the link. Accounts previously synced remain
@@ -171,6 +251,16 @@ func (h *PlaidHandler) writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": err.Error(),
 			"code":  "PLAID_ITEM_NOT_FOUND",
+		})
+	case errors.Is(err, plaidsvc.ErrSyncErrorNotFound):
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": err.Error(),
+			"code":  "PLAID_SYNC_ERROR_NOT_FOUND",
+		})
+	case errors.Is(err, plaidsvc.ErrSyncErrorReplay):
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error": err.Error(),
+			"code":  "PLAID_SYNC_ERROR_REPLAY",
 		})
 	default:
 		c.JSON(http.StatusBadGateway, gin.H{

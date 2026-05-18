@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Landmark, Plug, Trash2 } from 'lucide-react'
-import { disconnectItem, listItems } from '../api/plaid'
-import type { PlaidItem } from '../types/plaid'
+import { AlertTriangle, Landmark, Plug, Trash2, X } from 'lucide-react'
+import {
+  disconnectItem,
+  dismissSyncError,
+  listItems,
+  listSyncErrors,
+  retrySyncError,
+} from '../api/plaid'
+import type { PlaidItem, PlaidSyncError } from '../types/plaid'
 
 export function SettingsPage() {
   return (
@@ -21,6 +27,7 @@ function LinkedInstitutionsSection() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [disconnecting, setDisconnecting] = useState<string | null>(null)
+  const [errorModalItem, setErrorModalItem] = useState<PlaidItem | null>(null)
 
   const refresh = useCallback(() => {
     return listItems()
@@ -84,34 +91,201 @@ function LinkedInstitutionsSection() {
             No linked institutions yet. Use Connect Bank to add one.
           </div>
         )}
-        {items.map((it) => (
-          <div key={it.id} className="flex items-center gap-4 px-5 py-3">
-            <div className="rounded-md bg-gray-50 p-2 text-gray-500">
-              <Landmark size={18} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="truncate font-medium text-gray-900">
-                {it.institution_name ?? it.plaid_item_id}
+        {items.map((it) => {
+          const errCount = it.unresolved_sync_errors ?? 0
+          return (
+            <div key={it.id} className="flex items-center gap-4 px-5 py-3">
+              <div className="rounded-md bg-gray-50 p-2 text-gray-500">
+                <Landmark size={18} />
               </div>
-              <div className="mt-0.5 text-xs text-gray-500">
-                {statusSummary(it)}
-                {it.last_sync_error ? ` · ${it.last_sync_error}` : ''}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <div className="truncate font-medium text-gray-900">
+                    {it.institution_name ?? it.plaid_item_id}
+                  </div>
+                  {errCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setErrorModalItem(it)}
+                      className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-200"
+                      aria-label={`Review ${errCount} sync errors for ${it.institution_name ?? it.plaid_item_id}`}
+                    >
+                      <AlertTriangle size={12} />
+                      {errCount}
+                    </button>
+                  )}
+                </div>
+                <div className="mt-0.5 text-xs text-gray-500">
+                  {statusSummary(it)}
+                  {it.last_sync_error ? ` · ${it.last_sync_error}` : ''}
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={() => onDisconnect(it)}
+                disabled={disconnecting === it.plaid_item_id}
+                className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                aria-label={`Disconnect ${it.institution_name ?? it.plaid_item_id}`}
+              >
+                <Trash2 size={14} />
+                {disconnecting === it.plaid_item_id ? 'Disconnecting…' : 'Disconnect'}
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => onDisconnect(it)}
-              disabled={disconnecting === it.plaid_item_id}
-              className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-              aria-label={`Disconnect ${it.institution_name ?? it.plaid_item_id}`}
-            >
-              <Trash2 size={14} />
-              {disconnecting === it.plaid_item_id ? 'Disconnecting…' : 'Disconnect'}
-            </button>
-          </div>
-        ))}
+          )
+        })}
       </div>
+      {errorModalItem && (
+        <SyncErrorsModal
+          item={errorModalItem}
+          onClose={() => {
+            setErrorModalItem(null)
+            // Refresh the badge count after potential resolutions.
+            void refresh()
+          }}
+        />
+      )}
     </section>
+  )
+}
+
+function SyncErrorsModal({ item, onClose }: { item: PlaidItem; onClose: () => void }) {
+  const [errors, setErrors] = useState<PlaidSyncError[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busyID, setBusyID] = useState<number | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  const load = useCallback(() => {
+    return listSyncErrors(item.plaid_item_id, 'unresolved')
+      .then((r) => {
+        setErrors(r.errors)
+        setErr(null)
+      })
+      .catch((e: unknown) => setErr(errMsg(e)))
+      .finally(() => setLoading(false))
+  }, [item.plaid_item_id])
+
+  useEffect(() => {
+    // setState only fires inside then/catch/finally — effect body is sync-pure.
+    void load()
+  }, [load])
+
+  const reload = useCallback(async () => {
+    setLoading(true)
+    await load()
+  }, [load])
+
+  const onRetry = async (row: PlaidSyncError) => {
+    setBusyID(row.id)
+    try {
+      await retrySyncError(row.id)
+      await reload()
+    } catch (e) {
+      setErr(errMsg(e))
+    } finally {
+      setBusyID(null)
+    }
+  }
+
+  const onDismiss = async (row: PlaidSyncError) => {
+    setBusyID(row.id)
+    try {
+      await dismissSyncError(row.id)
+      await reload()
+    } catch (e) {
+      setErr(errMsg(e))
+    } finally {
+      setBusyID(null)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Sync errors"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-lg bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-amber-600" />
+            <h3 className="text-base font-medium text-gray-900">
+              Sync errors — {item.institution_name ?? item.plaid_item_id}
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        {err && (
+          <div className="mx-5 mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {err}
+          </div>
+        )}
+        <div className="max-h-[70vh] overflow-y-auto">
+          {loading && (
+            <div className="px-5 py-6 text-center text-sm text-gray-400">Loading…</div>
+          )}
+          {!loading && errors.length === 0 && (
+            <div className="px-5 py-6 text-center text-sm text-gray-400">
+              All errors resolved.
+            </div>
+          )}
+          {errors.map((row) => (
+            <div key={row.id} className="border-b border-gray-100 px-5 py-4 last:border-b-0">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-700">
+                      {row.error_code}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {new Date(row.occurred_at).toLocaleString()}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-900">{row.error_message}</p>
+                  {row.plaid_transaction_id && (
+                    <p className="mt-0.5 font-mono text-xs text-gray-500">
+                      txn_id: {row.plaid_transaction_id}
+                    </p>
+                  )}
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onRetry(row)}
+                    disabled={busyID === row.id}
+                    className="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    {busyID === row.id ? '…' : 'Retry'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDismiss(row)}
+                    disabled={busyID === row.id}
+                    className="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+              <pre className="mt-2 max-h-48 overflow-auto rounded bg-gray-50 p-2 font-mono text-xs text-gray-800">
+                {JSON.stringify(row.raw_payload, null, 2)}
+              </pre>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -120,6 +294,10 @@ function statusSummary(it: PlaidItem): string {
   switch (status) {
     case 'ok':
       return it.last_synced_at ? `Synced ${formatRelative(it.last_synced_at)}` : 'Synced'
+    case 'ok_with_errors':
+      return it.last_synced_at
+        ? `Synced ${formatRelative(it.last_synced_at)} (with errors)`
+        : 'Synced (with errors)'
     case 'syncing':
       return 'Syncing…'
     case 'error':

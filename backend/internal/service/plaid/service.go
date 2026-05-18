@@ -2,6 +2,7 @@ package plaid
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -52,12 +53,16 @@ type SyncAccountsResult struct {
 // whose plaid_transaction_id matched a previously-soft-deleted local row —
 // they are undeleted in place rather than inserted as duplicates (see #63).
 // Removed is the count of Plaid IDs we were told to forget — for the
-// initial pull this is always 0.
+// initial pull this is always 0. Failed is the count of individual rows
+// that landed in plaid_sync_errors instead of the transactions table —
+// the cursor still advances and other rows still commit (see #80 +
+// docs/ADR/0011).
 type SyncTransactionsResult struct {
 	Inserted    int64 `json:"inserted"`
 	Resurrected int   `json:"resurrected"`
 	Modified    int   `json:"modified"`
 	Removed     int   `json:"removed"`
+	Failed      int   `json:"failed"`
 }
 
 // Service orchestrates the Plaid Link flow: issue link tokens, exchange
@@ -68,21 +73,21 @@ type SyncTransactionsResult struct {
 // at the handler layer. Holder names from /identity/get are routed through
 // piiSvc into pii_store — never written onto the accounts row directly.
 type Service struct {
-	client   Client
-	box      *crypto.SecretBox
-	itemRepo repository.PlaidItemRepository
-	acctRepo repository.AccountRepository
-	txRepo   repository.TransactionRepository
-	piiSvc   *service.PIIService
+	client      Client
+	box         *crypto.SecretBox
+	itemRepo    repository.PlaidItemRepository
+	acctRepo    repository.AccountRepository
+	txRepo      repository.TransactionRepository
+	syncErrRepo repository.PlaidSyncErrorRepository
+	piiSvc      *service.PIIService
 	// catMapper resolves Plaid PFCs to local categories at sync time.
 	// Nil = no auto-categorization (rows land uncategorized; user picks).
 	catMapper *CategoryMapper
 	// db is a deliberate exception to the "services don't see *gorm.DB"
-	// guideline. SyncTransactions needs a single atomic wrap across
-	// transactions + plaid_items updates per ADR-N/A (per-item sync is
-	// all-or-nothing — see issue #62 spec) and the repo abstraction
-	// doesn't currently expose a unit-of-work surface. Inside the
-	// transaction callback we construct fresh tx-bound repo instances
+	// guideline. SyncTransactions needs to wrap the per-item drain in a
+	// single Postgres transaction so it can use savepoints around each
+	// row insert (see #80 / docs/ADR/0011 — partial-success DLQ). Inside
+	// the transaction callback we construct fresh tx-bound repo instances
 	// so all writes hit the same transaction.
 	db *gorm.DB
 }
@@ -100,19 +105,21 @@ func NewService(
 	itemRepo repository.PlaidItemRepository,
 	acctRepo repository.AccountRepository,
 	txRepo repository.TransactionRepository,
+	syncErrRepo repository.PlaidSyncErrorRepository,
 	piiSvc *service.PIIService,
 	catMapper *CategoryMapper,
 	db *gorm.DB,
 ) *Service {
 	return &Service{
-		client:    client,
-		box:       box,
-		itemRepo:  itemRepo,
-		acctRepo:  acctRepo,
-		txRepo:    txRepo,
-		piiSvc:    piiSvc,
-		catMapper: catMapper,
-		db:        db,
+		client:      client,
+		box:         box,
+		itemRepo:    itemRepo,
+		acctRepo:    acctRepo,
+		txRepo:      txRepo,
+		syncErrRepo: syncErrRepo,
+		piiSvc:      piiSvc,
+		catMapper:   catMapper,
+		db:          db,
 	}
 }
 
@@ -396,18 +403,24 @@ func capErrorMessage(s string) string {
 // incremental refreshes (persisted cursor) — the same Plaid endpoint
 // covers both via the cursor handshake.
 //
-// Per #62, the entire per-item sync is wrapped in one db.Transaction:
-//   - all pages are drained from Plaid first (no DB writes)
-//   - then `added` rows are inserted, `modified` rows merged into existing
-//     rows (preserving user-edited category_id / notes), and `removed`
-//     rows soft-deleted
-//   - cursor + last_synced_at advance ONLY if all of the above succeed
+// Two-phase per-item drain (#62 + #80):
+//   - Phase 1: page through Plaid until exhaustion, accumulating in memory.
+//     No DB writes — a Plaid failure can't leave the DB half-updated.
+//   - Phase 2: one db.Transaction. Each `added`/`modified`/`removed` row is
+//     processed inside its own SAVEPOINT so a single bad row (decimal
+//     overflow, bad date, mapping error) goes to plaid_sync_errors instead
+//     of rolling back the whole batch. The cursor + last_synced_at advance
+//     once at the end regardless of how many rows DLQ'd.
 //
-// If anything in the DB phase fails, the cursor stays put and next run
-// re-fetches the same delta — safe because added uses ON CONFLICT DO
-// NOTHING and modified/removed are idempotent on plaid_transaction_id.
+// Sync status terminus:
+//   - All rows ok → 'ok'
+//   - At least one DLQ'd row → 'ok_with_errors' (post-commit write)
+//   - Transactional / Plaid failure → 'error' (recorded by the defer)
+//
+// See docs/ADR/0011 for the rationale on advancing the cursor across
+// partial failures.
 func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemID string) (result SyncTransactionsResult, retErr error) {
-	if !s.Configured() || s.acctRepo == nil || s.txRepo == nil || s.db == nil {
+	if !s.Configured() || s.acctRepo == nil || s.txRepo == nil || s.syncErrRepo == nil || s.db == nil {
 		return SyncTransactionsResult{}, ErrNotConfigured
 	}
 
@@ -471,23 +484,92 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 	}
 
 	// Phase 2: one transaction for all writes. Tx-bound repos so every
-	// statement hits the same Postgres transaction; rollback on any error
-	// reverts the entire sync including the cursor advance.
+	// statement hits the same Postgres transaction. Per-row savepoints
+	// isolate individual failures — see SAVEPOINT helper below.
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepo := repository.NewTransactionRepository(tx)
 		itemRepo := repository.NewPlaidItemRepository(tx)
 		acctRepo := repository.NewAccountRepository(tx)
+		syncErrRepo := repository.NewPlaidSyncErrorRepository(tx)
 		accountIDCache := map[string]int64{}
+		spIdx := 0
+
+		// withSavepoint wraps fn in a Postgres SAVEPOINT so a row-level
+		// failure (constraint violation, type error) rolls back only that
+		// row's work, not the whole batch. After ROLLBACK TO SAVEPOINT
+		// the outer transaction is still alive — subsequent statements
+		// (including the DLQ insert) execute normally.
+		withSavepoint := func(fn func() error) error {
+			spIdx++
+			name := fmt.Sprintf("plaid_row_%d", spIdx)
+			if err := tx.SavePoint(name).Error; err != nil {
+				return fmt.Errorf("plaid: savepoint %s: %w", name, err)
+			}
+			if err := fn(); err != nil {
+				if rErr := tx.RollbackTo(name).Error; rErr != nil {
+					return fmt.Errorf("plaid: rollback to %s: %w (orig: %v)", name, rErr, err)
+				}
+				return err
+			}
+			return nil
+		}
+
+		// recordDLQ writes a plaid_sync_errors row. Runs OUTSIDE the
+		// just-rolled-back savepoint so it can't itself be reverted by a
+		// later RollbackTo. Stays inside the outer transaction so the
+		// cursor advance and DLQ rows commit atomically.
+		recordDLQ := func(pt PlaidTransaction, code string, cause error) error {
+			raw, mErr := json.Marshal(pt)
+			if mErr != nil {
+				raw = json.RawMessage(`{}`)
+			}
+			var ptxIDPtr *string
+			if pt.PlaidTransactionID != "" {
+				v := pt.PlaidTransactionID
+				ptxIDPtr = &v
+			}
+			row := &model.PlaidSyncError{
+				UserID:             userID,
+				PlaidItemID:        item.ID,
+				PlaidTransactionID: ptxIDPtr,
+				RawPayload:         raw,
+				ErrorCode:          code,
+				ErrorMessage:       capErrorMessage(cause.Error()),
+				OccurredAt:         time.Now().UTC(),
+			}
+			if err := syncErrRepo.Create(ctx, row); err != nil {
+				return fmt.Errorf("plaid: write DLQ row: %w", err)
+			}
+			result.Failed++
+			return nil
+		}
+
+		// classifyRowError categorizes a per-row failure so the UI can
+		// group by error_code. account-resolution and mapping errors are
+		// surfaced separately from raw DB errors because they tend to
+		// point at different fixes (run sync-accounts vs. file a bug).
+		classifyRowError := func(err error) string {
+			msg := err.Error()
+			switch {
+			case strings.Contains(msg, "no local account for plaid_account_id"):
+				return model.PlaidSyncErrorCodeMapping
+			case strings.Contains(msg, "parse date"), strings.Contains(msg, "parse authorized_date"):
+				return model.PlaidSyncErrorCodeValidation
+			case strings.Contains(msg, "numeric field overflow"), strings.Contains(msg, "value out of range"):
+				return model.PlaidSyncErrorCodeDecimalOverflow
+			case strings.Contains(msg, "transaction_id empty"), strings.Contains(msg, "account_id empty"):
+				return model.PlaidSyncErrorCodeValidation
+			default:
+				return model.PlaidSyncErrorCodeDB
+			}
+		}
 
 		// Inserts. Two cases per `added`:
 		//   1. plaid_transaction_id matches a soft-deleted local row →
 		//      resurrect (clear deleted_at + overlay via MergePlaidUpdate
 		//      so user-edited notes/category survive the round-trip).
-		//   2. otherwise → batch insert with ON CONFLICT DO NOTHING.
-		// The resurrect pass is what gives #63 its "re-sync of a previously
-		// deleted Plaid row restores in place" guarantee — without it, the
-		// partial unique index (which excludes deleted rows) would silently
-		// let a duplicate land.
+		//   2. otherwise → single-row insert with ON CONFLICT DO NOTHING.
+		// Both paths run inside a savepoint so one bad row just DLQs.
 		if len(added) > 0 {
 			plaidIDs := make([]string, 0, len(added))
 			addedByPlaidID := make(map[string]PlaidTransaction, len(added))
@@ -510,84 +592,110 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 				if !ok {
 					continue
 				}
-				localID, err := resolveAccountID(ctx, acctRepo, userID, incoming.PlaidAccountID, accountIDCache)
-				if err != nil {
-					return err
-				}
-				merged, err := MergePlaidUpdate(existing, incoming, localID, s.catMapper)
-				if err != nil {
-					return err
-				}
-				if err := txRepo.ResurrectByPlaidTransactionID(ctx, userID, ptxID, merged); err != nil {
-					return fmt.Errorf("plaid: resurrect %s: %w", ptxID, err)
+				perRowErr := withSavepoint(func() error {
+					localID, err := resolveAccountID(ctx, acctRepo, userID, incoming.PlaidAccountID, accountIDCache)
+					if err != nil {
+						return err
+					}
+					merged, err := MergePlaidUpdate(existing, incoming, localID, s.catMapper)
+					if err != nil {
+						return err
+					}
+					return txRepo.ResurrectByPlaidTransactionID(ctx, userID, ptxID, merged)
+				})
+				if perRowErr != nil {
+					if err := recordDLQ(incoming, classifyRowError(perRowErr), perRowErr); err != nil {
+						return err
+					}
+					// Mark as "handled" so the insert pass below doesn't
+					// try again on the same row.
+					resurrectedIDs[ptxID] = struct{}{}
+					continue
 				}
 				resurrectedIDs[ptxID] = struct{}{}
 				result.Resurrected++
 			}
 
-			batch := make([]model.Transaction, 0, len(added)-len(resurrectedIDs))
 			for _, pt := range added {
 				if _, done := resurrectedIDs[pt.PlaidTransactionID]; done {
 					continue
 				}
-				localID, err := resolveAccountID(ctx, acctRepo, userID, pt.PlaidAccountID, accountIDCache)
-				if err != nil {
-					return err
+				perRowErr := withSavepoint(func() error {
+					localID, err := resolveAccountID(ctx, acctRepo, userID, pt.PlaidAccountID, accountIDCache)
+					if err != nil {
+						return err
+					}
+					row, err := MapPlaidTransaction(pt, userID, localID, s.catMapper)
+					if err != nil {
+						return err
+					}
+					n, err := txRepo.CreateBatch(ctx, []model.Transaction{row})
+					if err != nil {
+						return err
+					}
+					result.Inserted += n
+					return nil
+				})
+				if perRowErr != nil {
+					if err := recordDLQ(pt, classifyRowError(perRowErr), perRowErr); err != nil {
+						return err
+					}
 				}
-				row, err := MapPlaidTransaction(pt, userID, localID, s.catMapper)
-				if err != nil {
-					return err
-				}
-				batch = append(batch, row)
-			}
-			if len(batch) > 0 {
-				n, err := txRepo.CreateBatch(ctx, batch)
-				if err != nil {
-					return fmt.Errorf("plaid: insert batch: %w", err)
-				}
-				result.Inserted = n
 			}
 		}
 
 		// Modifications: merge with the existing row so user-edited
-		// fields survive.
+		// fields survive. Wrap each in a savepoint so a single bad
+		// `modified` doesn't poison the rest of the batch.
 		for _, pt := range modified {
-			localID, err := resolveAccountID(ctx, acctRepo, userID, pt.PlaidAccountID, accountIDCache)
-			if err != nil {
-				return err
-			}
-			var existing model.Transaction
-			err = tx.WithContext(ctx).
-				Where("user_id = ? AND plaid_transaction_id = ?", userID, pt.PlaidTransactionID).
-				First(&existing).Error
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				// Plaid sent a `modified` for something we never
-				// recorded. Treat as a fresh insert so we don't lose it.
-				row, mapErr := MapPlaidTransaction(pt, userID, localID, s.catMapper)
-				if mapErr != nil {
-					return mapErr
+			var insertedAsNew bool
+			perRowErr := withSavepoint(func() error {
+				localID, err := resolveAccountID(ctx, acctRepo, userID, pt.PlaidAccountID, accountIDCache)
+				if err != nil {
+					return err
 				}
-				if _, batchErr := txRepo.CreateBatch(ctx, []model.Transaction{row}); batchErr != nil {
-					return fmt.Errorf("plaid: insert modified-as-new: %w", batchErr)
+				var existing model.Transaction
+				err = tx.WithContext(ctx).
+					Where("user_id = ? AND plaid_transaction_id = ?", userID, pt.PlaidTransactionID).
+					First(&existing).Error
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					// Plaid sent a `modified` for something we never
+					// recorded. Treat as a fresh insert so we don't lose it.
+					row, mapErr := MapPlaidTransaction(pt, userID, localID, s.catMapper)
+					if mapErr != nil {
+						return mapErr
+					}
+					if _, batchErr := txRepo.CreateBatch(ctx, []model.Transaction{row}); batchErr != nil {
+						return batchErr
+					}
+					insertedAsNew = true
+					return nil
 				}
-				result.Inserted++
+				if err != nil {
+					return err
+				}
+				merged, err := MergePlaidUpdate(existing, pt, localID, s.catMapper)
+				if err != nil {
+					return err
+				}
+				return txRepo.UpdateByPlaidTransactionID(ctx, userID, pt.PlaidTransactionID, merged)
+			})
+			if perRowErr != nil {
+				if err := recordDLQ(pt, classifyRowError(perRowErr), perRowErr); err != nil {
+					return err
+				}
 				continue
 			}
-			if err != nil {
-				return fmt.Errorf("plaid: read existing for modify: %w", err)
+			if insertedAsNew {
+				result.Inserted++
+			} else {
+				result.Modified++
 			}
-			merged, err := MergePlaidUpdate(existing, pt, localID, s.catMapper)
-			if err != nil {
-				return err
-			}
-			if err := txRepo.UpdateByPlaidTransactionID(ctx, userID, pt.PlaidTransactionID, merged); err != nil {
-				return fmt.Errorf("plaid: update modified: %w", err)
-			}
-			result.Modified++
 		}
 
 		// Removals: soft-delete. ErrNotFound is benign (already deleted
-		// or never seen) and shouldn't roll back the transaction.
+		// or never seen). A real DB error here is rare and almost always
+		// systemic — abort rather than DLQ a string ID with no payload.
 		for _, ptxID := range removed {
 			err := txRepo.SoftDeleteByPlaidTransactionID(ctx, userID, ptxID)
 			switch {
@@ -602,7 +710,12 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 			}
 		}
 
-		// Cursor advance — final write inside the same transaction.
+		// Cursor advance — final write inside the same transaction. Always
+		// happens, even when result.Failed > 0: the whole point of the DLQ
+		// is to let good rows commit and let the cursor move past the
+		// poison row instead of replaying the failure forever (#80).
+		// UpdateCursor sets status='ok' + clears last_sync_error; if any
+		// rows DLQ'd we flip to 'ok_with_errors' AFTER commit (below).
 		if err := itemRepo.UpdateCursor(ctx, userID, item.ID, cursor, time.Now().UTC()); err != nil {
 			return fmt.Errorf("plaid: persist cursor: %w", err)
 		}
@@ -610,6 +723,17 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 	})
 	if err != nil {
 		return SyncTransactionsResult{}, err
+	}
+
+	// Post-commit status fix-up: if any rows DLQ'd, mark the item
+	// 'ok_with_errors' with a summary message. Done outside the tx so a
+	// failure here is non-fatal — the cursor and DLQ rows already
+	// committed; the worst case is a stale 'ok' status that the next sync
+	// will overwrite. statusCtx is detached so a request cancel doesn't
+	// leave it inconsistent.
+	if result.Failed > 0 {
+		msg := fmt.Sprintf("%d row(s) failed to import; see Linked Institutions", result.Failed)
+		_ = s.itemRepo.UpdateSyncStatus(statusCtx, userID, item.ID, "ok_with_errors", &msg)
 	}
 	return result, nil
 }
