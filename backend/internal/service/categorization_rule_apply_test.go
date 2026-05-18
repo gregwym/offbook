@@ -204,9 +204,8 @@ func TestCategorizationRuleService_Apply_ScopeUncategorized(t *testing.T) {
 	t.Cleanup(func() { g.Unscoped().Delete(&model.CategorizationRule{}, rule.ID) })
 
 	// 3 uncategorized matching, 2 plaid_default already-categorized matching.
-	uncat := []*model.Transaction{}
 	for i := 0; i < 3; i++ {
-		uncat = append(uncat, mkTxn(t, g, userID, accountID, withDescription("WHOLEFDS #"+fmt.Sprint(i))))
+		mkTxn(t, g, userID, accountID, withDescription("WHOLEFDS #"+fmt.Sprint(i)))
 	}
 	for i := 0; i < 2; i++ {
 		mkTxn(t, g, userID, accountID,
