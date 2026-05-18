@@ -52,6 +52,18 @@ type TransactionRepository interface {
 	// row returns ErrNotFound (because the soft-delete partial index
 	// hides the row from the scope).
 	SoftDeleteByPlaidTransactionID(ctx context.Context, userID int64, plaidTxnID string) error
+	// FindSoftDeletedByPlaidTransactionIDs returns rows whose deleted_at IS
+	// NOT NULL and whose (user_id, plaid_transaction_id) matches one of the
+	// supplied IDs. Used by the Plaid sync path to detect a re-surfaced
+	// transaction that the user (or a prior sync) had previously soft-deleted
+	// — instead of inserting a duplicate, the service resurrects the row.
+	// Empty input → nil, nil.
+	FindSoftDeletedByPlaidTransactionIDs(ctx context.Context, userID int64, plaidTxnIDs []string) ([]model.Transaction, error)
+	// ResurrectByPlaidTransactionID clears deleted_at on a soft-deleted row
+	// and overlays the merged fields. Returns ErrNotFound when no row exists
+	// (live or soft-deleted) for the key. The caller is expected to pass a
+	// row produced by plaid.MergePlaidUpdate so user-edited fields survive.
+	ResurrectByPlaidTransactionID(ctx context.Context, userID int64, plaidTxnID string, merged model.Transaction) error
 }
 
 type transactionRepo struct {
@@ -144,13 +156,21 @@ func (r *transactionRepo) CreateBatch(ctx context.Context, txns []model.Transact
 		return 0, nil
 	}
 	// ON CONFLICT DO NOTHING on the partial unique index
-	// `uq_transactions_plaid` (defined in migration 000001 as
-	// `(plaid_transaction_id) WHERE deleted_at IS NULL AND plaid_transaction_id IS NOT NULL`).
-	// Postgres requires the conflict target to match the partial predicate
-	// exactly, hence TargetWhere — without it we get
-	// "no unique or exclusion constraint matching the ON CONFLICT specification".
+	// `uq_transactions_user_plaid` (migration 000004 — user-scoped per #63):
+	//   (user_id, plaid_transaction_id)
+	//   WHERE deleted_at IS NULL AND plaid_transaction_id IS NOT NULL
+	// Postgres requires the conflict target's columns AND its partial
+	// predicate to match the index exactly, hence TargetWhere — without
+	// it we get "no unique or exclusion constraint matching the ON CONFLICT
+	// specification".
+	//
+	// Note: this only catches LIVE duplicates. A soft-deleted row with the
+	// same (user_id, plaid_transaction_id) sits outside the partial index,
+	// so a naive re-insert WOULD create a second row. The Plaid service's
+	// resurrect-on-resurface pass (see plaid.Service.SyncTransactions)
+	// handles that case by undeleting the existing row instead of inserting.
 	res := r.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "plaid_transaction_id"}},
+		Columns: []clause.Column{{Name: "user_id"}, {Name: "plaid_transaction_id"}},
 		TargetWhere: clause.Where{Exprs: []clause.Expression{
 			clause.Expr{SQL: "deleted_at IS NULL AND plaid_transaction_id IS NOT NULL"},
 		}},
@@ -195,6 +215,47 @@ func (r *transactionRepo) SoftDeleteByPlaidTransactionID(ctx context.Context, us
 	res := r.db.WithContext(ctx).
 		Where("user_id = ? AND plaid_transaction_id = ?", userID, plaidTxnID).
 		Delete(&model.Transaction{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *transactionRepo) FindSoftDeletedByPlaidTransactionIDs(ctx context.Context, userID int64, plaidTxnIDs []string) ([]model.Transaction, error) {
+	if len(plaidTxnIDs) == 0 {
+		return nil, nil
+	}
+	var out []model.Transaction
+	if err := r.db.WithContext(ctx).Unscoped().
+		Where("user_id = ? AND plaid_transaction_id IN ? AND deleted_at IS NOT NULL", userID, plaidTxnIDs).
+		Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *transactionRepo) ResurrectByPlaidTransactionID(ctx context.Context, userID int64, plaidTxnID string, merged model.Transaction) error {
+	// Locate the existing row Unscoped so we capture its ID + created_at
+	// even though deleted_at is set. Then Save() with DeletedAt zeroed to
+	// flip it back to live.
+	var existing model.Transaction
+	if err := r.db.WithContext(ctx).Unscoped().
+		Where("user_id = ? AND plaid_transaction_id = ?", userID, plaidTxnID).
+		First(&existing).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound
+		}
+		return err
+	}
+	merged.ID = existing.ID
+	merged.CreatedAt = existing.CreatedAt
+	merged.DeletedAt = gorm.DeletedAt{} // clear soft-delete on the way out
+	res := r.db.WithContext(ctx).Unscoped().
+		Where("user_id = ? AND plaid_transaction_id = ?", userID, plaidTxnID).
+		Save(&merged)
 	if res.Error != nil {
 		return res.Error
 	}
