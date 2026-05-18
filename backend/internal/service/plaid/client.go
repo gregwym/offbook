@@ -65,6 +65,11 @@ type PlaidTransaction struct {
 	Date               string  // "YYYY-MM-DD"
 	AuthorizedDate     *string // optional "YYYY-MM-DD"
 	Pending            bool
+	// Personal finance category — Plaid's hierarchical taxonomy.
+	// Strings (not enums) so we never need a Go release to add a new PFC.
+	// May be "" when Plaid hasn't classified a transaction (rare).
+	PFCPrimary  string
+	PFCDetailed string
 }
 
 // AccountsResult bundles the institution descriptor and the account list
@@ -314,6 +319,10 @@ func convertPlaidTransaction(t plaid.Transaction) PlaidTransaction {
 	if ad, ok := t.GetAuthorizedDateOk(); ok && ad != nil && *ad != "" {
 		v := *ad
 		out.AuthorizedDate = &v
+	}
+	if pfc, ok := t.GetPersonalFinanceCategoryOk(); ok && pfc != nil {
+		out.PFCPrimary = pfc.GetPrimary()
+		out.PFCDetailed = pfc.GetDetailed()
 	}
 	return out
 }

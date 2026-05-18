@@ -67,6 +67,9 @@ type Service struct {
 	acctRepo repository.AccountRepository
 	txRepo   repository.TransactionRepository
 	piiSvc   *service.PIIService
+	// catMapper resolves Plaid PFCs to local categories at sync time.
+	// Nil = no auto-categorization (rows land uncategorized; user picks).
+	catMapper *CategoryMapper
 	// db is a deliberate exception to the "services don't see *gorm.DB"
 	// guideline. SyncTransactions needs a single atomic wrap across
 	// transactions + plaid_items updates per ADR-N/A (per-item sync is
@@ -79,9 +82,11 @@ type Service struct {
 
 // NewService constructs a Service. Pass nil for client/box/repos to
 // indicate the instance is not Plaid-enabled — calls then return
-// ErrNotConfigured. txRepo, piiSvc, and db are only needed for the
-// discovery and transaction-sync surfaces; link-only setups can pass nil
-// and the affected methods will error out cleanly.
+// ErrNotConfigured. txRepo, piiSvc, db, and catMapper are only needed
+// for the discovery and transaction-sync surfaces; link-only setups can
+// pass nil and the affected methods will error out cleanly. catMapper
+// may be nil even when Plaid is otherwise configured — transactions
+// then land uncategorized.
 func NewService(
 	client Client,
 	box *crypto.SecretBox,
@@ -89,16 +94,18 @@ func NewService(
 	acctRepo repository.AccountRepository,
 	txRepo repository.TransactionRepository,
 	piiSvc *service.PIIService,
+	catMapper *CategoryMapper,
 	db *gorm.DB,
 ) *Service {
 	return &Service{
-		client:   client,
-		box:      box,
-		itemRepo: itemRepo,
-		acctRepo: acctRepo,
-		txRepo:   txRepo,
-		piiSvc:   piiSvc,
-		db:       db,
+		client:    client,
+		box:       box,
+		itemRepo:  itemRepo,
+		acctRepo:  acctRepo,
+		txRepo:    txRepo,
+		piiSvc:    piiSvc,
+		catMapper: catMapper,
+		db:        db,
 	}
 }
 
@@ -406,7 +413,7 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 				if err != nil {
 					return err
 				}
-				merged, err := MergePlaidUpdate(existing, incoming, localID)
+				merged, err := MergePlaidUpdate(existing, incoming, localID, s.catMapper)
 				if err != nil {
 					return err
 				}
@@ -426,7 +433,7 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 				if err != nil {
 					return err
 				}
-				row, err := MapPlaidTransaction(pt, userID, localID)
+				row, err := MapPlaidTransaction(pt, userID, localID, s.catMapper)
 				if err != nil {
 					return err
 				}
@@ -455,7 +462,7 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				// Plaid sent a `modified` for something we never
 				// recorded. Treat as a fresh insert so we don't lose it.
-				row, mapErr := MapPlaidTransaction(pt, userID, localID)
+				row, mapErr := MapPlaidTransaction(pt, userID, localID, s.catMapper)
 				if mapErr != nil {
 					return mapErr
 				}
@@ -468,7 +475,7 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 			if err != nil {
 				return fmt.Errorf("plaid: read existing for modify: %w", err)
 			}
-			merged, err := MergePlaidUpdate(existing, pt, localID)
+			merged, err := MergePlaidUpdate(existing, pt, localID, s.catMapper)
 			if err != nil {
 				return err
 			}

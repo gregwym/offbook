@@ -1,6 +1,8 @@
 package router
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
@@ -118,7 +120,7 @@ func newPlaidService(
 	piiSvc *service.PIIService,
 ) *plaidsvc.Service {
 	if !cfg.PlaidConfigured() {
-		return plaidsvc.NewService(nil, nil, nil, nil, nil, nil, nil)
+		return plaidsvc.NewService(nil, nil, nil, nil, nil, nil, nil, nil)
 	}
 	client, err := plaidsvc.NewSDKClient(plaidsvc.Config{
 		ClientID: cfg.PlaidClientID,
@@ -132,6 +134,13 @@ func newPlaidService(
 	if err != nil {
 		panic("plaid: secretbox: " + err.Error())
 	}
+	// Load PFC → category map once at startup. A DB failure here is fatal
+	// because the rest of the app expects plaid_category_map to exist; if
+	// the migration hasn't run, the operator needs to know immediately.
+	mapper, err := plaidsvc.NewCategoryMapper(context.Background(), repository.NewPlaidCategoryMapRepository(gormDB))
+	if err != nil {
+		panic("plaid: load category map: " + err.Error())
+	}
 	return plaidsvc.NewService(
 		client,
 		box,
@@ -139,6 +148,7 @@ func newPlaidService(
 		acctRepo,
 		txRepo,
 		piiSvc,
+		mapper,
 		gormDB,
 	)
 }

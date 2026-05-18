@@ -106,7 +106,7 @@ func TestPlaidSync_NoDuplicatesOnReSync(t *testing.T) {
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, nil, g)
 
 	// First sync: 2 inserts.
 	r1, err := svc.SyncTransactions(context.Background(), userID, "item-dedup")
@@ -236,7 +236,7 @@ func TestPlaidSync_SoftDeletedReSurfaces(t *testing.T) {
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, nil, g)
 
 	r, err := svc.SyncTransactions(context.Background(), userID, "item-resurface")
 	if err != nil {

@@ -209,7 +209,7 @@ func TestService_SyncAccounts_PIIIsolationAndIdempotency(t *testing.T) {
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, repository.NewTransactionRepository(g), piiSvc, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, repository.NewTransactionRepository(g), piiSvc, nil, g)
 
 	// First sync: 2 accounts created.
 	r1, err := svc.SyncAccounts(context.Background(), userID, "item-fake-sync-1")
@@ -305,7 +305,7 @@ func TestService_SyncAccounts_ItemNotFound(t *testing.T) {
 	acctRepo := repository.NewAccountRepository(g)
 	acctSvc := service.NewAccountService(acctRepo)
 	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), acctSvc)
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, repository.NewTransactionRepository(g), piiSvc, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, repository.NewTransactionRepository(g), piiSvc, nil, g)
 
 	_, err := svc.SyncAccounts(context.Background(), userID, "nonexistent-item")
 	if err != plaidsvc.ErrItemNotFound {

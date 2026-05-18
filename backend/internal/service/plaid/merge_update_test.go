@@ -43,7 +43,7 @@ func TestMergePlaidUpdate_PendingToPosted(t *testing.T) {
 		AuthorizedDate:     &auth,
 	}
 
-	merged, err := plaidsvc.MergePlaidUpdate(existing, incoming, 11)
+	merged, err := plaidsvc.MergePlaidUpdate(existing, incoming, 11, nil)
 	if err != nil {
 		t.Fatalf("MergePlaidUpdate: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestMergePlaidUpdate_NilFieldsClearable(t *testing.T) {
 		Date:               "2026-05-10",
 		// MerchantName intentionally nil
 	}
-	merged, err := plaidsvc.MergePlaidUpdate(existing, incoming, 1)
+	merged, err := plaidsvc.MergePlaidUpdate(existing, incoming, 1, nil)
 	if err != nil {
 		t.Fatalf("MergePlaidUpdate: %v", err)
 	}

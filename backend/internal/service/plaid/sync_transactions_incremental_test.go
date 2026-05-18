@@ -167,7 +167,7 @@ func TestService_SyncTransactions_IncrementalAddedModifiedRemoved(t *testing.T) 
 	acctRepo := repository.NewAccountRepository(g)
 	txRepo := repository.NewTransactionRepository(g)
 	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(acctRepo))
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, nil, g)
 
 	r, err := svc.SyncTransactions(context.Background(), userID, "item-incr-1")
 	if err != nil {
@@ -325,7 +325,7 @@ func TestService_SyncTransactions_TenantIsolation(t *testing.T) {
 	acctRepo := repository.NewAccountRepository(g)
 	txRepo := repository.NewTransactionRepository(g)
 	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(acctRepo))
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, piiSvc, nil, g)
 
 	if _, err := svc.SyncTransactions(context.Background(), userA, "item-A"); err != nil {
 		t.Fatalf("Sync user A: %v", err)
