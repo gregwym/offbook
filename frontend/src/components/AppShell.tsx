@@ -3,6 +3,7 @@ import {
   Bot,
   Landmark,
   LayoutDashboard,
+  LogOut,
   PiggyBank,
   Receipt,
   Settings,
@@ -13,7 +14,8 @@ import {
   Wallet,
 } from 'lucide-react'
 import { useEffect } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useAuthStore } from '../store/authStore'
 import { useScopeStore } from '../store/scopeStore'
 import { SCOPE_HOUSEHOLD, SCOPE_PERSONAL, type Scope } from '../types/scope'
 
@@ -48,6 +50,8 @@ const HOUSEHOLD_NAV: NavItem[] = [
 
 export function AppShell() {
   const { active, available, hydrated, hydrate, setScope } = useScopeStore()
+  const signout = useAuthStore((s) => s.signout)
+  const navigate = useNavigate()
 
   useEffect(() => {
     if (!hydrated) {
@@ -58,12 +62,17 @@ export function AppShell() {
   const items = active === SCOPE_HOUSEHOLD ? HOUSEHOLD_NAV : PERSONAL_NAV
   const canSwitch = available.includes(SCOPE_HOUSEHOLD)
 
+  const handleSignout = async () => {
+    await signout()
+    navigate('/signin', { replace: true })
+  }
+
   return (
     <div className="flex h-screen w-screen bg-gray-50">
       <aside className="flex w-60 flex-col border-r border-gray-200 bg-white">
         <div className="px-6 py-5 text-lg font-semibold text-gray-900">offbook</div>
         {canSwitch && <ScopePicker active={active} onChange={setScope} />}
-        <nav className="flex-1 space-y-1 px-3 pb-4">
+        <nav className="flex-1 space-y-1 px-3 pb-4 overflow-y-auto">
           {items.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
@@ -82,6 +91,16 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
+        <div className="border-t border-gray-200 p-3">
+          <button
+            type="button"
+            onClick={() => void handleSignout()}
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+          >
+            <LogOut size={16} />
+            Sign out
+          </button>
+        </div>
       </aside>
       <main className="flex-1 overflow-auto">
         <div className="mx-auto max-w-6xl px-8 py-8">
