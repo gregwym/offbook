@@ -3,7 +3,9 @@ import type {
   CreateInviteResult,
   Household,
   HouseholdDetail,
+  HouseholdMember,
   HouseholdRole,
+  MembersListing,
 } from '../types/household'
 
 export async function getHousehold(id: number): Promise<HouseholdDetail> {
@@ -42,4 +44,30 @@ export async function acceptInvite(token: string): Promise<unknown> {
 
 export async function leaveHousehold(id: number): Promise<void> {
   await apiClient.delete(`/households/${id}/members/me`)
+}
+
+export async function listMembers(
+  householdID: number,
+  includeInGrace: boolean,
+): Promise<MembersListing> {
+  const res = await apiClient.get<ApiItem<MembersListing>>(`/households/${householdID}/members`, {
+    params: includeInGrace ? { include: 'in_grace' } : undefined,
+  })
+  return res.data.data
+}
+
+export async function updateMemberRole(
+  householdID: number,
+  userID: number,
+  role: HouseholdRole,
+): Promise<HouseholdMember> {
+  const res = await apiClient.patch<ApiItem<HouseholdMember>>(
+    `/households/${householdID}/members/${userID}`,
+    { role },
+  )
+  return res.data.data
+}
+
+export async function removeMember(householdID: number, userID: number): Promise<void> {
+  await apiClient.delete(`/households/${householdID}/members/${userID}`)
 }
