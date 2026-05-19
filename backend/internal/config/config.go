@@ -23,12 +23,23 @@ type Config struct {
 	PlaidSecret   string
 	PlaidEnv      string // sandbox | development | production
 	PlaidTokenKey []byte // 32 raw bytes (decoded from PLAID_TOKEN_KEY hex)
+
+	// AI providers (M7+). Both optional — when absent, the corresponding
+	// provider is unavailable in the settings UI rather than fatal at boot.
+	ClaudeAPIKey  string
+	OllamaBaseURL string
 }
 
 // PlaidConfigured reports whether the Plaid surface is enabled.
 // Handlers that touch Plaid should refuse the request when this is false.
 func (c Config) PlaidConfigured() bool {
 	return c.PlaidClientID != "" && c.PlaidSecret != "" && len(c.PlaidTokenKey) == 32
+}
+
+// ClaudeConfigured reports whether the Claude provider can be constructed.
+// The AI service hides Claude from settings when this is false.
+func (c Config) ClaudeConfigured() bool {
+	return c.ClaudeAPIKey != ""
 }
 
 // Load reads env vars (with .env support) and validates required combinations.
@@ -51,6 +62,8 @@ func Load() (Config, error) {
 		PlaidClientID:  os.Getenv("PLAID_CLIENT_ID"),
 		PlaidSecret:    os.Getenv("PLAID_SECRET"),
 		PlaidEnv:       getenv("PLAID_ENV", "sandbox"),
+		ClaudeAPIKey:   os.Getenv("CLAUDE_API_KEY"),
+		OllamaBaseURL:  getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
 	}
 
 	if cfg.PlaidClientID != "" {
