@@ -134,8 +134,8 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		repository.NewAIMessageRepository(gormDB),
 		aiBuilder,
 		&aiProviderResolver{settings: userSettingsSvc, envFallback: newAIProvider(cfg)},
-	)
-	aiHandler := handler.NewAIHandler(aiSvc)
+	).WithHouseholdAccess(newAIHouseholdAccess(memberRepo, aggregator))
+	aiHandler := handler.NewAIHandler(aiSvc, memberRepo)
 
 	v1 := r.Group("/api/v1")
 	{

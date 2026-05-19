@@ -1,9 +1,14 @@
 import { create } from 'zustand'
 import {
-  createThread as apiCreate,
+  createSharedThread,
+  createThread,
   listMessages,
+  listSharedMessages,
+  listSharedThreads,
   listThreads,
   streamMessage,
+  streamSharedMessage,
+  type SSEHandlers,
 } from '../api/ai'
 import type { AIMessage, AIModel, AIThread } from '../types/ai'
 
@@ -40,131 +45,153 @@ type State = {
   clearError: () => void
 }
 
-export const useAIStore = create<State>((set, get) => ({
-  threads: [],
-  activeThreadID: null,
-  messages: [],
-  loadingThreads: false,
-  loadingMessages: false,
-  streaming: null,
-  error: null,
-  model: loadModel(),
+// AIScope binds a store to a specific endpoint set. Personal uses
+// /ai/*; household uses /h/ai/*. The store shape is identical — only the
+// API calls differ — so we factor here and instantiate twice rather than
+// duplicate ~150 lines.
+type AIScope = {
+  fetchThreads: () => Promise<AIThread[]>
+  fetchMessages: (threadID: number) => Promise<AIMessage[]>
+  createThread: () => Promise<AIThread>
+  stream: (threadID: number, content: string, h: SSEHandlers, signal?: AbortSignal) => Promise<void>
+}
 
-  fetchThreads: async () => {
-    set({ loadingThreads: true, error: null })
-    try {
-      const threads = await listThreads()
-      set({ threads, loadingThreads: false })
-    } catch (err) {
-      set({ loadingThreads: false, ...errInfo(err) })
-    }
-  },
+function makeAIStore(scope: AIScope) {
+  return create<State>((set, get) => ({
+    threads: [],
+    activeThreadID: null,
+    messages: [],
+    loadingThreads: false,
+    loadingMessages: false,
+    streaming: null,
+    error: null,
+    model: loadModel(),
 
-  selectThread: async (id) => {
-    set({ activeThreadID: id, messages: [], loadingMessages: true, error: null })
-    try {
-      const msgs = await listMessages(id)
-      set({ messages: msgs, loadingMessages: false })
-    } catch (err) {
-      set({ loadingMessages: false, ...errInfo(err) })
-    }
-  },
+    fetchThreads: async () => {
+      set({ loadingThreads: true, error: null })
+      try {
+        const threads = await scope.fetchThreads()
+        set({ threads, loadingThreads: false })
+      } catch (err) {
+        set({ loadingThreads: false, ...errInfo(err) })
+      }
+    },
 
-  newThread: async () => {
-    set({ error: null })
-    try {
-      const t = await apiCreate()
+    selectThread: async (id) => {
+      set({ activeThreadID: id, messages: [], loadingMessages: true, error: null })
+      try {
+        const msgs = await scope.fetchMessages(id)
+        set({ messages: msgs, loadingMessages: false })
+      } catch (err) {
+        set({ loadingMessages: false, ...errInfo(err) })
+      }
+    },
+
+    newThread: async () => {
+      set({ error: null })
+      try {
+        const t = await scope.createThread()
+        set({
+          threads: [t, ...get().threads],
+          activeThreadID: t.id,
+          messages: [],
+        })
+        return t
+      } catch (err) {
+        set(errInfo(err))
+        throw err
+      }
+    },
+
+    sendMessage: async (content) => {
+      const { activeThreadID } = get()
+      if (!activeThreadID || !content.trim()) return
+      if (get().streaming) return
+
+      const now = new Date().toISOString()
+      const userTurn: AIMessage = {
+        id: -Date.now(),
+        thread_id: activeThreadID,
+        role: 'user',
+        content,
+        created_at: now,
+      }
       set({
-        threads: [t, ...get().threads],
-        activeThreadID: t.id,
-        messages: [],
+        messages: [...get().messages, userTurn],
+        streaming: {
+          threadID: activeThreadID,
+          partialText: '',
+          abort: new AbortController(),
+        },
+        error: null,
       })
-      return t
-    } catch (err) {
-      set(errInfo(err))
-      throw err
-    }
-  },
 
-  sendMessage: async (content) => {
-    const { activeThreadID } = get()
-    if (!activeThreadID || !content.trim()) return
-    if (get().streaming) return // already streaming — caller shouldn't double-send
-
-    // Optimistically append the user message and an empty assistant
-    // placeholder. The placeholder accumulates streamed text in-place so
-    // the UI doesn't flash a "no messages" gap mid-stream.
-    const now = new Date().toISOString()
-    const userTurn: AIMessage = {
-      id: -Date.now(), // negative ID flags "optimistic"
-      thread_id: activeThreadID,
-      role: 'user',
-      content,
-      created_at: now,
-    }
-    set({
-      messages: [...get().messages, userTurn],
-      streaming: {
-        threadID: activeThreadID,
-        partialText: '',
-        abort: new AbortController(),
-      },
-      error: null,
-    })
-
-    await streamMessage(
-      activeThreadID,
-      content,
-      {
-        onDelta: (p) => {
-          const s = get().streaming
-          if (!s) return
-          const partial = s.partialText + p.text
-          set({ streaming: { ...s, partialText: partial } })
+      await scope.stream(
+        activeThreadID,
+        content,
+        {
+          onDelta: (p) => {
+            const s = get().streaming
+            if (!s) return
+            const partial = s.partialText + p.text
+            set({ streaming: { ...s, partialText: partial } })
+          },
+          onDone: async () => {
+            set({ streaming: null })
+            try {
+              const [msgs, threads] = await Promise.all([
+                scope.fetchMessages(activeThreadID),
+                scope.fetchThreads(),
+              ])
+              set({ messages: msgs, threads })
+            } catch (err) {
+              set(errInfo(err))
+            }
+          },
+          onError: (p) => {
+            set({
+              streaming: null,
+              messages: get().messages.filter((m) => m.id !== userTurn.id),
+              error: p.message,
+            })
+          },
         },
-        onDone: async () => {
-          // Reload messages so the server-canonical IDs + timestamps replace
-          // the optimistic rows. Also refresh thread list so updated_at order
-          // is correct.
-          set({ streaming: null })
-          try {
-            const [msgs, threads] = await Promise.all([
-              listMessages(activeThreadID),
-              listThreads(),
-            ])
-            set({ messages: msgs, threads })
-          } catch (err) {
-            set(errInfo(err))
-          }
-        },
-        onError: (p) => {
-          // Roll back the optimistic placeholder messages so the user can
-          // retry without two phantom turns hanging around.
-          set({
-            streaming: null,
-            messages: get().messages.filter((m) => m.id !== userTurn.id),
-            error: p.message,
-          })
-        },
-      },
-      get().streaming?.abort.signal,
-    )
-  },
+        get().streaming?.abort.signal,
+      )
+    },
 
-  cancelStreaming: () => {
-    const s = get().streaming
-    if (!s) return
-    s.abort.abort()
-    set({ streaming: null })
-  },
+    cancelStreaming: () => {
+      const s = get().streaming
+      if (!s) return
+      s.abort.abort()
+      set({ streaming: null })
+    },
 
-  setModel: (m) => {
-    if (typeof window !== 'undefined') window.localStorage.setItem(MODEL_KEY, m)
-    set({ model: m })
-  },
+    setModel: (m) => {
+      if (typeof window !== 'undefined') window.localStorage.setItem(MODEL_KEY, m)
+      set({ model: m })
+    },
 
-  clearError: () => set({ error: null }),
-}))
+    clearError: () => set({ error: null }),
+  }))
+}
+
+// Personal-scope store: routes through /ai/* on the backend.
+export const useAIStore = makeAIStore({
+  fetchThreads: listThreads,
+  fetchMessages: listMessages,
+  createThread: () => createThread(),
+  stream: streamMessage,
+})
+
+// Household-scope store: routes through /h/ai/*. Same shape — pages can
+// swap which hook they call based on which scope they live in.
+export const useHouseholdAIStore = makeAIStore({
+  fetchThreads: listSharedThreads,
+  fetchMessages: listSharedMessages,
+  createThread: () => createSharedThread(),
+  stream: streamSharedMessage,
+})
 
 function errInfo(err: unknown): { error: string } {
   if (err && typeof err === 'object' && 'response' in err) {

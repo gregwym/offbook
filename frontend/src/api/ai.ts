@@ -22,6 +22,25 @@ export async function listMessages(threadID: number): Promise<AIMessage[]> {
   return res.data.data
 }
 
+// --- household-scope variants ------------------------------------------
+// Same shapes; routed under /h/* on the backend so authz + context
+// builder switch to the household path.
+
+export async function listSharedThreads(): Promise<AIThread[]> {
+  const res = await apiClient.get<ApiList<AIThread>>('/h/ai/threads')
+  return res.data.data
+}
+
+export async function createSharedThread(title?: string): Promise<AIThread> {
+  const res = await apiClient.post<ApiItem<AIThread>>('/h/ai/threads', { title })
+  return res.data.data
+}
+
+export async function listSharedMessages(threadID: number): Promise<AIMessage[]> {
+  const res = await apiClient.get<ApiList<AIMessage>>(`/h/ai/threads/${threadID}/messages`)
+  return res.data.data
+}
+
 // SSEHandlers receives parsed event payloads. The stream caller closes
 // after a terminal `done` or `error`; the caller can also abort via the
 // AbortController.
@@ -31,7 +50,7 @@ export type SSEHandlers = {
   onError?: (p: AIErrorPayload) => void
 }
 
-// streamMessage opens the SSE stream backing `POST /ai/threads/:id/messages`.
+// streamMessage opens the SSE stream backing the personal AI endpoint.
 // We use fetch + ReadableStream (not EventSource) because the backend
 // gates the endpoint on the session cookie and EventSource doesn't carry
 // credentials by default. The signal lets the page abort if the user
@@ -42,10 +61,30 @@ export async function streamMessage(
   handlers: SSEHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
+  return streamMessageAt(`/ai/threads/${threadID}/messages`, content, handlers, signal)
+}
+
+// streamSharedMessage is the household-scope counterpart. Same wire
+// shape, just routed through `/h/ai/...`.
+export async function streamSharedMessage(
+  threadID: number,
+  content: string,
+  handlers: SSEHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamMessageAt(`/h/ai/threads/${threadID}/messages`, content, handlers, signal)
+}
+
+async function streamMessageAt(
+  path: string,
+  content: string,
+  handlers: SSEHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
   // Reuse the same base URL the rest of the client uses so dev (Vite
   // proxy) and prod (VITE_API_BASE_URL) keep working without conditionals.
   const baseURL = apiClient.defaults.baseURL ?? '/api/v1'
-  const res = await fetch(`${baseURL}/ai/threads/${threadID}/messages`, {
+  const res = await fetch(`${baseURL}${path}`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
