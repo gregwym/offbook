@@ -149,7 +149,7 @@ func TestService_SendMessage_StubProvider(t *testing.T) {
 	// AC requires "non-empty context_snapshot" so we plumb a builder via
 	// a separate path below. For the first assertion we just want the
 	// delta-relay shape.
-	svc := ai.NewService(threads, msgs, nil, prov)
+	svc := ai.NewService(threads, msgs, nil, ai.StaticResolver(prov))
 
 	const userID int64 = 42
 	thr, err := svc.CreateThread(context.Background(), userID, nil)
@@ -238,7 +238,7 @@ func TestService_SendMessage_PersistsContextSnapshot(t *testing.T) {
 	// Context (no error), which JSON-marshals to a non-empty object — the
 	// AC's "context_snapshot is non-empty" check passes.
 	builder := ai.NewContextBuilder(nil, nil, nil, nil, nil)
-	svc := ai.NewService(threads, msgs, builder, prov)
+	svc := ai.NewService(threads, msgs, builder, ai.StaticResolver(prov))
 
 	const userID int64 = 7
 	thr, _ := svc.CreateThread(context.Background(), userID, nil)
@@ -270,17 +270,25 @@ func TestService_SendMessage_PersistsContextSnapshot(t *testing.T) {
 
 // TestService_SendMessage_NoProvider returns ErrNoProvider before opening
 // a stream — so the handler can map to a 503 rather than holding an SSE
-// connection open just to immediately close it.
+// connection open just to immediately close it. nil resolver and a
+// resolver that returns nil both map to ErrNoProvider.
 func TestService_SendMessage_NoProvider(t *testing.T) {
-	svc := ai.NewService(newStubThreadRepo(), newStubMessageRepo(), nil, nil)
-	if svc.ProviderConfigured() {
-		t.Fatal("ProviderConfigured returned true with nil provider")
-	}
-	thr, _ := svc.CreateThread(context.Background(), 1, nil)
-	_, err := svc.SendMessage(context.Background(), 1, thr.ID, "hi")
-	if !errors.Is(err, ai.ErrNoProvider) {
-		t.Fatalf("err = %v, want ErrNoProvider", err)
-	}
+	t.Run("nil resolver", func(t *testing.T) {
+		svc := ai.NewService(newStubThreadRepo(), newStubMessageRepo(), nil, nil)
+		thr, _ := svc.CreateThread(context.Background(), 1, nil)
+		_, err := svc.SendMessage(context.Background(), 1, thr.ID, "hi")
+		if !errors.Is(err, ai.ErrNoProvider) {
+			t.Fatalf("err = %v, want ErrNoProvider", err)
+		}
+	})
+	t.Run("resolver returns nil", func(t *testing.T) {
+		svc := ai.NewService(newStubThreadRepo(), newStubMessageRepo(), nil, ai.StaticResolver(nil))
+		thr, _ := svc.CreateThread(context.Background(), 1, nil)
+		_, err := svc.SendMessage(context.Background(), 1, thr.ID, "hi")
+		if !errors.Is(err, ai.ErrNoProvider) {
+			t.Fatalf("err = %v, want ErrNoProvider", err)
+		}
+	})
 }
 
 // TestService_SendMessage_EmptyContent rejects whitespace-only messages
@@ -289,7 +297,7 @@ func TestService_SendMessage_EmptyContent(t *testing.T) {
 	threads := newStubThreadRepo()
 	msgs := newStubMessageRepo()
 	prov := &stubProvider{deltas: []ai.Delta{{Done: true}}}
-	svc := ai.NewService(threads, msgs, nil, prov)
+	svc := ai.NewService(threads, msgs, nil, ai.StaticResolver(prov))
 
 	thr, _ := svc.CreateThread(context.Background(), 1, nil)
 	_, err := svc.SendMessage(context.Background(), 1, thr.ID, "   \t  ")
@@ -308,7 +316,7 @@ func TestService_CrossUserAccess(t *testing.T) {
 	threads := newStubThreadRepo()
 	msgs := newStubMessageRepo()
 	prov := &stubProvider{deltas: []ai.Delta{{Done: true}}}
-	svc := ai.NewService(threads, msgs, nil, prov)
+	svc := ai.NewService(threads, msgs, nil, ai.StaticResolver(prov))
 
 	const userA, userB int64 = 1, 2
 	aThr, _ := svc.CreateThread(context.Background(), userA, nil)
@@ -363,7 +371,7 @@ func TestService_SendMessage_ProviderError(t *testing.T) {
 			{Err: errors.New("upstream blew up")},
 		},
 	}
-	svc := ai.NewService(threads, msgs, nil, prov)
+	svc := ai.NewService(threads, msgs, nil, ai.StaticResolver(prov))
 
 	thr, _ := svc.CreateThread(context.Background(), 1, nil)
 	events, err := svc.SendMessage(context.Background(), 1, thr.ID, "hi")

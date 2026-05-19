@@ -66,6 +66,31 @@ type ErrorPayload struct {
 	Code    string `json:"code,omitempty"`
 }
 
+// ProviderResolver maps a user to the Provider that should handle their
+// SendMessage calls. The router-side implementation looks up per-user
+// settings (Claude key, Ollama URL, preferred provider) and falls back
+// to env-configured defaults when settings are unset.
+//
+// Returning (nil, nil) is the explicit "no provider configured for this
+// user" signal — Service.SendMessage maps it to ErrNoProvider so the
+// frontend can prompt the user to add a Claude key.
+type ProviderResolver interface {
+	For(ctx context.Context, userID int64) (Provider, error)
+}
+
+// staticResolver wraps a single Provider so tests don't need to define a
+// fresh resolver type for each suite. Production wiring uses a real
+// resolver that reads user settings.
+type staticResolver struct{ p Provider }
+
+func (r staticResolver) For(_ context.Context, _ int64) (Provider, error) {
+	return r.p, nil
+}
+
+// StaticResolver builds a ProviderResolver that always returns p. Useful
+// in tests and for single-user instances where everyone shares one key.
+func StaticResolver(p Provider) ProviderResolver { return staticResolver{p: p} }
+
 // Service is the orchestration layer: persistence + context build +
 // provider stream. Constructor signature is deliberately fixed — adding
 // `pii_repo` here would be the regression the noimport_test guards
@@ -74,32 +99,35 @@ type Service struct {
 	threads  repository.AIThreadRepository
 	messages repository.AIMessageRepository
 	builder  *ContextBuilder
-	provider Provider
+	resolver ProviderResolver
 }
 
-// NewService wires the AI orchestration layer. The provider may be nil at
-// boot — callers that haven't configured CLAUDE_API_KEY pass nil and the
-// service rejects SendMessage with ErrNoProvider so the settings UI can
-// surface a useful error.
+// NewService wires the AI orchestration layer. Resolver may be nil at
+// boot — when nil, every SendMessage returns ErrNoProvider, so the
+// settings UI can surface a useful error rather than the request hanging
+// on an SSE stream that immediately closes.
 func NewService(
 	threads repository.AIThreadRepository,
 	messages repository.AIMessageRepository,
 	builder *ContextBuilder,
-	provider Provider,
+	resolver ProviderResolver,
 ) *Service {
 	return &Service{
 		threads:  threads,
 		messages: messages,
 		builder:  builder,
-		provider: provider,
+		resolver: resolver,
 	}
 }
 
-// ProviderConfigured reports whether SendMessage will work. Handlers can
-// surface a 503-ish error before opening an SSE stream that's going to
-// immediately close.
-func (s *Service) ProviderConfigured() bool {
-	return s.provider != nil
+// providerFor delegates to the resolver. Returns nil when the user has
+// no provider configured (the resolver is allowed to return nil), or an
+// error when the resolver itself fails (DB read, decryption).
+func (s *Service) providerFor(ctx context.Context, userID int64) (Provider, error) {
+	if s.resolver == nil {
+		return nil, nil
+	}
+	return s.resolver.For(ctx, userID)
 }
 
 // CreateThread starts a new conversation for the user. Title is optional
@@ -157,7 +185,11 @@ func (s *Service) ListMessages(ctx context.Context, userID, threadID int64) ([]m
 // leaks. The handler's gin.Context cancellation handles this naturally
 // when the HTTP client disconnects.
 func (s *Service) SendMessage(ctx context.Context, userID, threadID int64, content string) (<-chan SSEEvent, error) {
-	if !s.ProviderConfigured() {
+	provider, err := s.providerFor(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("ai: resolve provider: %w", err)
+	}
+	if provider == nil {
 		return nil, ErrNoProvider
 	}
 	content = strings.TrimSpace(content)
@@ -211,13 +243,13 @@ func (s *Service) SendMessage(ctx context.Context, userID, threadID int64, conte
 			Content: content,
 		}),
 	}
-	deltas, err := s.provider.Stream(ctx, req)
+	deltas, err := provider.Stream(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("ai: provider stream: %w", err)
 	}
 
 	out := make(chan SSEEvent, 16)
-	go s.relayProvider(ctx, threadID, ctxSnapshotJSON, deltas, out)
+	go s.relayProvider(ctx, threadID, provider, ctxSnapshotJSON, deltas, out)
 	return out, nil
 }
 
@@ -226,13 +258,14 @@ func (s *Service) SendMessage(ctx context.Context, userID, threadID int64, conte
 func (s *Service) relayProvider(
 	ctx context.Context,
 	threadID int64,
+	provider Provider,
 	contextSnapshot json.RawMessage,
 	deltas <-chan Delta,
 	out chan<- SSEEvent,
 ) {
 	defer close(out)
 
-	providerName := s.provider.Name()
+	providerName := provider.Name()
 	var assembled strings.Builder
 	var finishReason string
 	var usage Usage

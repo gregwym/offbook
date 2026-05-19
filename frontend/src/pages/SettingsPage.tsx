@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, Landmark, Plug, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Bot, Check, Landmark, Plug, Trash2, X } from 'lucide-react'
 import {
   disconnectItem,
   dismissSyncError,
@@ -8,17 +8,195 @@ import {
   listSyncErrors,
   retrySyncError,
 } from '../api/plaid'
+import { getUserSettings, updateUserSettings } from '../api/userSettings'
 import type { PlaidItem, PlaidSyncError } from '../types/plaid'
+import type { UpdateUserSettingsInput, UserSettingsView } from '../types/userSettings'
 
 export function SettingsPage() {
   return (
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-semibold text-gray-900">Settings</h1>
-        <p className="mt-1 text-sm text-gray-500">Linked institutions and preferences.</p>
+        <p className="mt-1 text-sm text-gray-500">AI provider, linked institutions, and preferences.</p>
       </div>
+      <AISettingsSection />
       <LinkedInstitutionsSection />
     </div>
+  )
+}
+
+function AISettingsSection() {
+  const [settings, setSettings] = useState<UserSettingsView | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [keyDraft, setKeyDraft] = useState('')
+  const [ollamaDraft, setOllamaDraft] = useState('')
+  const [savedFlash, setSavedFlash] = useState(false)
+
+  const refresh = useCallback(() => {
+    return getUserSettings()
+      .then((v) => {
+        setSettings(v)
+        setOllamaDraft(v.ollama_base_url ?? '')
+        setError(null)
+      })
+      .catch((e: unknown) => setError(errMsg(e)))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    // setState only fires inside then/catch/finally — effect body is sync-pure.
+    void refresh()
+  }, [refresh])
+
+  const save = async (patch: UpdateUserSettingsInput) => {
+    setSaving(true)
+    setError(null)
+    try {
+      const v = await updateUserSettings(patch)
+      setSettings(v)
+      setKeyDraft('')
+      setOllamaDraft(v.ollama_base_url ?? '')
+      setSavedFlash(true)
+      window.setTimeout(() => setSavedFlash(false), 1500)
+    } catch (e) {
+      setError(errMsg(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading || !settings) {
+    return (
+      <section className="rounded-lg border border-gray-200 bg-white px-5 py-6 text-sm text-gray-400">
+        Loading AI settings…
+      </section>
+    )
+  }
+
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white">
+      <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+        <div className="flex items-center gap-2">
+          <Bot size={16} className="text-gray-500" />
+          <h2 className="text-base font-medium text-gray-900">AI Advisor</h2>
+        </div>
+        {savedFlash && (
+          <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
+            <Check size={14} /> Saved
+          </span>
+        )}
+      </div>
+
+      {error && (
+        <div className="mx-5 mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      <div className="space-y-5 px-5 py-4">
+        {/* Provider radio */}
+        <div>
+          <label className="block text-sm font-medium text-gray-800 mb-1">Preferred provider</label>
+          <div className="flex gap-3 text-sm">
+            {(['claude', 'ollama'] as const).map((p) => (
+              <label key={p} className="inline-flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="provider"
+                  value={p}
+                  checked={settings.preferred_provider === p}
+                  onChange={() => void save({ preferred_provider: p })}
+                  disabled={saving}
+                />
+                <span className="text-gray-700">{p === 'claude' ? 'Claude (cloud)' : 'Ollama (local)'}</span>
+              </label>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            Claude streams from Anthropic and needs a key. Ollama runs locally — no key, no data leaves
+            your machine.
+          </p>
+        </div>
+
+        {/* Claude key */}
+        <div>
+          <label className="block text-sm font-medium text-gray-800 mb-1">Claude API key</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="password"
+              placeholder={settings.claude_api_key_set ? '••••••••  (key set)' : 'sk-ant-…'}
+              value={keyDraft}
+              onChange={(e) => setKeyDraft(e.target.value)}
+              className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => void save({ claude_api_key: keyDraft })}
+              disabled={!keyDraft.trim() || saving}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+            >
+              Save key
+            </button>
+            {settings.claude_api_key_set && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm('Remove the stored Claude key?')) {
+                    void save({ clear_claude_api_key: true })
+                  }
+                }}
+                disabled={saving}
+                className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                <Trash2 size={14} /> Remove
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            Stored encrypted at rest. The key is never displayed again after you save it — only a
+            "set" indicator. Find your key at{' '}
+            <span className="font-mono">console.anthropic.com</span>.
+          </p>
+        </div>
+
+        {/* Ollama URL */}
+        <div>
+          <label className="block text-sm font-medium text-gray-800 mb-1">Ollama base URL</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="http://localhost:11434"
+              value={ollamaDraft}
+              onChange={(e) => setOllamaDraft(e.target.value)}
+              className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => void save({ ollama_base_url: ollamaDraft })}
+              disabled={saving || ollamaDraft === (settings.ollama_base_url ?? '')}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+            >
+              Save URL
+            </button>
+            {settings.ollama_base_url && (
+              <button
+                type="button"
+                onClick={() => void save({ clear_ollama_url: true })}
+                disabled={saving}
+                className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                <Trash2 size={14} /> Clear
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            Leave blank to use the server default (<span className="font-mono">http://localhost:11434</span>).
+          </p>
+        </div>
+      </div>
+    </section>
   )
 }
 
