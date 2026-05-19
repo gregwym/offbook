@@ -6,6 +6,7 @@ import {
   signin as apiSignin,
   signout as apiSignout,
   signup as apiSignup,
+  signupWithInvite as apiSignupWithInvite,
 } from '../api/auth'
 import type { AuthUser, SetupStatus, SignupMode } from '../types/auth'
 
@@ -27,6 +28,7 @@ type AuthState = {
   setupAdmin: (email: string, password: string, mode: SignupMode) => Promise<void>
   signin: (email: string, password: string) => Promise<void>
   signup: (email: string, password: string) => Promise<void>
+  signupWithInvite: (email: string, password: string, token: string) => Promise<void>
   signout: () => Promise<void>
   clearError: () => void
 }
@@ -100,6 +102,17 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ error: null })
     try {
       const u = await apiSignup(email, password)
+      set({ user: u })
+    } catch (err) {
+      set({ error: errMsg(err) })
+      throw err
+    }
+  },
+
+  signupWithInvite: async (email, password, token) => {
+    set({ error: null })
+    try {
+      const u = await apiSignupWithInvite(email, password, token)
       set({ user: u })
     } catch (err) {
       set({ error: errMsg(err) })

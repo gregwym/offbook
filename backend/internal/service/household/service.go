@@ -250,6 +250,43 @@ func (s *Service) CreateInvite(ctx context.Context, userID, householdID int64, i
 	return &CreateInviteResult{Invite: inv, Token: token}, nil
 }
 
+// ValidateInvite is a non-consuming check that a token is acceptable for
+// a new user. Mirrors the early validation gates of AcceptInvite but
+// performs no writes — used by `auth.SignupWithInvite` to fail-fast on a
+// bad token before creating the user. Returns ErrInviteNotFound /
+// ErrInviteExpired / ErrInviteAlreadyAccepted as appropriate.
+func (s *Service) ValidateInvite(ctx context.Context, rawToken string) error {
+	if rawToken == "" {
+		return ErrInviteNotFound
+	}
+	inv, err := s.invites.GetByTokenHash(ctx, auth.HashToken(rawToken, s.secret))
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrInviteNotFound
+		}
+		return err
+	}
+	if !inv.ExpiresAt.After(s.now()) {
+		return ErrInviteExpired
+	}
+	if inv.AcceptedAt != nil {
+		// A consumed token is unusable for a brand-new user. (The
+		// auto-resume path in AcceptInvite is only valid for the original
+		// invitee re-accepting their own token — not relevant during
+		// initial signup since the user doesn't exist yet.)
+		return ErrInviteAlreadyAccepted
+	}
+	return nil
+}
+
+// AcceptInviteForUser is a thin wrapper around AcceptInvite exposed via
+// the auth.InviteAcceptor interface — keeps the auth package decoupled
+// from household.Service's full API surface.
+func (s *Service) AcceptInviteForUser(ctx context.Context, userID int64, rawToken string) error {
+	_, err := s.AcceptInvite(ctx, userID, rawToken)
+	return err
+}
+
 // AcceptInvite consumes a raw invite token for the calling user.
 // Auto-resume per ADR-0007: if the user has a not-yet-purged left_at row in
 // the same household, we clear left_at and return resumed=true. Otherwise we

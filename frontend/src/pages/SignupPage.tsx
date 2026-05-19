@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { Link, Navigate } from 'react-router-dom'
-import { Lock } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { AuthShell } from './SetupAdminPage'
 
 export function SignupPage() {
-  const { setup, hydrated, user, signup, error, clearError } = useAuthStore()
+  const { setup, hydrated, user, signup, signupWithInvite, error, clearError } = useAuthStore()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [inviteToken, setInviteToken] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   if (hydrated && setup && !setup.bootstrapped) {
@@ -17,38 +17,19 @@ export function SignupPage() {
     return <Navigate to="/dashboard" replace />
   }
 
-  // invite_only mode: signup endpoint is closed for new users. Backend
-  // support for signup-with-invite is tracked in #145. Until then, show
-  // a friendly "ask your admin" page.
-  if (hydrated && setup?.signup_mode === 'invite_only') {
-    return (
-      <AuthShell>
-        <h1 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-          <Lock size={18} className="text-gray-500" />
-          Signups are invite-only
-        </h1>
-        <p className="mt-2 text-sm text-gray-600">
-          This instance only lets admins add new users. Ask your admin to send you an invite, then
-          sign in with the credentials they share.
-        </p>
-        <div className="mt-6">
-          <Link
-            to="/signin"
-            className="inline-flex items-center justify-center w-full rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-          >
-            Back to sign in
-          </Link>
-        </div>
-      </AuthShell>
-    )
-  }
+  // Invite-only mode requires a token; local-multi-tenant mode doesn't.
+  const inviteRequired = setup?.signup_mode === 'invite_only'
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     clearError()
     setSubmitting(true)
     try {
-      await signup(email, password)
+      if (inviteRequired) {
+        await signupWithInvite(email, password, inviteToken)
+      } else {
+        await signup(email, password)
+      }
     } catch {
       // error surfaces via store.
     } finally {
@@ -58,12 +39,34 @@ export function SignupPage() {
 
   return (
     <AuthShell>
-      <h1 className="text-xl font-semibold text-gray-900">Create your account</h1>
+      <h1 className="text-xl font-semibold text-gray-900">
+        {inviteRequired ? 'Accept your invite' : 'Create your account'}
+      </h1>
       <p className="mt-1 text-sm text-gray-500">
-        Each user gets their own private book. Households are joined by invite later.
+        {inviteRequired
+          ? 'Enter your invite token along with the credentials you want to use. Accepting an invite joins you to the household automatically.'
+          : 'Each user gets their own private book. Households are joined by invite later.'}
       </p>
 
       <form onSubmit={submit} className="mt-6 space-y-4">
+        {inviteRequired && (
+          <label className="block">
+            <div className="text-sm font-medium text-gray-700 mb-1">Invite token</div>
+            <input
+              type="text"
+              required
+              value={inviteToken}
+              onChange={(e) => setInviteToken(e.target.value)}
+              placeholder="Paste the token your admin shared"
+              autoFocus
+              className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs focus:border-indigo-500 focus:outline-none"
+            />
+            <div className="mt-1 text-[11px] text-gray-500">
+              Tokens expire after 7 days. If yours doesn't work, ask the household owner to mint a
+              new one.
+            </div>
+          </label>
+        )}
         <label className="block">
           <div className="text-sm font-medium text-gray-700 mb-1">Email</div>
           <input
@@ -71,7 +74,7 @@ export function SignupPage() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            autoFocus
+            autoFocus={!inviteRequired}
             className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
           />
         </label>
@@ -95,10 +98,16 @@ export function SignupPage() {
 
         <button
           type="submit"
-          disabled={submitting || !email || !password}
+          disabled={submitting || !email || !password || (inviteRequired && !inviteToken.trim())}
           className="w-full rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
         >
-          {submitting ? 'Creating account…' : 'Sign up'}
+          {submitting
+            ? inviteRequired
+              ? 'Accepting invite…'
+              : 'Creating account…'
+            : inviteRequired
+              ? 'Accept invite & sign up'
+              : 'Sign up'}
         </button>
       </form>
 

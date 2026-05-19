@@ -22,6 +22,8 @@ var (
 	ErrInstanceConfigured = errors.New("instance already configured")
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrInvalidScope       = errors.New("invalid scope")
+	ErrInviteRequired     = errors.New("invite_token is required")
+	ErrInviteUnavailable  = errors.New("invite acceptance not configured on this instance")
 )
 
 // MinPasswordLen is intentionally modest — Offbook is a local-first app and
@@ -31,6 +33,30 @@ const MinPasswordLen = 8
 type SignupInput struct {
 	Email    string
 	Password string
+}
+
+// SignupWithInviteInput is the body for POST /auth/signup-with-invite.
+// Works regardless of instance signup_mode — the invite token is the gate.
+type SignupWithInviteInput struct {
+	Email       string
+	Password    string
+	InviteToken string
+}
+
+// InviteAcceptor is the slice of household.Service the auth service needs
+// to consume invites during signup. Defining it here (vs importing
+// household directly) keeps the dependency arrow one-directional and lets
+// tests stub the acceptor without spinning up a real household stack.
+//
+// Method names mirror household.Service so the production wiring can pass
+// `*household.Service` directly without an adapter.
+type InviteAcceptor interface {
+	// ValidateInvite returns nil if the token would be acceptable for a
+	// new user. Returns the same error sentinels household.AcceptInvite
+	// would (ErrInviteNotFound / ErrInviteExpired / ErrInviteAlreadyAccepted).
+	ValidateInvite(ctx context.Context, rawToken string) error
+	// AcceptInviteForUser consumes the token on the new user's behalf.
+	AcceptInviteForUser(ctx context.Context, userID int64, rawToken string) error
 }
 
 // SetupAdminInput is accepted by /setup/admin. It both creates the first
@@ -54,6 +80,7 @@ type Service struct {
 	users    repository.UserRepository
 	sessions repository.SessionRepository
 	config   repository.InstanceConfigRepository
+	invites  InviteAcceptor // optional — nil disables SignupWithInvite
 	secret   string
 	now      func() time.Time
 }
@@ -71,6 +98,14 @@ func NewService(
 		secret:   secret,
 		now:      time.Now,
 	}
+}
+
+// WithInviteAcceptor wires the household-side invite acceptor for the
+// SignupWithInvite path. Router-level wiring uses this; tests that don't
+// exercise invite-signup leave it nil.
+func (s *Service) WithInviteAcceptor(a InviteAcceptor) *Service {
+	s.invites = a
+	return s
 }
 
 // SetClock lets tests freeze time for session-expiry assertions.
@@ -145,6 +180,57 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*SigninResult, er
 	}
 	if err := s.users.Create(ctx, u); err != nil {
 		return nil, fmt.Errorf("create user: %w", err)
+	}
+	return s.issueSession(ctx, u)
+}
+
+// SignupWithInvite creates a non-admin user and consumes the supplied
+// household invite token in one flow. Works regardless of the instance's
+// signup_mode — the valid invite IS the gate, so this is the canonical
+// onboarding path in invite_only mode.
+//
+// Sequencing: validate token (peek-only) → validate credentials → create
+// user → accept invite for new user. If acceptance races and fails
+// post-create, we delete the freshly-created user so the operator doesn't
+// see an orphan account.
+func (s *Service) SignupWithInvite(ctx context.Context, in SignupWithInviteInput) (*SigninResult, error) {
+	if s.invites == nil {
+		return nil, ErrInviteUnavailable
+	}
+	if strings.TrimSpace(in.InviteToken) == "" {
+		return nil, ErrInviteRequired
+	}
+	// Confirm /setup/admin has run — otherwise there can't be any invites.
+	if _, err := s.config.Get(ctx); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrInstanceConfigured
+		}
+		return nil, fmt.Errorf("get instance_config: %w", err)
+	}
+	if err := s.invites.ValidateInvite(ctx, in.InviteToken); err != nil {
+		return nil, err
+	}
+	if err := validateCredentials(in.Email, in.Password); err != nil {
+		return nil, err
+	}
+	hash, err := HashPassword(in.Password)
+	if err != nil {
+		return nil, fmt.Errorf("hash password: %w", err)
+	}
+	u := &model.User{
+		Email:        normalizeEmail(in.Email),
+		PasswordHash: hash,
+		LastScope:    model.ScopePersonal,
+		DefaultScope: model.ScopePersonal,
+	}
+	if err := s.users.Create(ctx, u); err != nil {
+		return nil, fmt.Errorf("create user: %w", err)
+	}
+	if err := s.invites.AcceptInviteForUser(ctx, u.ID, in.InviteToken); err != nil {
+		// Race / rejection between probe and accept. Clean up the orphan
+		// user so retries with a fresh token work without an email collision.
+		_ = s.users.HardDelete(ctx, u.ID)
+		return nil, err
 	}
 	return s.issueSession(ctx, u)
 }
