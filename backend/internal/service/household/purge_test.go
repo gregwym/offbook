@@ -124,23 +124,25 @@ func TestRunPurge_SealsExpiredAndDeletesShares(t *testing.T) {
 	}
 }
 
-// TestRunPurge_Idempotent: re-running on a clean DB is a no-op.
+// TestRunPurge_Idempotent: re-running immediately is a no-op even if the
+// first call did process rows. We don't compare absolute counts because
+// other tests in the same suite may have left in-grace rows on the shared
+// test DB — what matters is that a second call right after the first
+// produces zero additional work.
 func TestRunPurge_Idempotent(t *testing.T) {
 	_, _, g := newSvc(t)
-	res, err := household.RunPurge(context.Background(), g, time.Now())
-	if err != nil {
+	if _, err := household.RunPurge(context.Background(), g, time.Now()); err != nil {
 		t.Fatalf("first RunPurge: %v", err)
 	}
 	res2, err := household.RunPurge(context.Background(), g, time.Now())
 	if err != nil {
 		t.Fatalf("second RunPurge: %v", err)
 	}
-	if res2.MembersPurged != res.MembersPurged-res.MembersPurged {
-		// Either zero on first or zero on second — what matters is that
-		// re-running doesn't double-process. The arithmetic above forces
-		// `res2.MembersPurged == 0` regardless of what the first call
-		// did (other tests may have left in-grace rows on this DB).
-		t.Errorf("second RunPurge purged %d more, want 0", res2.MembersPurged)
+	if res2.MembersPurged != 0 {
+		t.Errorf("second RunPurge purged %d members, want 0 (idempotent)", res2.MembersPurged)
+	}
+	if res2.SharesDeleted != 0 {
+		t.Errorf("second RunPurge deleted %d shares, want 0 (idempotent)", res2.SharesDeleted)
 	}
 }
 
