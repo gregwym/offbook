@@ -22,6 +22,16 @@ export type HouseholdMemberContribution = {
   account_count: number
 }
 
+// BudgetPaceItem mirrors service/household.BudgetPaceItem.
+export type BudgetPaceItem = {
+  budget_id: number
+  category_id: number
+  period: 'monthly' | 'weekly' | 'annual'
+  budget: string
+  spent: string
+  pace: string // ratio 0..N (1.0 = on budget)
+}
+
 export type HouseholdDashboard = {
   period: HouseholdPeriod
   net_worth: string

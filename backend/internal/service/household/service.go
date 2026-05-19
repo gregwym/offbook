@@ -67,6 +67,11 @@ type Service struct {
 	accounts   repository.AccountRepository
 	config     repository.InstanceConfigRepository
 	users      repository.UserRepository
+	// Optional shared_budgets repos — wired via WithSharedBudgets. Nil-safe;
+	// the CreateSharedBudget/etc. paths gate on these being set indirectly
+	// via requireCategoryExists.
+	sharedBudgets repository.SharedBudgetRepository
+	categories    repository.CategoryRepository
 	// db is held for multi-write operations (currently only TransferOwner)
 	// that need atomicity beyond what a single repo call provides.
 	// Nil-safe: methods that don't require it work without it; tests set

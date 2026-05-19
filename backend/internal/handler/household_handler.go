@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 
 	"github.com/gregwym/offbook/backend/internal/service/auth"
 	"github.com/gregwym/offbook/backend/internal/service/household"
@@ -43,6 +44,10 @@ func (h *HouseholdHandler) Register(g *gin.RouterGroup) {
 	g.PATCH("/households/:id/members/:userID", h.UpdateMemberRole)
 	g.DELETE("/households/:id/members/:userID", h.RemoveMember)
 	g.POST("/households/:id/transfer-owner", h.TransferOwner)
+	g.POST("/households/:id/shared-budgets", h.CreateSharedBudget)
+	g.GET("/households/:id/shared-budgets", h.ListSharedBudgets)
+	g.PATCH("/households/:id/shared-budgets/:budgetID", h.UpdateSharedBudget)
+	g.DELETE("/households/:id/shared-budgets/:budgetID", h.DeleteSharedBudget)
 
 	g.GET("/accounts/:id/shares", h.ListShares)
 	g.PUT("/accounts/:id/shares/:householdID", h.SetShare)
@@ -74,6 +79,22 @@ type updateMemberRoleRequest struct {
 
 type transferOwnerRequest struct {
 	UserID int64 `json:"user_id"`
+}
+
+type createSharedBudgetRequest struct {
+	CategoryID int64           `json:"category_id"`
+	Period     string          `json:"period"`
+	Amount     decimal.Decimal `json:"amount"`
+	Rollover   *bool           `json:"rollover"`
+	IsActive   *bool           `json:"is_active"`
+}
+
+type updateSharedBudgetRequest struct {
+	CategoryID *int64           `json:"category_id"`
+	Period     *string          `json:"period"`
+	Amount     *decimal.Decimal `json:"amount"`
+	Rollover   *bool            `json:"rollover"`
+	IsActive   *bool            `json:"is_active"`
 }
 
 // --- handlers ---
@@ -258,6 +279,89 @@ func (h *HouseholdHandler) TransferOwner(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (h *HouseholdHandler) CreateSharedBudget(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var req createSharedBudgetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	b, err := h.svc.CreateSharedBudget(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, household.SharedBudgetInput{
+		CategoryID: req.CategoryID,
+		Period:     req.Period,
+		Amount:     req.Amount,
+		Rollover:   req.Rollover,
+		IsActive:   req.IsActive,
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": b})
+}
+
+func (h *HouseholdHandler) ListSharedBudgets(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	out, err := h.svc.ListSharedBudgets(c.Request.Context(), auth.MustUserID(c.Request.Context()), id)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out, "total": int64(len(out))})
+}
+
+func (h *HouseholdHandler) UpdateSharedBudget(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	budgetID, err := strconv.ParseInt(c.Param("budgetID"), 10, 64)
+	if err != nil || budgetID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "budgetID must be a positive integer", "code": "INVALID_REQUEST"})
+		return
+	}
+	var req updateSharedBudgetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	b, err := h.svc.UpdateSharedBudget(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, budgetID, household.UpdateSharedBudgetInput{
+		CategoryID: req.CategoryID,
+		Period:     req.Period,
+		Amount:     req.Amount,
+		Rollover:   req.Rollover,
+		IsActive:   req.IsActive,
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": b})
+}
+
+func (h *HouseholdHandler) DeleteSharedBudget(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	budgetID, err := strconv.ParseInt(c.Param("budgetID"), 10, 64)
+	if err != nil || budgetID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "budgetID must be a positive integer", "code": "INVALID_REQUEST"})
+		return
+	}
+	if err := h.svc.SoftDeleteSharedBudget(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, budgetID); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (h *HouseholdHandler) ListShares(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {
@@ -323,6 +427,13 @@ func (h *HouseholdHandler) writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "INVITE_ACCEPTED"})
 	case errors.Is(err, household.ErrInviteExpired):
 		c.JSON(http.StatusGone, gin.H{"error": err.Error(), "code": "INVITE_EXPIRED"})
+	case errors.Is(err, household.ErrBudgetNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error(), "code": "BUDGET_NOT_FOUND"})
+	case errors.Is(err, household.ErrUnknownCategory):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "UNKNOWN_CATEGORY"})
+	case errors.Is(err, household.ErrInvalidBudgetPeriod),
+		errors.Is(err, household.ErrInvalidBudgetAmount):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_BUDGET"})
 	case errors.Is(err, household.ErrEmptyName),
 		errors.Is(err, household.ErrInvalidRole),
 		errors.Is(err, household.ErrInvalidGrace),

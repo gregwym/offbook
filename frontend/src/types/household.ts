@@ -53,3 +53,32 @@ export type CreateInviteResult = {
   invite: HouseholdInvite
   token: string
 }
+
+// SharedBudget mirrors backend model.SharedBudget.
+export type SharedBudget = {
+  id: number
+  household_id: number
+  category_id: number
+  period: 'monthly' | 'weekly' | 'annual'
+  amount: string
+  rollover: boolean
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type CreateSharedBudgetInput = {
+  category_id: number
+  period: 'monthly' | 'weekly' | 'annual'
+  amount: string
+  rollover?: boolean
+  is_active?: boolean
+}
+
+export type UpdateSharedBudgetInput = {
+  category_id?: number
+  period?: 'monthly' | 'weekly' | 'annual'
+  amount?: string
+  rollover?: boolean
+  is_active?: boolean
+}

@@ -1,11 +1,14 @@
-import { apiClient, type ApiItem } from './client'
+import { apiClient, type ApiItem, type ApiList } from './client'
 import type {
   CreateInviteResult,
+  CreateSharedBudgetInput,
   Household,
   HouseholdDetail,
   HouseholdMember,
   HouseholdRole,
   MembersListing,
+  SharedBudget,
+  UpdateSharedBudgetInput,
 } from '../types/household'
 
 export async function getHousehold(id: number): Promise<HouseholdDetail> {
@@ -74,4 +77,36 @@ export async function removeMember(householdID: number, userID: number): Promise
 
 export async function transferOwner(householdID: number, userID: number): Promise<void> {
   await apiClient.post(`/households/${householdID}/transfer-owner`, { user_id: userID })
+}
+
+export async function listSharedBudgets(householdID: number): Promise<SharedBudget[]> {
+  const res = await apiClient.get<ApiList<SharedBudget>>(`/households/${householdID}/shared-budgets`)
+  return res.data.data
+}
+
+export async function createSharedBudget(
+  householdID: number,
+  input: CreateSharedBudgetInput,
+): Promise<SharedBudget> {
+  const res = await apiClient.post<ApiItem<SharedBudget>>(
+    `/households/${householdID}/shared-budgets`,
+    input,
+  )
+  return res.data.data
+}
+
+export async function updateSharedBudget(
+  householdID: number,
+  budgetID: number,
+  input: UpdateSharedBudgetInput,
+): Promise<SharedBudget> {
+  const res = await apiClient.patch<ApiItem<SharedBudget>>(
+    `/households/${householdID}/shared-budgets/${budgetID}`,
+    input,
+  )
+  return res.data.data
+}
+
+export async function deleteSharedBudget(householdID: number, budgetID: number): Promise<void> {
+  await apiClient.delete(`/households/${householdID}/shared-budgets/${budgetID}`)
 }
