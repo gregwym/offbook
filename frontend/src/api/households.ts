@@ -2,13 +2,16 @@ import { apiClient, type ApiItem, type ApiList } from './client'
 import type {
   CreateInviteResult,
   CreateSharedBudgetInput,
+  CreateSharedGoalInput,
   Household,
   HouseholdDetail,
   HouseholdMember,
   HouseholdRole,
   MembersListing,
   SharedBudget,
+  SharedGoal,
   UpdateSharedBudgetInput,
+  UpdateSharedGoalInput,
 } from '../types/household'
 
 export async function getHousehold(id: number): Promise<HouseholdDetail> {
@@ -109,4 +112,48 @@ export async function updateSharedBudget(
 
 export async function deleteSharedBudget(householdID: number, budgetID: number): Promise<void> {
   await apiClient.delete(`/households/${householdID}/shared-budgets/${budgetID}`)
+}
+
+export async function listSharedGoals(householdID: number): Promise<SharedGoal[]> {
+  const res = await apiClient.get<ApiList<SharedGoal>>(`/households/${householdID}/shared-goals`)
+  return res.data.data
+}
+
+export async function createSharedGoal(
+  householdID: number,
+  input: CreateSharedGoalInput,
+): Promise<SharedGoal> {
+  const res = await apiClient.post<ApiItem<SharedGoal>>(
+    `/households/${householdID}/shared-goals`,
+    input,
+  )
+  return res.data.data
+}
+
+export async function updateSharedGoal(
+  householdID: number,
+  goalID: number,
+  input: UpdateSharedGoalInput,
+): Promise<SharedGoal> {
+  const res = await apiClient.patch<ApiItem<SharedGoal>>(
+    `/households/${householdID}/shared-goals/${goalID}`,
+    input,
+  )
+  return res.data.data
+}
+
+export async function deleteSharedGoal(householdID: number, goalID: number): Promise<void> {
+  await apiClient.delete(`/households/${householdID}/shared-goals/${goalID}`)
+}
+
+export async function contributeToSharedGoal(
+  householdID: number,
+  goalID: number,
+  amount: string,
+): Promise<SharedGoal> {
+  const res = await apiClient.post<ApiItem<SharedGoal>>(
+    `/households/${householdID}/shared-goals/${goalID}/contributions`,
+    { amount },
+  )
+  return res.data.data
 }

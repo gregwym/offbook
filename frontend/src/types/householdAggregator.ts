@@ -32,6 +32,16 @@ export type BudgetPaceItem = {
   pace: string // ratio 0..N (1.0 = on budget)
 }
 
+// GoalProgressItem mirrors service/household.GoalProgressItem.
+export type GoalProgressItem = {
+  goal_id: number
+  name: string
+  target_amount: string
+  current_amount: string
+  progress: string // ratio 0..1
+  target_date?: string | null
+}
+
 export type HouseholdDashboard = {
   period: HouseholdPeriod
   net_worth: string

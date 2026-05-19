@@ -82,3 +82,28 @@ export type UpdateSharedBudgetInput = {
   rollover?: boolean
   is_active?: boolean
 }
+
+// SharedGoal mirrors backend model.SharedGoal.
+export type SharedGoal = {
+  id: number
+  household_id: number
+  name: string
+  target_amount: string
+  current_amount: string
+  target_date?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type CreateSharedGoalInput = {
+  name: string
+  target_amount: string
+  target_date?: string // YYYY-MM-DD
+}
+
+export type UpdateSharedGoalInput = {
+  name?: string
+  target_amount?: string
+  target_date?: string
+  clear_target_date?: boolean
+}
