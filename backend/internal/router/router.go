@@ -88,6 +88,12 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	)
 	householdHandler := handler.NewHouseholdHandler(householdSvc)
 
+	// Now that the household service exists, wire it into auth so the
+	// /auth/signup-with-invite flow can consume tokens during signup
+	// (see #145). authSvc is already constructed at the top of the func —
+	// this just upgrades it with the invite acceptor.
+	authSvc.WithInviteAcceptor(householdSvc)
+
 	aggregator := household.NewAggregator(
 		repository.NewHouseholdAggregatorRepository(gormDB),
 		householdRepo,

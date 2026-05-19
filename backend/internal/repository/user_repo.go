@@ -16,6 +16,11 @@ type UserRepository interface {
 	GetByEmail(ctx context.Context, email string) (*model.User, error)
 	UpdateLastScope(ctx context.Context, id int64, scope string) error
 	Count(ctx context.Context) (int64, error)
+	// HardDelete removes the user row outright. Used only by the
+	// signup-with-invite cleanup path when invite acceptance fails
+	// post-create; never expose to handlers — deleting users is destructive
+	// and the proper user-facing path is leave-household + admin tooling.
+	HardDelete(ctx context.Context, id int64) error
 }
 
 type userRepo struct{ db *gorm.DB }
@@ -71,4 +76,15 @@ func (r *userRepo) Count(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return n, nil
+}
+
+func (r *userRepo) HardDelete(ctx context.Context, id int64) error {
+	res := r.db.WithContext(ctx).Unscoped().Delete(&model.User{}, id)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

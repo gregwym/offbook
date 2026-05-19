@@ -30,7 +30,9 @@ export function SigninPage() {
     }
   }
 
-  const canSignup = setup?.signup_mode === 'local_multi_tenant'
+  // Both modes have a self-service signup path now — local_multi_tenant
+  // takes plain email+password, invite_only takes an invite token too.
+  const canSignup = setup?.signup_mode === 'local_multi_tenant' || setup?.signup_mode === 'invite_only'
 
   return (
     <AuthShell>
@@ -76,13 +78,13 @@ export function SigninPage() {
       </form>
 
       <div className="mt-4 text-center text-xs text-gray-500">
-        {canSignup ? (
+        {canSignup && (
           <>
-            Don't have an account?{' '}
-            <Link to="/signup" className="text-indigo-600 hover:text-indigo-700">Sign up</Link>
+            {setup?.signup_mode === 'invite_only' ? 'Have an invite?' : "Don't have an account?"}{' '}
+            <Link to="/signup" className="text-indigo-600 hover:text-indigo-700">
+              {setup?.signup_mode === 'invite_only' ? 'Accept invite' : 'Sign up'}
+            </Link>
           </>
-        ) : (
-          'Signups are invite-only on this instance.'
         )}
       </div>
     </AuthShell>

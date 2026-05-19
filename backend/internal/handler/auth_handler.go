@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/gregwym/offbook/backend/internal/service/auth"
+	"github.com/gregwym/offbook/backend/internal/service/household"
 )
 
 // AuthHandler exposes /setup/admin, /auth/*, and /me. These are the only
@@ -25,6 +26,7 @@ func (h *AuthHandler) RegisterPublic(g *gin.RouterGroup) {
 	g.POST("/setup/admin", h.SetupAdmin)
 	g.GET("/setup/status", h.SetupStatus)
 	g.POST("/auth/signup", h.Signup)
+	g.POST("/auth/signup-with-invite", h.SignupWithInvite)
 	g.POST("/auth/signin", h.Signin)
 	g.POST("/auth/signout", h.Signout)
 }
@@ -105,6 +107,36 @@ func (h *AuthHandler) Signup(c *gin.Context) {
 	}})
 }
 
+type signupWithInviteRequest struct {
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	InviteToken string `json:"invite_token"`
+}
+
+// SignupWithInvite is the only onboarding path that works in invite_only
+// mode for brand-new users — the valid invite is the gate, not signup_mode.
+func (h *AuthHandler) SignupWithInvite(c *gin.Context) {
+	var req signupWithInviteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	res, err := h.svc.SignupWithInvite(c.Request.Context(), auth.SignupWithInviteInput{
+		Email:       req.Email,
+		Password:    req.Password,
+		InviteToken: req.InviteToken,
+	})
+	if err != nil {
+		h.writeAuthError(c, err)
+		return
+	}
+	h.setSessionCookie(c, res)
+	c.JSON(http.StatusCreated, gin.H{"data": gin.H{
+		"id":    res.User.ID,
+		"email": res.User.Email,
+	}})
+}
+
 func (h *AuthHandler) Signin(c *gin.Context) {
 	var req credentialsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -161,6 +193,16 @@ func (h *AuthHandler) writeAuthError(c *gin.Context, err error) {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "code": "SIGNUP_CLOSED"})
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error(), "code": "INVALID_CREDENTIALS"})
+	case errors.Is(err, auth.ErrInviteUnavailable):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error(), "code": "INVITE_UNAVAILABLE"})
+	case errors.Is(err, auth.ErrInviteRequired):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+	case errors.Is(err, household.ErrInviteNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error(), "code": "INVITE_NOT_FOUND"})
+	case errors.Is(err, household.ErrInviteExpired):
+		c.JSON(http.StatusGone, gin.H{"error": err.Error(), "code": "INVITE_EXPIRED"})
+	case errors.Is(err, household.ErrInviteAlreadyAccepted):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "INVITE_ACCEPTED"})
 	case errors.Is(err, auth.ErrEmailRequired),
 		errors.Is(err, auth.ErrInvalidEmail),
 		errors.Is(err, auth.ErrPasswordTooShort),

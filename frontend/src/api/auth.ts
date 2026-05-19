@@ -25,6 +25,21 @@ export async function signup(email: string, password: string): Promise<AuthUser>
   return res.data.data
 }
 
+// signupWithInvite is the canonical onboarding path in invite_only mode.
+// The valid invite is the gate — signup_mode doesn't matter.
+export async function signupWithInvite(
+  email: string,
+  password: string,
+  invite_token: string,
+): Promise<AuthUser> {
+  const res = await apiClient.post<ApiItem<AuthUser>>('/auth/signup-with-invite', {
+    email,
+    password,
+    invite_token,
+  })
+  return res.data.data
+}
+
 export async function signout(): Promise<void> {
   await apiClient.post('/auth/signout')
 }
