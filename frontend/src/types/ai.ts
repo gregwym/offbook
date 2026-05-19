@@ -16,6 +16,10 @@ export type AIRole = 'user' | 'assistant' | 'system'
 export type AIMessage = {
   id: number
   thread_id: number
+  // user_id is set on user-role messages in shared threads so the UI can
+  // attribute "who said what" across members. Null on assistant messages
+  // and on pre-migration-000011 user messages.
+  user_id?: number | null
   role: AIRole
   content: string
   context_snapshot?: unknown // JSONB on the server; opaque to the UI except for the preview panel

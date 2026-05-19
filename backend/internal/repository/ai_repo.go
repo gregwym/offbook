@@ -10,14 +10,22 @@ import (
 )
 
 // AIThreadRepository is the data-access contract for ai_threads.
-// Every read path is scoped by user_id — there is no "fetch by id"
+// Personal-thread reads are scoped by user_id — there is no "fetch by id"
 // without an owning user, so a sibling user passing a guessed id gets
-// ErrNotFound, not someone else's thread.
+// ErrNotFound, not someone else's thread. Shared-thread reads layer on
+// top via the household_id + shared_with_household columns.
 type AIThreadRepository interface {
 	Create(ctx context.Context, t *model.AIThread) error
 	GetByID(ctx context.Context, userID, id int64) (*model.AIThread, error)
 	ListByUser(ctx context.Context, userID int64) ([]model.AIThread, error)
 	UpdateTitle(ctx context.Context, userID, id int64, title string) error
+	// GetByIDForMember returns a thread that the user can access:
+	// either they own it, or it is `shared_with_household=true` and
+	// belongs to the supplied household. Used by the /h/ai routes.
+	GetByIDForMember(ctx context.Context, userID, householdID, id int64) (*model.AIThread, error)
+	// ListSharedByHousehold returns shared threads bound to a household,
+	// newest activity first. Caller has already gated on membership.
+	ListSharedByHousehold(ctx context.Context, householdID int64) ([]model.AIThread, error)
 }
 
 // AIMessageRepository is the data-access contract for ai_messages.
@@ -60,6 +68,36 @@ func (r *aiThreadRepo) ListByUser(ctx context.Context, userID int64) ([]model.AI
 		Where("user_id = ?", userID).
 		Order("updated_at DESC").
 		Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *aiThreadRepo) GetByIDForMember(ctx context.Context, userID, householdID, id int64) (*model.AIThread, error) {
+	var t model.AIThread
+	err := r.db.WithContext(ctx).
+		Where("id = ?", id).
+		Where(
+			"(user_id = ?) OR (shared_with_household = TRUE AND household_id = ?)",
+			userID, householdID,
+		).
+		First(&t).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (r *aiThreadRepo) ListSharedByHousehold(ctx context.Context, householdID int64) ([]model.AIThread, error) {
+	var out []model.AIThread
+	err := r.db.WithContext(ctx).
+		Where("shared_with_household = TRUE AND household_id = ?", householdID).
+		Order("updated_at DESC").
+		Find(&out).Error
+	if err != nil {
 		return nil, err
 	}
 	return out, nil

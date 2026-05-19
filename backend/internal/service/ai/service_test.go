@@ -96,6 +96,34 @@ func (r *stubThreadRepo) UpdateTitle(_ context.Context, userID, id int64, title 
 	return nil
 }
 
+func (r *stubThreadRepo) GetByIDForMember(_ context.Context, userID, householdID, id int64) (*model.AIThread, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	t, ok := r.threads[id]
+	if !ok {
+		return nil, repository.ErrNotFound
+	}
+	if t.UserID == userID {
+		return t, nil
+	}
+	if t.SharedWithHousehold && t.HouseholdID != nil && *t.HouseholdID == householdID {
+		return t, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (r *stubThreadRepo) ListSharedByHousehold(_ context.Context, householdID int64) ([]model.AIThread, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []model.AIThread
+	for _, t := range r.threads {
+		if t.SharedWithHousehold && t.HouseholdID != nil && *t.HouseholdID == householdID {
+			out = append(out, *t)
+		}
+	}
+	return out, nil
+}
+
 // stubMessageRepo is an in-memory ai_messages store.
 type stubMessageRepo struct {
 	mu     sync.Mutex

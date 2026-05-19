@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service/ai"
 	"github.com/gregwym/offbook/backend/internal/service/auth"
 )
@@ -16,11 +17,12 @@ import (
 // stream — every other handler returns the standard `{"data": ...}`
 // envelope.
 type AIHandler struct {
-	svc *ai.Service
+	svc     *ai.Service
+	members repository.HouseholdMemberRepository // used by /h/ai to resolve the user's household
 }
 
-func NewAIHandler(s *ai.Service) *AIHandler {
-	return &AIHandler{svc: s}
+func NewAIHandler(s *ai.Service, members repository.HouseholdMemberRepository) *AIHandler {
+	return &AIHandler{svc: s, members: members}
 }
 
 func (h *AIHandler) Register(g *gin.RouterGroup) {
@@ -28,6 +30,14 @@ func (h *AIHandler) Register(g *gin.RouterGroup) {
 	g.GET("/ai/threads", h.ListThreads)
 	g.GET("/ai/threads/:id/messages", h.ListMessages)
 	g.POST("/ai/threads/:id/messages", h.SendMessage)
+
+	// Household scope — same SSE shape, just gated on active membership
+	// and using the household context builder.
+	r := g.Group("/h")
+	r.POST("/ai/threads", h.CreateSharedThread)
+	r.GET("/ai/threads", h.ListSharedThreads)
+	r.GET("/ai/threads/:id/messages", h.ListSharedMessages)
+	r.POST("/ai/threads/:id/messages", h.SendSharedMessage)
 }
 
 type createThreadRequest struct {
@@ -123,7 +133,109 @@ func (h *AIHandler) writeServiceError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "EMPTY_MESSAGE"})
 	case errors.Is(err, ai.ErrNoProvider):
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error(), "code": "NO_AI_PROVIDER"})
+	case errors.Is(err, ai.ErrNotHouseholdMember):
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "code": "NOT_HOUSEHOLD_MEMBER"})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
 	}
+}
+
+// requireHouseholdID resolves the caller's active household. Returns
+// (0, false) and writes a 403 if the user belongs to no household or is
+// in-grace. Mirrors the helper in household_aggregator_handler.go.
+func (h *AIHandler) requireHouseholdID(c *gin.Context) (int64, bool) {
+	uid := auth.MustUserID(c.Request.Context())
+	mem, err := h.members.GetMembershipForUser(c.Request.Context(), uid)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "no household membership", "code": "NO_HOUSEHOLD"})
+			return 0, false
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
+		return 0, false
+	}
+	if mem.LeftAt != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "membership inactive", "code": "MEMBERSHIP_INACTIVE"})
+		return 0, false
+	}
+	return mem.HouseholdID, true
+}
+
+func (h *AIHandler) CreateSharedThread(c *gin.Context) {
+	hhID, ok := h.requireHouseholdID(c)
+	if !ok {
+		return
+	}
+	var req createThreadRequest
+	_ = c.ShouldBindJSON(&req)
+	t, err := h.svc.CreateSharedThread(c.Request.Context(), auth.MustUserID(c.Request.Context()), hhID, req.Title)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": t})
+}
+
+func (h *AIHandler) ListSharedThreads(c *gin.Context) {
+	hhID, ok := h.requireHouseholdID(c)
+	if !ok {
+		return
+	}
+	threads, err := h.svc.ListSharedThreads(c.Request.Context(), auth.MustUserID(c.Request.Context()), hhID)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": threads, "total": int64(len(threads))})
+}
+
+func (h *AIHandler) ListSharedMessages(c *gin.Context) {
+	hhID, ok := h.requireHouseholdID(c)
+	if !ok {
+		return
+	}
+	id, parsed := parseID(c)
+	if !parsed {
+		return
+	}
+	msgs, err := h.svc.ListSharedMessages(c.Request.Context(), auth.MustUserID(c.Request.Context()), hhID, id)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": msgs, "total": int64(len(msgs))})
+}
+
+func (h *AIHandler) SendSharedMessage(c *gin.Context) {
+	hhID, ok := h.requireHouseholdID(c)
+	if !ok {
+		return
+	}
+	id, parsed := parseID(c)
+	if !parsed {
+		return
+	}
+	var req sendMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	events, err := h.svc.SendSharedMessage(c.Request.Context(), auth.MustUserID(c.Request.Context()), hhID, id, req.Content)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.WriteHeader(http.StatusOK)
+	c.Stream(func(w io.Writer) bool {
+		ev, ok := <-events
+		if !ok {
+			return false
+		}
+		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, string(ev.Data))
+		return ev.Type != ai.SSEDone && ev.Type != ai.SSEError
+	})
 }

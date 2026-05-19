@@ -96,10 +96,11 @@ func StaticResolver(p Provider) ProviderResolver { return staticResolver{p: p} }
 // `pii_repo` here would be the regression the noimport_test guards
 // against.
 type Service struct {
-	threads  repository.AIThreadRepository
-	messages repository.AIMessageRepository
-	builder  *ContextBuilder
-	resolver ProviderResolver
+	threads   repository.AIThreadRepository
+	messages  repository.AIMessageRepository
+	builder   *ContextBuilder
+	resolver  ProviderResolver
+	household HouseholdAccess
 }
 
 // NewService wires the AI orchestration layer. Resolver may be nil at
