@@ -207,7 +207,7 @@ func (b *ContextBuilder) Build(ctx context.Context, userID int64) (*Context, err
 		for i := range gs {
 			v := service.View(&gs[i])
 			out.SavingsGoals = append(out.SavingsGoals, GoalSnapshot{
-				Label:       v.SavingsGoal.Name,
+				Label:       v.Name,
 				Target:      v.TargetAmount.String(),
 				Current:     v.CurrentAmount.String(),
 				ProgressPct: v.ProgressPct,

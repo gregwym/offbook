@@ -23,7 +23,7 @@ func TestContext_NoPIIFieldNames(t *testing.T) {
 
 	var walk func(t reflect.Type, path string)
 	walk = func(rt reflect.Type, path string) {
-		for rt.Kind() == reflect.Ptr || rt.Kind() == reflect.Slice || rt.Kind() == reflect.Array {
+		for rt.Kind() == reflect.Pointer || rt.Kind() == reflect.Slice || rt.Kind() == reflect.Array {
 			rt = rt.Elem()
 		}
 		if rt.Kind() != reflect.Struct {
