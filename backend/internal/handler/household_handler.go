@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -48,6 +49,11 @@ func (h *HouseholdHandler) Register(g *gin.RouterGroup) {
 	g.GET("/households/:id/shared-budgets", h.ListSharedBudgets)
 	g.PATCH("/households/:id/shared-budgets/:budgetID", h.UpdateSharedBudget)
 	g.DELETE("/households/:id/shared-budgets/:budgetID", h.DeleteSharedBudget)
+	g.POST("/households/:id/shared-goals", h.CreateSharedGoal)
+	g.GET("/households/:id/shared-goals", h.ListSharedGoals)
+	g.PATCH("/households/:id/shared-goals/:goalID", h.UpdateSharedGoal)
+	g.DELETE("/households/:id/shared-goals/:goalID", h.DeleteSharedGoal)
+	g.POST("/households/:id/shared-goals/:goalID/contributions", h.ContributeToSharedGoal)
 
 	g.GET("/accounts/:id/shares", h.ListShares)
 	g.PUT("/accounts/:id/shares/:householdID", h.SetShare)
@@ -95,6 +101,23 @@ type updateSharedBudgetRequest struct {
 	Amount     *decimal.Decimal `json:"amount"`
 	Rollover   *bool            `json:"rollover"`
 	IsActive   *bool            `json:"is_active"`
+}
+
+type createSharedGoalRequest struct {
+	Name         string          `json:"name"`
+	TargetAmount decimal.Decimal `json:"target_amount"`
+	TargetDate   *string         `json:"target_date"` // YYYY-MM-DD
+}
+
+type updateSharedGoalRequest struct {
+	Name            *string          `json:"name"`
+	TargetAmount    *decimal.Decimal `json:"target_amount"`
+	TargetDate      *string          `json:"target_date"`
+	ClearTargetDate bool             `json:"clear_target_date"`
+}
+
+type sharedGoalContributionRequest struct {
+	Amount decimal.Decimal `json:"amount"`
 }
 
 // --- handlers ---
@@ -362,6 +385,125 @@ func (h *HouseholdHandler) DeleteSharedBudget(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (h *HouseholdHandler) CreateSharedGoal(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var req createSharedGoalRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	in := household.SharedGoalInput{
+		Name:         req.Name,
+		TargetAmount: req.TargetAmount,
+	}
+	if req.TargetDate != nil && *req.TargetDate != "" {
+		d, err := time.Parse("2006-01-02", *req.TargetDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "target_date must be YYYY-MM-DD", "code": "INVALID_REQUEST"})
+			return
+		}
+		in.TargetDate = &d
+	}
+	g, err := h.svc.CreateSharedGoal(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, in)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": g})
+}
+
+func (h *HouseholdHandler) ListSharedGoals(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	out, err := h.svc.ListSharedGoals(c.Request.Context(), auth.MustUserID(c.Request.Context()), id)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out, "total": int64(len(out))})
+}
+
+func (h *HouseholdHandler) UpdateSharedGoal(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	goalID, err := strconv.ParseInt(c.Param("goalID"), 10, 64)
+	if err != nil || goalID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "goalID must be a positive integer", "code": "INVALID_REQUEST"})
+		return
+	}
+	var req updateSharedGoalRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	in := household.UpdateSharedGoalInput{
+		Name:            req.Name,
+		TargetAmount:    req.TargetAmount,
+		ClearTargetDate: req.ClearTargetDate,
+	}
+	if req.TargetDate != nil && *req.TargetDate != "" {
+		d, err := time.Parse("2006-01-02", *req.TargetDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "target_date must be YYYY-MM-DD", "code": "INVALID_REQUEST"})
+			return
+		}
+		in.TargetDate = &d
+	}
+	g, err := h.svc.UpdateSharedGoal(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, goalID, in)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": g})
+}
+
+func (h *HouseholdHandler) DeleteSharedGoal(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	goalID, err := strconv.ParseInt(c.Param("goalID"), 10, 64)
+	if err != nil || goalID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "goalID must be a positive integer", "code": "INVALID_REQUEST"})
+		return
+	}
+	if err := h.svc.SoftDeleteSharedGoal(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, goalID); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *HouseholdHandler) ContributeToSharedGoal(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	goalID, err := strconv.ParseInt(c.Param("goalID"), 10, 64)
+	if err != nil || goalID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "goalID must be a positive integer", "code": "INVALID_REQUEST"})
+		return
+	}
+	var req sharedGoalContributionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	g, err := h.svc.ContributeToSharedGoal(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, goalID, req.Amount)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": g})
+}
+
 func (h *HouseholdHandler) ListShares(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {
@@ -429,11 +571,17 @@ func (h *HouseholdHandler) writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusGone, gin.H{"error": err.Error(), "code": "INVITE_EXPIRED"})
 	case errors.Is(err, household.ErrBudgetNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error(), "code": "BUDGET_NOT_FOUND"})
+	case errors.Is(err, household.ErrSharedGoalNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error(), "code": "GOAL_NOT_FOUND"})
 	case errors.Is(err, household.ErrUnknownCategory):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "UNKNOWN_CATEGORY"})
 	case errors.Is(err, household.ErrInvalidBudgetPeriod),
 		errors.Is(err, household.ErrInvalidBudgetAmount):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_BUDGET"})
+	case errors.Is(err, household.ErrSharedGoalEmptyName),
+		errors.Is(err, household.ErrSharedGoalInvalidTarget),
+		errors.Is(err, household.ErrSharedGoalZeroContribution):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_GOAL"})
 	case errors.Is(err, household.ErrEmptyName),
 		errors.Is(err, household.ErrInvalidRole),
 		errors.Is(err, household.ErrInvalidGrace),

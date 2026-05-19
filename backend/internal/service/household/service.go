@@ -72,6 +72,10 @@ type Service struct {
 	// via requireCategoryExists.
 	sharedBudgets repository.SharedBudgetRepository
 	categories    repository.CategoryRepository
+	// Optional shared_goals repo — wired via WithSharedGoals. Nil-safe in
+	// the same way; the goal CRUD methods are only reachable through the
+	// router, which always wires them.
+	sharedGoals repository.SharedGoalRepository
 	// db is held for multi-write operations (currently only TransferOwner)
 	// that need atomicity beyond what a single repo call provides.
 	// Nil-safe: methods that don't require it work without it; tests set

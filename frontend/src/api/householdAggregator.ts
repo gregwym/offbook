@@ -1,6 +1,7 @@
 import { apiClient, type ApiItem, type ApiList } from './client'
 import type {
   BudgetPaceItem,
+  GoalProgressItem,
   HouseholdDashboard,
   HouseholdPeriodKey,
 } from '../types/householdAggregator'
@@ -20,5 +21,10 @@ export async function getBudgetPace(
   const res = await apiClient.get<ApiList<BudgetPaceItem>>('/h/budgets/pace', {
     params: { period },
   })
+  return res.data.data
+}
+
+export async function getGoalProgress(): Promise<GoalProgressItem[]> {
+  const res = await apiClient.get<ApiList<GoalProgressItem>>('/h/goals/progress')
   return res.data.data
 }
