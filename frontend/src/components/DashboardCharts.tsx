@@ -23,12 +23,11 @@ import type {
   NetWorthPoint,
   SpendByCategoryItem,
 } from '../types/dashboard'
+import { FALLBACK_PIE_COLORS } from './chartColors'
 
 // Money strings come in as NUMERIC text. parseFloat is fine for chart
 // scaling; AmountDisplay handles user-facing precision elsewhere.
 const num = (s: string): number => Number.parseFloat(s) || 0
-
-const FALLBACK_PIE_COLORS = ['#6366F1', '#F59E0B', '#10B981', '#EC4899', '#3B82F6', '#EF4444', '#A855F7', '#64748B']
 
 export function SpendByCategoryChart() {
   const [data, setData] = useState<SpendByCategoryItem[] | null>(null)
