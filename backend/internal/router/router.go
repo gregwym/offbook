@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"crypto/sha256"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -104,15 +105,23 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	plaidSvc := newPlaidService(cfg, gormDB, plaidItemRepo, accountRepo, transactionRepo, plaidSyncErrRepo, piiSvc).WithRuleRepo(ruleRepo)
 	plaidHandler := handler.NewPlaidHandler(plaidSvc)
 
-	// AI advisor: provider is optional. Without CLAUDE_API_KEY the service
-	// still registers (so threads/list/history work for past conversations)
-	// but SendMessage returns ErrNoProvider until the user adds a key.
+	// User settings: per-user AI provider config (Claude key, Ollama URL,
+	// preferred provider). The Claude key is encrypted with a SecretBox
+	// derived from SESSION_SECRET — no new operator secret.
+	userSettingsSvc := newUserSettingsService(cfg, gormDB)
+	userSettingsHandler := handler.NewUserSettingsHandler(userSettingsSvc)
+
+	// AI advisor: per-user provider resolution. The resolver reads user
+	// settings; missing settings fall back to env-configured Claude. The
+	// service still registers when nothing is configured (threads/list/
+	// history work for past conversations) and SendMessage returns
+	// ErrNoProvider until the user adds a key.
 	aiBuilder := ai.NewContextBuilder(dashboardSvc, budgetSvc, savingsGoalSvc, investmentSvc, categorySvc)
 	aiSvc := ai.NewService(
 		repository.NewAIThreadRepository(gormDB),
 		repository.NewAIMessageRepository(gormDB),
 		aiBuilder,
-		newAIProvider(cfg),
+		&aiProviderResolver{settings: userSettingsSvc, envFallback: newAIProvider(cfg)},
 	)
 	aiHandler := handler.NewAIHandler(aiSvc)
 
@@ -140,6 +149,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		scopeHandler.Register(secured)
 		plaidHandler.Register(secured)
 		aiHandler.Register(secured)
+		userSettingsHandler.Register(secured)
 	}
 
 	return r
@@ -194,13 +204,13 @@ func newPlaidService(
 	)
 }
 
-// newAIProvider returns the configured Claude provider when
+// newAIProvider returns the env-configured Claude provider when
 // CLAUDE_API_KEY is set, otherwise nil. The AI service treats a nil
-// provider as "send disabled" — see ai.Service.ProviderConfigured.
+// provider as "send disabled" and returns ErrNoProvider.
 //
-// Ollama is also a valid choice but it isn't a startup-config flip: it's
-// a per-thread/per-user setting that ships with the settings UI in a
-// later issue. Until then, Claude is the only auto-wired provider.
+// This is the fallback path: per-user settings take precedence (see
+// aiProviderResolver below). The env default keeps the single-tenant
+// local-deploy story working without anyone visiting Settings.
 func newAIProvider(cfg config.Config) ai.Provider {
 	if !cfg.ClaudeConfigured() {
 		return nil
@@ -213,6 +223,60 @@ func newAIProvider(cfg config.Config) ai.Provider {
 		return nil
 	}
 	return p
+}
+
+// newUserSettingsService derives a SecretBox key from SESSION_SECRET via
+// SHA-256 (SESSION_SECRET is hex-encoded in operator config but the
+// existing auth code treats it as raw bytes — hashing normalizes either
+// shape to 32 bytes for AES-256). One SecretBox per process; the cipher
+// is concurrent-safe.
+func newUserSettingsService(cfg config.Config, gormDB *gorm.DB) *service.UserSettingsService {
+	sum := sha256.Sum256([]byte(cfg.SessionSecret))
+	box, err := crypto.NewSecretBox(sum[:])
+	if err != nil {
+		// SESSION_SECRET is required from M2.5+; the only way NewSecretBox
+		// fails here is a panic-worthy bug (it accepts 32 bytes and we
+		// just gave it exactly that).
+		panic("user_settings: secretbox: " + err.Error())
+	}
+	return service.NewUserSettingsService(repository.NewUserSettingsRepository(gormDB), box)
+}
+
+// aiProviderResolver maps a userID to the right Provider for SendMessage.
+// Looks up per-user settings first; falls back to the env-configured
+// provider when nothing user-specific is set.
+type aiProviderResolver struct {
+	settings    *service.UserSettingsService
+	envFallback ai.Provider
+}
+
+func (r *aiProviderResolver) For(ctx context.Context, userID int64) (ai.Provider, error) {
+	resolved, err := r.settings.Resolve(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	switch resolved.Provider {
+	case "ollama":
+		base := resolved.OllamaBaseURL
+		if base == "" {
+			// No user URL → env default. Ollama works without an API key,
+			// so there's nothing further to gate on.
+			return ai.NewOllamaProvider(ai.OllamaConfig{}), nil
+		}
+		return ai.NewOllamaProvider(ai.OllamaConfig{BaseURL: base}), nil
+	case "claude":
+		fallthrough
+	default:
+		key := resolved.ClaudeKey
+		if key == "" {
+			return r.envFallback, nil
+		}
+		p, err := ai.NewClaudeProvider(ai.ClaudeConfig{APIKey: key})
+		if err != nil {
+			return r.envFallback, nil
+		}
+		return p, nil
+	}
 }
 
 func corsMiddleware(origin string) gin.HandlerFunc {
