@@ -237,6 +237,194 @@ func TestInvestmentService_ListSnapshots_ReturnsHistoryAscending(t *testing.T) {
 	}
 }
 
+// portfolioCreate is a helper that constructs an investment with optional
+// cost basis, market value, and asset class. It returns the created snapshot
+// or fails the test.
+func portfolioCreate(
+	t *testing.T, svc *service.InvestmentService, userID, accountID int64,
+	ticker string, qty int64, costBasis, marketValue *int64, assetClass *string, day int,
+) {
+	t.Helper()
+	in := service.CreateInvestmentInput{
+		AccountID:    accountID,
+		Ticker:       ticker,
+		Quantity:     decimal.NewFromInt(qty),
+		AssetClass:   assetClass,
+		SnapshotDate: time.Date(2026, 5, day, 0, 0, 0, 0, time.UTC),
+		Source:       "manual",
+	}
+	if costBasis != nil {
+		cb := decimal.NewFromInt(*costBasis)
+		in.CostBasis = &cb
+	}
+	if marketValue != nil {
+		mv := decimal.NewFromInt(*marketValue)
+		in.MarketValue = &mv
+	}
+	if _, err := svc.Create(context.Background(), userID, in); err != nil {
+		t.Fatalf("seed %s: %v", ticker, err)
+	}
+}
+
+func intPtr(v int64) *int64   { return &v }
+func strPtr(s string) *string { return &s }
+
+func TestInvestmentService_PortfolioSummary_EmptyReturnsZeros(t *testing.T) {
+	svc, userID, _, _ := newInvestmentSvc(t)
+
+	got, err := svc.PortfolioSummary(context.Background(), userID)
+	if err != nil {
+		t.Fatalf("summary: %v", err)
+	}
+	if !got.TotalMarketValue.IsZero() || !got.TotalCostBasis.IsZero() {
+		t.Errorf("expected zero totals, got mv=%s cb=%s", got.TotalMarketValue, got.TotalCostBasis)
+	}
+	if got.TotalUnrealizedGainLoss != nil {
+		t.Errorf("expected nil G/L on empty portfolio, got %s", *got.TotalUnrealizedGainLoss)
+	}
+	if got.HoldingsCount != 0 {
+		t.Errorf("HoldingsCount = %d, want 0", got.HoldingsCount)
+	}
+	if len(got.ByAssetClass) != 0 {
+		t.Errorf("ByAssetClass = %v, want empty", got.ByAssetClass)
+	}
+}
+
+func TestInvestmentService_PortfolioSummary_TotalsAndAllocation(t *testing.T) {
+	svc, userID, accountID, g := newInvestmentSvc(t)
+
+	// VTI: cost=100, mv=150 (stock)
+	portfolioCreate(t, svc, userID, accountID, "VTI", 10, intPtr(100), intPtr(150), strPtr("stock"), 1)
+	// BND: cost=50, mv=40 (bond) — unrealized loss
+	portfolioCreate(t, svc, userID, accountID, "BND", 5, intPtr(50), intPtr(40), strPtr("bond"), 1)
+	// AAPL: cost null, mv=210 (stock) — partial data
+	portfolioCreate(t, svc, userID, accountID, "AAPL", 3, nil, intPtr(210), strPtr("stock"), 1)
+	// BTC: no asset class, no cost basis, no market value (just held)
+	portfolioCreate(t, svc, userID, accountID, "BTC", 1, nil, nil, nil, 1)
+	// Closed position — quantity zero. The service rejects zero on Create,
+	// but Plaid/CSV imports could land one directly; insert via GORM to
+	// exercise the "exclude closed positions" branch.
+	cb := decimal.NewFromInt(999)
+	mv := decimal.NewFromInt(999)
+	ac := "stock"
+	closed := &model.Investment{
+		UserID:       userID,
+		AccountID:    accountID,
+		Ticker:       "GME",
+		AssetClass:   &ac,
+		Quantity:     decimal.Zero,
+		CostBasis:    &cb,
+		MarketValue:  &mv,
+		SnapshotDate: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+		Source:       "manual",
+	}
+	if err := g.Create(closed).Error; err != nil {
+		t.Fatalf("seed closed position: %v", err)
+	}
+
+	got, err := svc.PortfolioSummary(context.Background(), userID)
+	if err != nil {
+		t.Fatalf("summary: %v", err)
+	}
+
+	// HoldingsCount excludes the zero-quantity holding.
+	if got.HoldingsCount != 4 {
+		t.Errorf("HoldingsCount = %d, want 4", got.HoldingsCount)
+	}
+	// TotalMarketValue = 150 + 40 + 210 = 400 (BTC mv null adds 0)
+	if !got.TotalMarketValue.Equal(decimal.NewFromInt(400)) {
+		t.Errorf("TotalMarketValue = %s, want 400", got.TotalMarketValue)
+	}
+	// TotalCostBasis = 100 + 50 = 150 (AAPL/BTC excluded — nil)
+	if !got.TotalCostBasis.Equal(decimal.NewFromInt(150)) {
+		t.Errorf("TotalCostBasis = %s, want 150", got.TotalCostBasis)
+	}
+	// TotalUnrealizedGainLoss only sums holdings with both mv and cb:
+	//   VTI: 150-100=50; BND: 40-50=-10  → 40
+	if got.TotalUnrealizedGainLoss == nil {
+		t.Fatalf("TotalUnrealizedGainLoss nil, want 40")
+	}
+	if !got.TotalUnrealizedGainLoss.Equal(decimal.NewFromInt(40)) {
+		t.Errorf("TotalUnrealizedGainLoss = %s, want 40", *got.TotalUnrealizedGainLoss)
+	}
+
+	// Allocation: stock=360 (90%), bond=40 (10%), Unclassified=0 (0%).
+	byClass := map[string]service.AssetClassAllocation{}
+	for _, a := range got.ByAssetClass {
+		byClass[a.AssetClass] = a
+	}
+	if got, want := byClass["stock"].MarketValue, decimal.NewFromInt(360); !got.Equal(want) {
+		t.Errorf("stock mv = %s, want %s", got, want)
+	}
+	if got, want := byClass["stock"].WeightPct, decimal.NewFromInt(90); !got.Equal(want) {
+		t.Errorf("stock weight = %s, want 90", got)
+	}
+	if got, want := byClass["bond"].MarketValue, decimal.NewFromInt(40); !got.Equal(want) {
+		t.Errorf("bond mv = %s, want %s", got, want)
+	}
+	if got, want := byClass["bond"].WeightPct, decimal.NewFromInt(10); !got.Equal(want) {
+		t.Errorf("bond weight = %s, want 10", got)
+	}
+	// BTC contributed 0 to mv so Unclassified bucket has 0 mv but is still
+	// present (it has a non-null aggregate from the loop).
+	if a, ok := byClass["Unclassified"]; !ok {
+		t.Errorf("expected Unclassified bucket present, got %v", got.ByAssetClass)
+	} else if !a.MarketValue.IsZero() || !a.WeightPct.IsZero() {
+		t.Errorf("Unclassified = %+v, want zero mv + zero weight", a)
+	}
+
+	// Weights for non-zero classes sum to ~100%.
+	sumWeight := decimal.Zero
+	for _, a := range got.ByAssetClass {
+		sumWeight = sumWeight.Add(a.WeightPct)
+	}
+	if !sumWeight.Equal(decimal.NewFromInt(100)) {
+		t.Errorf("weight sum = %s, want 100", sumWeight)
+	}
+}
+
+func TestInvestmentService_PortfolioSummary_GainLossNilWhenNoOverlap(t *testing.T) {
+	// All holdings have either cost OR market value but never both — G/L
+	// can't be computed, so it should be nil rather than 0.
+	svc, userID, accountID, _ := newInvestmentSvc(t)
+	portfolioCreate(t, svc, userID, accountID, "AAPL", 1, intPtr(100), nil, strPtr("stock"), 1)
+	portfolioCreate(t, svc, userID, accountID, "VTI", 1, nil, intPtr(200), strPtr("stock"), 1)
+
+	got, err := svc.PortfolioSummary(context.Background(), userID)
+	if err != nil {
+		t.Fatalf("summary: %v", err)
+	}
+	if got.TotalUnrealizedGainLoss != nil {
+		t.Errorf("TotalUnrealizedGainLoss = %s, want nil (no holding has both fields)", *got.TotalUnrealizedGainLoss)
+	}
+}
+
+func TestInvestmentService_PortfolioSummary_MultiTenant(t *testing.T) {
+	svc, userA, accountA, g := newInvestmentSvc(t)
+	portfolioCreate(t, svc, userA, accountA, "VTI", 10, intPtr(100), intPtr(150), strPtr("stock"), 1)
+
+	userB := seedTestUser(t, g)
+	acctB := &model.Account{
+		UserID: userB, Name: "InvFixture-B-" + time.Now().Format("150405.000000"),
+		InstitutionSlug: "fixture", AccountType: "investment", Currency: "USD",
+	}
+	if err := g.Create(acctB).Error; err != nil {
+		t.Fatalf("seed acct B: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("user_id = ?", userB).Delete(&model.Investment{})
+		g.Unscoped().Delete(&model.Account{}, acctB.ID)
+	})
+
+	got, err := svc.PortfolioSummary(context.Background(), userB)
+	if err != nil {
+		t.Fatalf("summary user B: %v", err)
+	}
+	if got.HoldingsCount != 0 || !got.TotalMarketValue.IsZero() {
+		t.Errorf("user B saw user A's data: %+v", got)
+	}
+}
+
 // TestInvestmentService_MultiTenant_ReadIsolation verifies that one user
 // cannot see another user's snapshots — neither via GetByID, ListLatest, nor
 // ListSnapshots.

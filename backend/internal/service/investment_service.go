@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -134,4 +135,108 @@ func (s *InvestmentService) ListSnapshots(ctx context.Context, userID, accountID
 		return nil, fmt.Errorf("validate account: %w", err)
 	}
 	return s.repo.ListSnapshotsByHolding(ctx, userID, accountID, ticker)
+}
+
+// AssetClassAllocation is one slice of the portfolio donut.
+type AssetClassAllocation struct {
+	AssetClass  string          `json:"asset_class"`
+	MarketValue decimal.Decimal `json:"market_value"`
+	// WeightPct is the holding's share of TotalMarketValue, 0–100, with two
+	// decimal places. Always a percent, never a fraction.
+	WeightPct decimal.Decimal `json:"weight_pct"`
+}
+
+// PortfolioSummary is the response for GET /investments/portfolio.
+// Totals are computed off the latest snapshot per (account_id, ticker)
+// with quantity > 0. CostBasis nulls are excluded from TotalCostBasis;
+// TotalUnrealizedGainLoss is nil unless at least one holding has both
+// market_value and cost_basis populated.
+type PortfolioSummary struct {
+	TotalMarketValue        decimal.Decimal        `json:"total_market_value"`
+	TotalCostBasis          decimal.Decimal        `json:"total_cost_basis"`
+	TotalUnrealizedGainLoss *decimal.Decimal       `json:"total_unrealized_gain_loss"`
+	HoldingsCount           int                    `json:"holdings_count"`
+	ByAssetClass            []AssetClassAllocation `json:"by_asset_class"`
+}
+
+// PortfolioSummary computes per-user totals + asset-class allocation from
+// the latest snapshot per holding. Holdings with quantity == 0 are
+// dropped (closed positions whose history is preserved but that don't
+// belong in the live portfolio view).
+func (s *InvestmentService) PortfolioSummary(ctx context.Context, userID int64) (*PortfolioSummary, error) {
+	holdings, err := s.repo.ListLatestPerHolding(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list latest: %w", err)
+	}
+
+	out := &PortfolioSummary{
+		TotalMarketValue: decimal.Zero,
+		TotalCostBasis:   decimal.Zero,
+		ByAssetClass:     []AssetClassAllocation{},
+	}
+
+	byClass := map[string]decimal.Decimal{}
+	gainLossAccum := decimal.Zero
+	gainLossPresent := false
+
+	for _, h := range holdings {
+		if h.Quantity.IsZero() {
+			continue
+		}
+		out.HoldingsCount++
+
+		mv := decimal.Zero
+		if h.MarketValue != nil {
+			mv = *h.MarketValue
+			out.TotalMarketValue = out.TotalMarketValue.Add(mv)
+		}
+		if h.CostBasis != nil {
+			out.TotalCostBasis = out.TotalCostBasis.Add(*h.CostBasis)
+		}
+		if h.MarketValue != nil && h.CostBasis != nil {
+			gainLossAccum = gainLossAccum.Add(h.MarketValue.Sub(*h.CostBasis))
+			gainLossPresent = true
+		}
+
+		class := "Unclassified"
+		if h.AssetClass != nil && strings.TrimSpace(*h.AssetClass) != "" {
+			class = strings.TrimSpace(*h.AssetClass)
+		}
+		byClass[class] = byClass[class].Add(mv)
+	}
+
+	if gainLossPresent {
+		gl := gainLossAccum
+		out.TotalUnrealizedGainLoss = &gl
+	}
+
+	// Stable, deterministic order: descending by market value, ties broken
+	// by class name. Makes API + tests predictable.
+	classes := make([]string, 0, len(byClass))
+	for k := range byClass {
+		classes = append(classes, k)
+	}
+	sort.Slice(classes, func(i, j int) bool {
+		ci, cj := byClass[classes[i]], byClass[classes[j]]
+		if !ci.Equal(cj) {
+			return ci.GreaterThan(cj)
+		}
+		return classes[i] < classes[j]
+	})
+
+	hundred := decimal.NewFromInt(100)
+	for _, c := range classes {
+		mv := byClass[c]
+		weight := decimal.Zero
+		if !out.TotalMarketValue.IsZero() {
+			weight = mv.Div(out.TotalMarketValue).Mul(hundred).Round(2)
+		}
+		out.ByAssetClass = append(out.ByAssetClass, AssetClassAllocation{
+			AssetClass:  c,
+			MarketValue: mv,
+			WeightPct:   weight,
+		})
+	}
+
+	return out, nil
 }
