@@ -161,6 +161,31 @@ type PortfolioSummary struct {
 	TotalUnrealizedGainLoss *decimal.Decimal       `json:"total_unrealized_gain_loss"`
 	HoldingsCount           int                    `json:"holdings_count"`
 	ByAssetClass            []AssetClassAllocation `json:"by_asset_class"`
+	// RecentChange tracks the most-recent snapshot delta — the wireframe
+	// calls this "today's P&L". Without a live price feed we measure
+	// "today" as "between the two most recent snapshot dates per
+	// holding". Nil when no holding has two snapshots to compare.
+	RecentChange *RecentChange `json:"recent_change,omitempty"`
+}
+
+// RecentChange is the per-holding rollup of the latest-vs-prior snapshot
+// pair. Holdings with only one snapshot contribute nothing.
+type RecentChange struct {
+	// Delta is the sum of (latest.market_value - prior.market_value)
+	// across holdings that have both snapshots.
+	Delta decimal.Decimal `json:"delta"`
+	// HoldingsCompared is how many holdings the delta is computed across.
+	HoldingsCompared int `json:"holdings_compared"`
+	// Up / Down / Flat counts give the wireframe's "X of Y up" line.
+	Up   int `json:"up"`
+	Down int `json:"down"`
+	Flat int `json:"flat"`
+	// LatestDate / PriorDate are the canonical labels — the max() of
+	// each side across all paired holdings. Different holdings may have
+	// different snapshot dates; this picks the most-recent one on each
+	// side so the UI can label the period honestly.
+	LatestDate time.Time `json:"latest_date"`
+	PriorDate  time.Time `json:"prior_date"`
 }
 
 // PortfolioSummary computes per-user totals + asset-class allocation from
@@ -242,7 +267,71 @@ func (s *InvestmentService) PortfolioSummary(ctx context.Context, userID int64) 
 		})
 	}
 
+	// Recent-change is best-effort: a query failure here shouldn't fail
+	// the whole summary endpoint. The dashboard tile renders "—" when
+	// RecentChange is nil.
+	if rc, err := s.recentChange(ctx, userID); err == nil {
+		out.RecentChange = rc
+	}
+
 	return out, nil
+}
+
+// recentChange pairs each holding's two most-recent snapshots (when both
+// exist) and sums the deltas. Holdings with only one snapshot contribute
+// nothing — same as holdings with quantity == 0 (excluded). Returns nil
+// when no holding has a pair to compare.
+func (s *InvestmentService) recentChange(ctx context.Context, userID int64) (*RecentChange, error) {
+	pairs, err := s.repo.ListLatestPairPerHolding(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list pairs: %w", err)
+	}
+	rc := &RecentChange{Delta: decimal.Zero}
+	// Pairs come ordered (account_id, ticker, date DESC) — every odd row
+	// is the latest, every even row (when present) is the prior.
+	for i := 0; i < len(pairs); {
+		latest := &pairs[i]
+		// Find the matching prior (same account_id + ticker, next row).
+		var prior *model.Investment
+		if i+1 < len(pairs) &&
+			pairs[i+1].AccountID == latest.AccountID &&
+			strings.EqualFold(pairs[i+1].Ticker, latest.Ticker) {
+			prior = &pairs[i+1]
+			i += 2
+		} else {
+			i++
+		}
+		if prior == nil {
+			continue // single-snapshot holding
+		}
+		if latest.Quantity.IsZero() {
+			continue // closed position
+		}
+		if latest.MarketValue == nil || prior.MarketValue == nil {
+			continue // no MV on one side → can't measure
+		}
+		d := latest.MarketValue.Sub(*prior.MarketValue)
+		rc.Delta = rc.Delta.Add(d)
+		rc.HoldingsCompared++
+		switch {
+		case d.IsPositive():
+			rc.Up++
+		case d.IsNegative():
+			rc.Down++
+		default:
+			rc.Flat++
+		}
+		if latest.SnapshotDate.After(rc.LatestDate) {
+			rc.LatestDate = latest.SnapshotDate
+		}
+		if prior.SnapshotDate.After(rc.PriorDate) {
+			rc.PriorDate = prior.SnapshotDate
+		}
+	}
+	if rc.HoldingsCompared == 0 {
+		return nil, nil
+	}
+	return rc, nil
 }
 
 // ImportResult mirrors the JSON contract for the CSV import endpoint.

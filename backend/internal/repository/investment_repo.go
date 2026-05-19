@@ -22,6 +22,12 @@ type InvestmentRepository interface {
 	// (account_id, ticker) pair belonging to the user. One Postgres query
 	// via DISTINCT ON.
 	ListLatestPerHolding(ctx context.Context, userID int64) ([]model.Investment, error)
+	// ListLatestPairPerHolding returns up to two snapshots per
+	// (account_id, ticker) — the most recent and the most recent prior
+	// — for every holding. Used by the recent-P&L computation. Result is
+	// ordered by (account_id, ticker, snapshot_date DESC, id DESC) so the
+	// service can iterate and pair consecutive rows.
+	ListLatestPairPerHolding(ctx context.Context, userID int64) ([]model.Investment, error)
 	// ListSnapshotsByHolding returns every snapshot for a single
 	// (user_id, account_id, ticker), oldest first. ticker matching is
 	// case-insensitive (we always store uppercase, but defend against
@@ -69,6 +75,33 @@ func (r *investmentRepo) ListLatestPerHolding(ctx context.Context, userID int64)
 			ORDER BY account_id, ticker, snapshot_date DESC, id DESC
 		) latest
 		ORDER BY account_id, ticker
+	`, userID).Scan(&out).Error
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *investmentRepo) ListLatestPairPerHolding(ctx context.Context, userID int64) ([]model.Investment, error) {
+	// Window function picks the two newest snapshots per holding.
+	// Single query — paired-rows pattern via ROW_NUMBER beats two
+	// separate DISTINCT ON queries that would have to be zipped in Go.
+	var out []model.Investment
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT id, user_id, account_id, ticker, name, asset_class,
+		       quantity, cost_basis, market_value,
+		       snapshot_date, source, created_at
+		FROM (
+			SELECT *,
+			       ROW_NUMBER() OVER (
+			           PARTITION BY account_id, ticker
+			           ORDER BY snapshot_date DESC, id DESC
+			       ) AS rn
+			FROM investments
+			WHERE user_id = ?
+		) ranked
+		WHERE rn <= 2
+		ORDER BY account_id, ticker, snapshot_date DESC, id DESC
 	`, userID).Scan(&out).Error
 	if err != nil {
 		return nil, err
