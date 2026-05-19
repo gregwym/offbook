@@ -33,6 +33,11 @@ type HouseholdMemberRepository interface {
 	GetMembershipForUser(ctx context.Context, userID int64) (*model.HouseholdMember, error)
 	// ListActive returns all active members of a household. Order: role then id.
 	ListActive(ctx context.Context, householdID int64) ([]model.HouseholdMember, error)
+	// ListIncludingLeft returns active + in-grace members of a household
+	// (purged rows excluded). Used by the members page so owners can see
+	// who recently left without inspecting the audit log. Same ordering
+	// as ListActive: role then id.
+	ListIncludingLeft(ctx context.Context, householdID int64) ([]model.HouseholdMember, error)
 	// CountActiveOwners reports how many owners are still active (left_at IS NULL
 	// AND purged_at IS NULL). Used to enforce the LAST_OWNER guard.
 	CountActiveOwners(ctx context.Context, householdID int64) (int64, error)
@@ -41,6 +46,8 @@ type HouseholdMemberRepository interface {
 	MarkLeft(ctx context.Context, id int64, at time.Time) error
 	// ClearLeft re-activates a not-yet-purged row by zeroing left_at.
 	ClearLeft(ctx context.Context, id int64) error
+	// UpdateRole changes the role on an active membership row.
+	UpdateRole(ctx context.Context, id int64, role string) error
 }
 
 // HouseholdInviteRepository persists invite tokens. Tokens are HMAC-hashed by
@@ -169,6 +176,29 @@ func (r *householdMemberRepo) ListActive(ctx context.Context, householdID int64)
 		Order("CASE role WHEN 'owner' THEN 0 WHEN 'contributor' THEN 1 ELSE 2 END, id").
 		Find(&out).Error
 	return out, err
+}
+
+func (r *householdMemberRepo) ListIncludingLeft(ctx context.Context, householdID int64) ([]model.HouseholdMember, error) {
+	var out []model.HouseholdMember
+	err := r.db.WithContext(ctx).
+		Where("household_id = ? AND purged_at IS NULL", householdID).
+		Order("CASE role WHEN 'owner' THEN 0 WHEN 'contributor' THEN 1 ELSE 2 END, id").
+		Find(&out).Error
+	return out, err
+}
+
+func (r *householdMemberRepo) UpdateRole(ctx context.Context, id int64, role string) error {
+	res := r.db.WithContext(ctx).
+		Model(&model.HouseholdMember{}).
+		Where("id = ? AND left_at IS NULL AND purged_at IS NULL", id).
+		Update("role", role)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *householdMemberRepo) CountActiveOwners(ctx context.Context, householdID int64) (int64, error) {

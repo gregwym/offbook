@@ -386,6 +386,133 @@ func (s *Service) Leave(ctx context.Context, userID, householdID int64) error {
 	return nil
 }
 
+// MembersListing pairs the active and in-grace member lists. The in-grace
+// list is empty when the caller didn't request it (the handler decides
+// based on the include= query param).
+type MembersListing struct {
+	Active  []model.HouseholdMember `json:"active"`
+	InGrace []model.HouseholdMember `json:"in_grace"`
+}
+
+// ListMembers returns the household's members. Active members always; in-grace
+// only when includeInGrace is true. Member-only.
+func (s *Service) ListMembers(ctx context.Context, userID, householdID int64, includeInGrace bool) (*MembersListing, error) {
+	if _, err := s.members.GetActive(ctx, householdID, userID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrNotMember
+		}
+		return nil, err
+	}
+	if !includeInGrace {
+		active, err := s.members.ListActive(ctx, householdID)
+		if err != nil {
+			return nil, fmt.Errorf("list active: %w", err)
+		}
+		return &MembersListing{Active: active}, nil
+	}
+	all, err := s.members.ListIncludingLeft(ctx, householdID)
+	if err != nil {
+		return nil, fmt.Errorf("list members: %w", err)
+	}
+	out := &MembersListing{}
+	for _, m := range all {
+		if m.LeftAt == nil {
+			out.Active = append(out.Active, m)
+		} else {
+			out.InGrace = append(out.InGrace, m)
+		}
+	}
+	return out, nil
+}
+
+// UpdateMemberRole changes the role of a member. Owner-only. The last
+// active owner cannot demote themselves AND the caller cannot demote their
+// own row through this endpoint (use ownership-transfer for that — tracked
+// in #152). For now we disallow self-modification entirely to keep the
+// surface unambiguous.
+func (s *Service) UpdateMemberRole(ctx context.Context, userID, householdID, targetUserID int64, role string) (*model.HouseholdMember, error) {
+	if err := s.requireOwner(ctx, userID, householdID); err != nil {
+		return nil, err
+	}
+	role = strings.TrimSpace(role)
+	if !isValidRole(role) {
+		return nil, ErrInvalidRole
+	}
+	if targetUserID == userID {
+		return nil, ErrCannotModifySelf
+	}
+	target, err := s.members.GetActive(ctx, householdID, targetUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrMemberNotFound
+		}
+		return nil, err
+	}
+	// If we're demoting the only remaining owner besides the caller, the
+	// caller would become the sole owner — that's the steady state already.
+	// But if the target is currently an owner and we're demoting them, count
+	// owners to ensure we don't drop below 1.
+	if target.Role == model.RoleOwner && role != model.RoleOwner {
+		n, err := s.members.CountActiveOwners(ctx, householdID)
+		if err != nil {
+			return nil, fmt.Errorf("count owners: %w", err)
+		}
+		if n <= 1 {
+			return nil, ErrLastOwner
+		}
+	}
+	if err := s.members.UpdateRole(ctx, target.ID, role); err != nil {
+		return nil, fmt.Errorf("update role: %w", err)
+	}
+	target.Role = role
+	return target, nil
+}
+
+// RemoveMember kicks a member from the household. Owner-only. Sets
+// left_at, enters grace (matching the lifecycle from voluntary leave so the
+// purge runner cleans up on the same schedule). The last active owner
+// cannot be removed; the caller cannot remove themselves through this
+// endpoint (use Leave).
+func (s *Service) RemoveMember(ctx context.Context, userID, householdID, targetUserID int64) error {
+	if err := s.requireOwner(ctx, userID, householdID); err != nil {
+		return err
+	}
+	if targetUserID == userID {
+		return ErrCannotModifySelf
+	}
+	target, err := s.members.GetActive(ctx, householdID, targetUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrMemberNotFound
+		}
+		return err
+	}
+	if target.Role == model.RoleOwner {
+		// Defense in depth: shouldn't happen given the at-most-one-owner
+		// invariant + the self-skip above, but cheap to verify.
+		n, err := s.members.CountActiveOwners(ctx, householdID)
+		if err != nil {
+			return fmt.Errorf("count owners: %w", err)
+		}
+		if n <= 1 {
+			return ErrLastOwner
+		}
+	}
+	if err := s.members.MarkLeft(ctx, target.ID, s.now()); err != nil {
+		return fmt.Errorf("mark left: %w", err)
+	}
+	return nil
+}
+
+// isValidRole is a string allowlist for the three documented roles.
+func isValidRole(r string) bool {
+	switch r {
+	case model.RoleOwner, model.RoleContributor, model.RoleViewOnly:
+		return true
+	}
+	return false
+}
+
 // --- Account shares ---
 
 // ListShares returns active shares for an account. Account-owner only.

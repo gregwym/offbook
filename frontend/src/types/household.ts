@@ -29,6 +29,13 @@ export type HouseholdDetail = {
   role: HouseholdRole // requester's role in this household
 }
 
+// MembersListing mirrors service/household.MembersListing — the listing
+// endpoint returns active members + (optionally) in-grace members.
+export type MembersListing = {
+  active: HouseholdMember[]
+  in_grace?: HouseholdMember[] | null
+}
+
 export type HouseholdInvite = {
   id: number
   household_id: number

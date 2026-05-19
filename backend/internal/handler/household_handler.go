@@ -39,6 +39,9 @@ func (h *HouseholdHandler) Register(g *gin.RouterGroup) {
 	g.POST("/households/:id/invites", h.CreateInvite)
 	g.POST("/invites/:token/accept", h.AcceptInvite)
 	g.DELETE("/households/:id/members/me", h.LeaveSelf)
+	g.GET("/households/:id/members", h.ListMembers)
+	g.PATCH("/households/:id/members/:userID", h.UpdateMemberRole)
+	g.DELETE("/households/:id/members/:userID", h.RemoveMember)
 
 	g.GET("/accounts/:id/shares", h.ListShares)
 	g.PUT("/accounts/:id/shares/:householdID", h.SetShare)
@@ -62,6 +65,10 @@ type createInviteRequest struct {
 
 type setShareRequest struct {
 	Visibility string `json:"visibility"`
+}
+
+type updateMemberRoleRequest struct {
+	Role string `json:"role"`
 }
 
 // --- handlers ---
@@ -171,6 +178,60 @@ func (h *HouseholdHandler) LeaveSelf(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (h *HouseholdHandler) ListMembers(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	include := c.Query("include") == "in_grace"
+	listing, err := h.svc.ListMembers(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, include)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": listing})
+}
+
+func (h *HouseholdHandler) UpdateMemberRole(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	targetUserID, err := strconv.ParseInt(c.Param("userID"), 10, 64)
+	if err != nil || targetUserID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "userID must be a positive integer", "code": "INVALID_REQUEST"})
+		return
+	}
+	var req updateMemberRoleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	mem, err := h.svc.UpdateMemberRole(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, targetUserID, req.Role)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": mem})
+}
+
+func (h *HouseholdHandler) RemoveMember(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	targetUserID, err := strconv.ParseInt(c.Param("userID"), 10, 64)
+	if err != nil || targetUserID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "userID must be a positive integer", "code": "INVALID_REQUEST"})
+		return
+	}
+	if err := h.svc.RemoveMember(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, targetUserID); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (h *HouseholdHandler) ListShares(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {
@@ -226,6 +287,10 @@ func (h *HouseholdHandler) writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "code": "FORBIDDEN"})
 	case errors.Is(err, household.ErrLastOwner):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "LAST_OWNER"})
+	case errors.Is(err, household.ErrCannotModifySelf):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "CANNOT_MODIFY_SELF"})
+	case errors.Is(err, household.ErrMemberNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error(), "code": "MEMBER_NOT_FOUND"})
 	case errors.Is(err, household.ErrAlreadyMember):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "ALREADY_MEMBER"})
 	case errors.Is(err, household.ErrInviteAlreadyAccepted):

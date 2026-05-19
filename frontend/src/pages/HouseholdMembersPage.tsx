@@ -1,20 +1,59 @@
-import { useEffect, useState } from 'react'
-import { Check, Copy, Mail, Users } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Check, Copy, Mail, Trash2, Users } from 'lucide-react'
+import {
+  createInvite,
+  listMembers,
+  removeMember,
+  updateMemberRole,
+} from '../api/households'
 import { useAuthStore } from '../store/authStore'
 import { useHouseholdStore } from '../store/householdStore'
 import { useScopeStore } from '../store/scopeStore'
-import type { HouseholdRole } from '../types/household'
+import type {
+  CreateInviteResult,
+  HouseholdMember,
+  HouseholdRole,
+  MembersListing,
+} from '../types/household'
+
+const ROLE_LABELS: Record<HouseholdRole, string> = {
+  owner: 'Owner',
+  contributor: 'Contributor',
+  view_only: 'View-only',
+}
+
+const ROLE_STYLES: Record<HouseholdRole, string> = {
+  owner: 'bg-indigo-100 text-indigo-800',
+  contributor: 'bg-emerald-100 text-emerald-800',
+  view_only: 'bg-gray-100 text-gray-700',
+}
 
 export function HouseholdMembersPage() {
   const { householdId } = useScopeStore()
   const meID = useAuthStore((s) => s.user?.id ?? null)
-  const { detail, loading, error, load, lastInvite, invite, clearInvite, clearError } =
-    useHouseholdStore()
+  const { detail, loading, error, load, clearError } = useHouseholdStore()
+  const [listing, setListing] = useState<MembersListing | null>(null)
+  const [listError, setListError] = useState<string | null>(null)
   const [inviting, setInviting] = useState(false)
+  const [lastInvite, setLastInvite] = useState<CreateInviteResult | null>(null)
+  const [busyUserID, setBusyUserID] = useState<number | null>(null)
+
+  const reloadListing = useCallback(() => {
+    if (householdId == null) return Promise.resolve()
+    return listMembers(householdId, true)
+      .then((res) => {
+        setListing(res)
+        setListError(null)
+      })
+      .catch((e: unknown) => setListError(errMsg(e)))
+  }, [householdId])
 
   useEffect(() => {
-    if (householdId != null) void load(householdId)
-  }, [householdId, load])
+    if (householdId != null) {
+      void load(householdId)
+      void reloadListing()
+    }
+  }, [householdId, load, reloadListing])
 
   if (householdId == null) {
     return (
@@ -43,6 +82,43 @@ export function HouseholdMembersPage() {
   }
 
   const isOwner = detail.role === 'owner'
+  const active = listing?.active ?? []
+  const inGrace = listing?.in_grace ?? []
+
+  const handleMintInvite = async (role: HouseholdRole) => {
+    const res = await createInvite(householdId, role)
+    setLastInvite(res)
+    // Also surfaces in /h/dashboard via reload.
+    return res
+  }
+
+  const handleRoleChange = async (member: HouseholdMember, role: HouseholdRole) => {
+    if (role === member.role) return
+    setBusyUserID(member.user_id)
+    setListError(null)
+    try {
+      await updateMemberRole(householdId, member.user_id, role)
+      await reloadListing()
+    } catch (e) {
+      setListError(errMsg(e))
+    } finally {
+      setBusyUserID(null)
+    }
+  }
+
+  const handleRemove = async (member: HouseholdMember) => {
+    if (!window.confirm(`Remove member #${member.user_id}? They enter the grace window and can rejoin via a fresh invite.`)) return
+    setBusyUserID(member.user_id)
+    setListError(null)
+    try {
+      await removeMember(householdId, member.user_id)
+      await reloadListing()
+    } catch (e) {
+      setListError(errMsg(e))
+    } finally {
+      setBusyUserID(null)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -50,14 +126,18 @@ export function HouseholdMembersPage() {
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">{detail.household.name}</h1>
           <p className="mt-1 text-sm text-gray-500">
-            {detail.members.length} member{detail.members.length === 1 ? '' : 's'} · grace period{' '}
+            {active.length} active member{active.length === 1 ? '' : 's'}
+            {inGrace.length > 0 ? ` · ${inGrace.length} in grace` : ''} · grace period{' '}
             {detail.household.grace_period_days} days
           </p>
         </div>
         {isOwner && (
           <button
             type="button"
-            onClick={() => setInviting(true)}
+            onClick={() => {
+              setInviting(true)
+              setLastInvite(null)
+            }}
             className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
           >
             <Mail size={16} /> Invite member
@@ -65,48 +145,64 @@ export function HouseholdMembersPage() {
         )}
       </div>
 
-      {error && (
+      {(error || listError) && (
         <div className="flex items-start justify-between rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          <span>{error}</span>
-          <button type="button" onClick={clearError} className="ml-3 text-red-600 hover:text-red-800">×</button>
+          <span>{listError || error}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setListError(null)
+              clearError()
+            }}
+            className="ml-3 text-red-600 hover:text-red-800"
+          >
+            ×
+          </button>
         </div>
       )}
 
-      <Section>
+      <Section title="Active members">
         <div className="divide-y divide-gray-100">
-          {detail.members.map((m) => (
-            <div key={m.id} className="flex items-center justify-between px-5 py-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-gray-900 truncate">User #{m.user_id}</span>
-                  {m.user_id === meID && (
-                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-700">you</span>
-                  )}
-                </div>
-                <div className="mt-0.5 text-xs text-gray-500">
-                  Joined {new Date(m.joined_at).toLocaleDateString()}
-                </div>
-              </div>
-              <RoleChip role={m.role} />
-            </div>
+          {active.map((m) => (
+            <MemberRow
+              key={m.id}
+              member={m}
+              isMe={m.user_id === meID}
+              isOwnerOfHousehold={isOwner}
+              busy={busyUserID === m.user_id}
+              onRoleChange={handleRoleChange}
+              onRemove={handleRemove}
+            />
           ))}
         </div>
       </Section>
 
-      <p className="text-xs text-gray-500">
-        Owner-side member moderation (change role, remove, in-grace listing) is tracked in #147
-        and lands when the backend endpoints exist.
-      </p>
+      {inGrace.length > 0 && (
+        <Section title={`In grace · ${inGrace.length}`}>
+          <div className="divide-y divide-gray-100">
+            {inGrace.map((m) => (
+              <div key={m.id} className="px-5 py-3 flex items-center justify-between">
+                <div className="min-w-0">
+                  <div className="font-medium text-gray-900">User #{m.user_id}</div>
+                  <div className="text-xs text-gray-500">
+                    Left {m.left_at ? new Date(m.left_at).toLocaleDateString() : 'recently'} ·
+                    can rejoin via a fresh invite within {detail.household.grace_period_days} days
+                  </div>
+                </div>
+                <RoleChip role={m.role} />
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
 
       {inviting && (
         <InviteModal
           onClose={() => {
             setInviting(false)
-            clearInvite()
+            setLastInvite(null)
           }}
-          onMint={async (role) => {
-            await invite(householdId, role)
-          }}
+          onMint={handleMintInvite}
           lastInvite={lastInvite}
         />
       )}
@@ -114,24 +210,84 @@ export function HouseholdMembersPage() {
   )
 }
 
-function Section({ children }: { children: React.ReactNode }) {
-  return <section className="rounded-lg border border-gray-200 bg-white">{children}</section>
+function MemberRow({
+  member,
+  isMe,
+  isOwnerOfHousehold,
+  busy,
+  onRoleChange,
+  onRemove,
+}: {
+  member: HouseholdMember
+  isMe: boolean
+  isOwnerOfHousehold: boolean
+  busy: boolean
+  onRoleChange: (m: HouseholdMember, role: HouseholdRole) => Promise<void>
+  onRemove: (m: HouseholdMember) => Promise<void>
+}) {
+  // Owner controls only appear for non-self rows. The backend rejects
+  // self-modification on these endpoints with `CANNOT_MODIFY_SELF`.
+  const showControls = isOwnerOfHousehold && !isMe
+
+  return (
+    <div className="flex items-center justify-between px-5 py-3">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="font-medium text-gray-900 truncate">User #{member.user_id}</span>
+          {isMe && (
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-700">you</span>
+          )}
+        </div>
+        <div className="mt-0.5 text-xs text-gray-500">
+          Joined {new Date(member.joined_at).toLocaleDateString()}
+        </div>
+      </div>
+      {showControls ? (
+        <div className="flex items-center gap-2">
+          <select
+            value={member.role}
+            disabled={busy}
+            onChange={(e) => void onRoleChange(member, e.target.value as HouseholdRole)}
+            className="rounded-md border border-gray-300 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+          >
+            <option value="owner">Owner</option>
+            <option value="contributor">Contributor</option>
+            <option value="view_only">View-only</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => void onRemove(member)}
+            disabled={busy}
+            aria-label="Remove member"
+            className="rounded-md border border-gray-300 px-2 py-1 text-gray-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      ) : (
+        <RoleChip role={member.role} />
+      )}
+    </div>
+  )
+}
+
+function Section({ title, children }: { title?: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white">
+      {title && (
+        <header className="border-b border-gray-200 px-5 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
+          {title}
+        </header>
+      )}
+      {children}
+    </section>
+  )
 }
 
 function RoleChip({ role }: { role: HouseholdRole }) {
-  const styles: Record<HouseholdRole, string> = {
-    owner: 'bg-indigo-100 text-indigo-800',
-    contributor: 'bg-emerald-100 text-emerald-800',
-    view_only: 'bg-gray-100 text-gray-700',
-  }
-  const labels: Record<HouseholdRole, string> = {
-    owner: 'Owner',
-    contributor: 'Contributor',
-    view_only: 'View-only',
-  }
   return (
-    <span className={['rounded-full px-2.5 py-1 text-xs font-medium', styles[role]].join(' ')}>
-      {labels[role]}
+    <span className={['rounded-full px-2.5 py-1 text-xs font-medium', ROLE_STYLES[role]].join(' ')}>
+      {ROLE_LABELS[role]}
     </span>
   )
 }
@@ -142,17 +298,21 @@ function InviteModal({
   lastInvite,
 }: {
   onClose: () => void
-  onMint: (role: HouseholdRole) => Promise<void>
-  lastInvite: ReturnType<typeof useHouseholdStore.getState>['lastInvite']
+  onMint: (role: HouseholdRole) => Promise<CreateInviteResult>
+  lastInvite: CreateInviteResult | null
 }) {
   const [role, setRole] = useState<HouseholdRole>('contributor')
   const [submitting, setSubmitting] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const mint = async () => {
     setSubmitting(true)
+    setError(null)
     try {
       await onMint(role)
+    } catch (e) {
+      setError(errMsg(e))
     } finally {
       setSubmitting(false)
     }
@@ -165,8 +325,7 @@ function InviteModal({
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1500)
     } catch {
-      // Clipboard API can fail in non-secure contexts — operator can still
-      // select + copy manually.
+      // Clipboard API unavailable in non-secure contexts — manual select still works.
     }
   }
 
@@ -199,9 +358,12 @@ function InviteModal({
                 </select>
               </label>
               <p className="text-xs text-gray-500">
-                Mints a one-time token. Share it with the invitee — they sign in and accept the
-                invite to join.
+                Mints a one-time token. Share it with the invitee — they accept on /signup (invite-only
+                instances) or via the household-join modal in the scope picker.
               </p>
+              {error && (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>
+              )}
             </>
           )}
 
@@ -209,8 +371,8 @@ function InviteModal({
             <div className="space-y-2">
               <div className="text-sm font-medium text-gray-800">Invite created!</div>
               <p className="text-xs text-gray-500">
-                Share this token with the invitee. They sign in and accept it (the household-join
-                modal from #144 will handle this in-app).
+                Share this token. Brand-new users sign up at /signup with it; existing users can
+                accept via the household-join modal in the scope picker.
               </p>
               <div className="flex items-center gap-2">
                 <code className="flex-1 rounded bg-gray-50 px-2 py-1.5 font-mono text-xs text-gray-800 break-all">
@@ -253,4 +415,13 @@ function InviteModal({
       </div>
     </div>
   )
+}
+
+function errMsg(err: unknown): string {
+  if (err && typeof err === 'object' && 'response' in err) {
+    const r = (err as { response?: { data?: { error?: string } } }).response
+    if (r?.data?.error) return r.data.error
+  }
+  if (err instanceof Error) return err.message
+  return 'request failed'
 }

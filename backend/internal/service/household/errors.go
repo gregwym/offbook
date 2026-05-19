@@ -21,4 +21,6 @@ var (
 	ErrLastOwner        = errors.New("cannot leave: you are the last owner")
 	ErrAccountNotOwned  = errors.New("account does not belong to user")
 	ErrInstanceNotReady = errors.New("instance not configured")
+	ErrCannotModifySelf = errors.New("cannot modify your own membership through owner actions; use Leave")
+	ErrMemberNotFound   = errors.New("member not found in this household")
 )
