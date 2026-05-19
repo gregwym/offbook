@@ -188,8 +188,8 @@ function PortfolioTiles({
     )
   }
   if (!portfolio) return null
-  const gl = portfolio.total_unrealized_gain_loss
-  const glNegative = gl !== null && gl.trim().startsWith('-')
+  const rc = portfolio.recent_change ?? null
+  const rcNegative = rc !== null && rc.delta.trim().startsWith('-')
   return (
     <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
       <Tile label="Total value">
@@ -198,14 +198,20 @@ function PortfolioTiles({
       <Tile label="Cost basis">
         <AmountDisplay amount={portfolio.total_cost_basis} currency="USD" />
       </Tile>
-      <Tile label="Unrealized G/L">
-        {gl === null ? (
+      {/* Recent change replaces the wireframe's "today's P&L" tile. We
+          measure "today" as "between the two most recent snapshot dates"
+          since there is no live price feed yet — see #122. */}
+      <Tile
+        label={rc ? recentLabel(rc) : "Recent change"}
+        subtitle={rc ? `${rc.up} of ${rc.holdings_compared} up` : 'one snapshot only'}
+      >
+        {rc === null ? (
           <span className="text-gray-400">—</span>
         ) : (
           <AmountDisplay
-            amount={gl}
+            amount={rc.delta}
             currency="USD"
-            className={glNegative ? 'text-red-700' : 'text-emerald-700'}
+            className={rcNegative ? 'text-red-700' : 'text-emerald-700'}
           />
         )}
       </Tile>
@@ -213,11 +219,30 @@ function PortfolioTiles({
   )
 }
 
-function Tile({ label, children }: { label: string; children: ReactNode }) {
+// recentLabel formats the latest/prior date pair as a compact tile label.
+// When the dates are the same day (rare — multiple snapshots stamped the
+// same date), fall back to a single date.
+function recentLabel(rc: import('../types/investment').RecentChange): string {
+  const latest = rc.latest_date.slice(0, 10)
+  const prior = rc.prior_date.slice(0, 10)
+  if (latest === prior) return `Change · ${latest}`
+  return `Change · ${prior} → ${latest}`
+}
+
+function Tile({
+  label,
+  children,
+  subtitle,
+}: {
+  label: string
+  children: ReactNode
+  subtitle?: string
+}) {
   return (
     <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
       <p className="text-xs font-medium uppercase tracking-wide text-gray-500">{label}</p>
       <p className="mt-1 text-lg font-semibold">{children}</p>
+      {subtitle && <p className="mt-0.5 text-[11px] text-gray-500">{subtitle}</p>}
     </div>
   )
 }

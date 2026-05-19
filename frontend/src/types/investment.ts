@@ -35,6 +35,18 @@ export type AssetClassAllocation = {
   weight_pct: string
 }
 
+// Mirrors backend service.RecentChange. Null on the response when no
+// holding has two snapshots to compare.
+export type RecentChange = {
+  delta: string
+  holdings_compared: number
+  up: number
+  down: number
+  flat: number
+  latest_date: string
+  prior_date: string
+}
+
 // Mirrors backend service.PortfolioSummary. unrealized_gain_loss is null
 // when no holding has both market_value AND cost_basis populated.
 export type PortfolioSummary = {
@@ -43,4 +55,5 @@ export type PortfolioSummary = {
   total_unrealized_gain_loss: string | null
   holdings_count: number
   by_asset_class: AssetClassAllocation[]
+  recent_change?: RecentChange | null
 }
