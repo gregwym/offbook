@@ -119,7 +119,7 @@ func (p *ClaudeProvider) Stream(ctx context.Context, req Request) (<-chan Delta,
 		// Drain and close so the connection can be reused, then surface
 		// the API error body to the caller. 401/403 → ErrUnauthorized so
 		// the settings UI can prompt for a new key.
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024))
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			return nil, fmt.Errorf("%w: %s", ErrUnauthorized, strings.TrimSpace(string(errBody)))
@@ -136,7 +136,7 @@ func (p *ClaudeProvider) Stream(ctx context.Context, req Request) (<-chan Delta,
 // resp.Body — closes on every exit path. Closes `out` exactly once after
 // the terminal delta is sent.
 func (p *ClaudeProvider) readStream(ctx context.Context, body io.ReadCloser, out chan<- Delta) {
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	defer close(out)
 
 	scanner := bufio.NewScanner(body)
@@ -148,7 +148,6 @@ func (p *ClaudeProvider) readStream(ctx context.Context, body io.ReadCloser, out
 		currentEvent string
 		usage        Usage
 		finishReason string
-		sentDone     bool
 	)
 
 	send := func(d Delta) bool {
@@ -240,7 +239,6 @@ func (p *ClaudeProvider) readStream(ctx context.Context, body io.ReadCloser, out
 				}
 			case "message_stop":
 				_ = send(Delta{Done: true, FinishReason: finishReason, Usage: usage})
-				sentDone = true
 				return
 			case "error":
 				// Anthropic streams API-side errors as {"type":"error","error":{"type","message"}}
@@ -266,11 +264,10 @@ func (p *ClaudeProvider) readStream(ctx context.Context, body io.ReadCloser, out
 		return
 	}
 
-	if !sentDone {
-		// Stream ended without message_stop. Surface as error so the
-		// caller doesn't silently persist a half-message.
-		_ = send(Delta{Err: errors.New("ai: claude stream ended without message_stop")})
-	}
+	// Scanner ended naturally without message_stop — surface as error so
+	// the caller doesn't silently persist a half-message. (The message_stop
+	// branch above returns early before reaching here.)
+	_ = send(Delta{Err: errors.New("ai: claude stream ended without message_stop")})
 }
 
 // claudeRequest mirrors the Anthropic Messages API request body.
