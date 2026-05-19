@@ -148,7 +148,7 @@ func (h *InvestmentHandler) ImportCSV(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_UPLOAD"})
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var accountID int64
 	if q := c.Query("account_id"); q != "" {
