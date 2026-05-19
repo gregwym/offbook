@@ -126,6 +126,40 @@ function DashboardBody() {
         </div>
       )}
 
+      {dashboard.members.length > 0 && (
+        <section className="rounded-lg border border-gray-200 bg-white">
+          <header className="flex items-center gap-2 border-b border-gray-200 px-5 py-3">
+            <Activity size={16} className="text-gray-500" />
+            <h2 className="text-base font-medium text-gray-900">Per-member contribution</h2>
+          </header>
+          <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-2 lg:grid-cols-3">
+            {dashboard.members.map((m) => (
+              <div key={m.user_id} className="rounded-md border border-gray-200 p-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium text-gray-900">User #{m.user_id}</div>
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium uppercase text-gray-600">
+                    {m.role.replace('_', '-')}
+                  </span>
+                </div>
+                <div className="mt-2 text-xs uppercase tracking-wide text-gray-500">Net worth</div>
+                <div className="text-base font-semibold text-gray-900">
+                  <AmountDisplay amount={m.net_worth_contribution} />
+                </div>
+                <div className="mt-1 text-xs uppercase tracking-wide text-gray-500">
+                  Spending (period)
+                </div>
+                <div className="text-base font-semibold text-gray-900">
+                  <AmountDisplay amount={m.spending_contribution} />
+                </div>
+                <div className="mt-1 text-[11px] text-gray-400">
+                  {m.account_count} shared account{m.account_count === 1 ? '' : 's'}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="rounded-lg border border-gray-200 bg-white">
         <header className="flex items-center gap-2 border-b border-gray-200 px-5 py-3">
           <Activity size={16} className="text-gray-500" />
@@ -146,11 +180,6 @@ function DashboardBody() {
           </div>
         )}
       </section>
-
-      <p className="text-xs text-gray-500">
-        Per-member contribution tiles will land once the aggregator returns the breakdown — tracked
-        in #149.
-      </p>
     </>
   )
 }

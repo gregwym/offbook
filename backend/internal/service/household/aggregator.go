@@ -51,15 +51,33 @@ func (a *Aggregator) SetClock(fn func() time.Time) { a.now = fn }
 // household + aggregates only across opt-in shared accounts. All money fields
 // are strings to preserve precision across the wire.
 type HouseholdDashboard struct {
-	Period           PeriodWindow           `json:"period"`
-	NetWorth         string                 `json:"net_worth"`         // sum across balance_only + balance_and_txns shares
-	Income           string                 `json:"income"`            // period; balance_and_txns only
-	Spending         string                 `json:"spending"`          // period; balance_and_txns only
-	AccountCount     int                    `json:"account_count"`     // shared accounts count (any visibility)
-	TransactionCount int64                  `json:"transaction_count"` // period; balance_and_txns only
-	ByCategory       []CategorySpendingItem `json:"by_category"`       // period; balance_and_txns only
-	LiveMemberCount  int                    `json:"live_member_count"`
-	InGraceCount     int                    `json:"in_grace_count"`
+	Period           PeriodWindow                  `json:"period"`
+	NetWorth         string                        `json:"net_worth"`         // sum across balance_only + balance_and_txns shares
+	Income           string                        `json:"income"`            // period; balance_and_txns only
+	Spending         string                        `json:"spending"`          // period; balance_and_txns only
+	AccountCount     int                           `json:"account_count"`     // shared accounts count (any visibility)
+	TransactionCount int64                         `json:"transaction_count"` // period; balance_and_txns only
+	ByCategory       []CategorySpendingItem        `json:"by_category"`       // period; balance_and_txns only
+	LiveMemberCount  int                           `json:"live_member_count"`
+	InGraceCount     int                           `json:"in_grace_count"`
+	Members          []HouseholdMemberContribution `json:"members"` // per-member breakdown for the same period
+}
+
+// HouseholdMemberContribution is one row of the per-member tile strip on
+// /h/dashboard. Each value is scoped to that member's shared accounts —
+// `private` accounts contribute nothing here, and `balance_only` accounts
+// only feed `NetWorthContribution` (their txns aren't visible).
+//
+// Privacy: this is still aggregator output — no raw transactions, no
+// account names, just one row per active member with their own user_id
+// (which the requester is already a peer of in the household scope, so
+// it is not PII at this layer).
+type HouseholdMemberContribution struct {
+	UserID               int64  `json:"user_id"`
+	Role                 string `json:"role"`
+	NetWorthContribution string `json:"net_worth_contribution"`
+	SpendingContribution string `json:"spending_contribution"`
+	AccountCount         int    `json:"account_count"`
 }
 
 // PeriodWindow is the resolved [from, to) window. Mirrors service.PeriodWindow
@@ -180,6 +198,11 @@ func (a *Aggregator) Dashboard(ctx context.Context, householdID int64, period st
 		})
 	}
 
+	members, err := a.perMemberContributions(ctx, live, netWorthShares, txShares, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("per-member: %w", err)
+	}
+
 	return &HouseholdDashboard{
 		Period:           PeriodWindow{Key: period, From: from, To: to},
 		NetWorth:         netWorth.String(),
@@ -190,7 +213,60 @@ func (a *Aggregator) Dashboard(ctx context.Context, householdID int64, period st
 		ByCategory:       cats,
 		LiveMemberCount:  len(live),
 		InGraceCount:     len(inGrace),
+		Members:          members,
 	}, nil
+}
+
+// perMemberContributions partitions the household's shared accounts by
+// owning user_id and computes each active member's contribution to net
+// worth (balance_only ∪ balance_and_txns) and period spending
+// (balance_and_txns only). The result is ordered to match `live`'s
+// canonical role-then-id sort.
+//
+// Members with no shared accounts at all are omitted — the UI's tile
+// strip rendering each member regardless can fall back to the role chip
+// from /h/members. This keeps the dashboard endpoint focused on aggregate
+// contributions.
+func (a *Aggregator) perMemberContributions(
+	ctx context.Context,
+	live []model.HouseholdMember,
+	netWorthShares, txShares []repository.AccountShareView,
+	from, to time.Time,
+) ([]HouseholdMemberContribution, error) {
+	// Bucket account IDs by user.
+	netWorthByUser := map[int64][]int64{}
+	for _, s := range netWorthShares {
+		netWorthByUser[s.UserID] = append(netWorthByUser[s.UserID], s.AccountID)
+	}
+	txByUser := map[int64][]int64{}
+	for _, s := range txShares {
+		txByUser[s.UserID] = append(txByUser[s.UserID], s.AccountID)
+	}
+
+	out := make([]HouseholdMemberContribution, 0, len(live))
+	for _, m := range live {
+		nwIDs := netWorthByUser[m.UserID]
+		txIDs := txByUser[m.UserID]
+		if len(nwIDs) == 0 && len(txIDs) == 0 {
+			continue
+		}
+		nw, err := a.repo.SumBalances(ctx, nwIDs)
+		if err != nil {
+			return nil, fmt.Errorf("sum balances for user %d: %w", m.UserID, err)
+		}
+		_, spend, err := a.repo.PeriodIncomeSpending(ctx, txIDs, from, to)
+		if err != nil {
+			return nil, fmt.Errorf("period spend for user %d: %w", m.UserID, err)
+		}
+		out = append(out, HouseholdMemberContribution{
+			UserID:               m.UserID,
+			Role:                 m.Role,
+			NetWorthContribution: nw.String(),
+			SpendingContribution: spend.String(),
+			AccountCount:         len(nwIDs),
+		})
+	}
+	return out, nil
 }
 
 // BudgetPace rolls up each shared_budget for the household against its
