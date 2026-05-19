@@ -1,21 +1,81 @@
+// Layout follows the M6 Investments wireframe (docs/designs/App Hierarchy
+// v4.html, the "INVESTMENTS" sketch): three tiles up top (total · cost
+// basis · unrealized G/L), then the allocation donut, then a 4-column
+// holdings table — Holding · Shares·units · Price · Value. Crypto rows
+// shrink their quantity font so the full NUMERIC(30,18) precision fits
+// inline, which is the literal M6 acceptance criterion for #113. Polished
+// hi-fi treatment is deferred to the paired M9+ frontend milestone per
+// the roadmap.
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { LineChart, Plus, TrendingUp } from 'lucide-react'
 import { AmountDisplay } from '../components/AmountDisplay'
+import { AllocationDonut } from '../components/InvestmentsCharts'
 import { useAccountsStore } from '../store/accountsStore'
 import { useInvestmentsStore } from '../store/investmentsStore'
 import type { Account } from '../types/account'
 import type { CreateInvestmentInput, Investment } from '../types/investment'
 
-// Quantity formatter: NUMERIC(30,18) — show up to 18 fractional digits,
-// trim trailing zeros so common stock quantities don't render as
-// "10.000000000000000000". Floats here would silently corrupt crypto
-// holdings (BTC has 8 places, ETH has 18), so we work on the raw string.
+const QUANTITY_SCALE = 18
+
+// formatQuantity preserves all NUMERIC(30,18) digits while trimming
+// trailing zeros — Number() would lose precision past 15 digits and
+// silently corrupt crypto holdings, so string work is mandatory.
 function formatQuantity(amount: string | null | undefined): string {
   if (!amount) return '—'
   const trimmed = amount.trim()
   if (!trimmed.includes('.')) return trimmed
-  // Strip trailing zeros and a now-dangling decimal point.
   return trimmed.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
+}
+
+// isHighPrecision flags rows that need the smaller crypto-style font:
+// either the holding is tagged 'crypto'/'cryptocurrency', or its
+// quantity carries more than 8 fractional digits (BTC's 8, anything
+// beyond is ETH-style 18-digit territory).
+function isHighPrecision(inv: Investment): boolean {
+  const cls = inv.asset_class?.toLowerCase() ?? ''
+  if (cls === 'crypto' || cls === 'cryptocurrency') return true
+  const dot = inv.quantity.indexOf('.')
+  if (dot < 0) return false
+  const frac = inv.quantity.slice(dot + 1).replace(/0+$/, '')
+  return frac.length > 8
+}
+
+// pricePerUnit = market_value / quantity, returned as a decimal string.
+// Done with BigInt scaled to 18 fractional digits to keep crypto-scale
+// values honest. Returns null when either operand is missing or quantity
+// is zero. The result is for display only (AmountDisplay clips to the
+// currency's default precision).
+function pricePerUnit(inv: Investment): string | null {
+  if (!inv.market_value || !inv.quantity) return null
+  const qScaled = toScaled(inv.quantity)
+  if (qScaled === 0n) return null
+  const mvScaled = toScaled(inv.market_value)
+  // (mv * 10^scale) / q gives a result that is itself scaled by 10^scale.
+  const ratio = (mvScaled * 10n ** BigInt(QUANTITY_SCALE)) / qScaled
+  return fromScaled(ratio)
+}
+
+// computeGainLoss = market_value - cost_basis, null when either is missing.
+function computeGainLoss(h: Investment): string | null {
+  if (!h.market_value || !h.cost_basis) return null
+  return fromScaled(toScaled(h.market_value) - toScaled(h.cost_basis))
+}
+
+function toScaled(s: string): bigint {
+  const [int = '0', frac = ''] = s.trim().split('.')
+  const padded = (frac + '0'.repeat(QUANTITY_SCALE)).slice(0, QUANTITY_SCALE)
+  const sign = int.startsWith('-') ? -1n : 1n
+  const absInt = int.replace('-', '')
+  return sign * (BigInt(absInt) * 10n ** BigInt(QUANTITY_SCALE) + BigInt(padded))
+}
+
+function fromScaled(v: bigint): string {
+  const sign = v < 0n ? '-' : ''
+  const abs = v < 0n ? -v : v
+  const base = 10n ** BigInt(QUANTITY_SCALE)
+  const intPart = abs / base
+  const fracPart = (abs % base).toString().padStart(QUANTITY_SCALE, '0').replace(/0+$/, '')
+  return fracPart ? `${sign}${intPart}.${fracPart}` : `${sign}${intPart}`
 }
 
 export function InvestmentsPage() {
@@ -42,7 +102,7 @@ export function InvestmentsPage() {
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Investments</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Holdings are append-only snapshots — each save records a point in time, never overwrites history.
+            Stocks · ETFs · crypto in one ledger. Each save is an append-only snapshot — history is never overwritten.
           </p>
         </div>
         <button
@@ -62,6 +122,13 @@ export function InvestmentsPage() {
       )}
 
       <PortfolioTiles portfolio={portfolio} loading={loading && !portfolio} />
+
+      <div className="mt-6">
+        <AllocationDonut
+          data={portfolio?.by_asset_class}
+          totalMarketValue={portfolio?.total_market_value}
+        />
+      </div>
 
       <div className="mt-6 rounded-lg border border-gray-200 bg-white shadow-sm">
         {loading && holdings.length === 0 && (
@@ -113,8 +180,8 @@ function PortfolioTiles({
 }) {
   if (loading) {
     return (
-      <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
+      <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {[0, 1, 2].map((i) => (
           <div key={i} className="h-20 animate-pulse rounded-lg border border-gray-200 bg-gray-50" />
         ))}
       </div>
@@ -124,7 +191,7 @@ function PortfolioTiles({
   const gl = portfolio.total_unrealized_gain_loss
   const glNegative = gl !== null && gl.trim().startsWith('-')
   return (
-    <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
       <Tile label="Total value">
         <AmountDisplay amount={portfolio.total_market_value} currency="USD" />
       </Tile>
@@ -141,9 +208,6 @@ function PortfolioTiles({
             className={glNegative ? 'text-red-700' : 'text-emerald-700'}
           />
         )}
-      </Tile>
-      <Tile label="Holdings">
-        <span className="text-gray-900">{portfolio.holdings_count}</span>
       </Tile>
     </div>
   )
@@ -172,107 +236,52 @@ function HoldingsTable({
       <table className="min-w-full divide-y divide-gray-200 text-sm">
         <thead className="bg-gray-50">
           <tr>
-            <Th>Ticker</Th>
-            <Th>Name</Th>
-            <Th>Account</Th>
-            <Th>Asset class</Th>
-            <Th align="right">Quantity</Th>
-            <Th align="right">Cost basis</Th>
-            <Th align="right">Market value</Th>
-            <Th align="right">Unrealized G/L</Th>
-            <Th>Snapshot</Th>
-            <Th>Source</Th>
+            <Th>Holding</Th>
+            <Th align="right">Shares · units</Th>
+            <Th align="right">Price</Th>
+            <Th align="right">Value</Th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100 bg-white">
           {holdings.map((h) => {
-            const gl = computeGainLoss(h)
+            const highPrecision = isHighPrecision(h)
+            const price = pricePerUnit(h)
+            const account = accountsById.get(h.account_id)
             return (
               <tr
                 key={h.id}
                 onClick={() => onRowClick(h)}
                 className="cursor-pointer hover:bg-gray-50"
               >
-                <Td className="font-medium text-gray-900">{h.ticker}</Td>
-                <Td>{h.name ?? '—'}</Td>
-                <Td>{accountsById.get(h.account_id)?.name ?? `#${h.account_id}`}</Td>
-                <Td>{h.asset_class ?? <span className="text-gray-400">Unclassified</span>}</Td>
-                <Td align="right" className="font-mono">{formatQuantity(h.quantity)}</Td>
-                <Td align="right"><AmountDisplay amount={h.cost_basis} currency="USD" /></Td>
-                <Td align="right"><AmountDisplay amount={h.market_value} currency="USD" /></Td>
-                <Td align="right">
-                  {gl === null ? (
-                    <span className="text-gray-400">—</span>
-                  ) : (
-                    <AmountDisplay
-                      amount={gl}
-                      currency="USD"
-                      className={gl.startsWith('-') ? 'text-red-700' : 'text-emerald-700'}
-                    />
-                  )}
+                <Td>
+                  <div className="font-medium text-gray-900">{h.ticker}</div>
+                  <div className="text-xs text-gray-500">
+                    {h.name ?? <span className="italic">unnamed</span>}
+                    {h.asset_class ? ` · ${h.asset_class}` : ''}
+                    {account ? ` · ${account.name}` : ''}
+                  </div>
                 </Td>
-                <Td>{h.snapshot_date}</Td>
-                <Td className="capitalize text-gray-500">{h.source}</Td>
+                <Td
+                  align="right"
+                  className={[
+                    'tabular-nums',
+                    highPrecision ? 'text-[11px] leading-tight' : '',
+                  ].join(' ').trim()}
+                >
+                  {formatQuantity(h.quantity)}
+                </Td>
+                <Td align="right" className="tabular-nums">
+                  <AmountDisplay amount={price} currency="USD" fractionDigits={highPrecision ? 2 : 2} />
+                </Td>
+                <Td align="right" className="tabular-nums">
+                  <AmountDisplay amount={h.market_value} currency="USD" />
+                </Td>
               </tr>
             )
           })}
         </tbody>
       </table>
     </div>
-  )
-}
-
-// computeGainLoss subtracts two decimal strings without losing precision.
-// Returns null when either field is missing. We keep the math here in
-// strings via BigInt scaled to 18 fractional places — matches the
-// NUMERIC(30,18) the backend persists.
-function computeGainLoss(h: Investment): string | null {
-  if (!h.market_value || !h.cost_basis) return null
-  return subDecimal(h.market_value, h.cost_basis)
-}
-
-function subDecimal(a: string, b: string): string {
-  const scale = 18
-  const toScaled = (s: string): bigint => {
-    const [int = '0', frac = ''] = s.trim().split('.')
-    const padded = (frac + '0'.repeat(scale)).slice(0, scale)
-    const sign = int.startsWith('-') ? -1n : 1n
-    const absInt = int.replace('-', '')
-    return sign * (BigInt(absInt) * 10n ** BigInt(scale) + BigInt(padded))
-  }
-  const diff = toScaled(a) - toScaled(b)
-  const sign = diff < 0n ? '-' : ''
-  const abs = diff < 0n ? -diff : diff
-  const base = 10n ** BigInt(scale)
-  const intPart = abs / base
-  const fracPart = (abs % base).toString().padStart(scale, '0').replace(/0+$/, '')
-  return fracPart ? `${sign}${intPart}.${fracPart}` : `${sign}${intPart}`
-}
-
-function Th({ children, align = 'left' }: { children: ReactNode; align?: 'left' | 'right' }) {
-  return (
-    <th
-      scope="col"
-      className={`px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </th>
-  )
-}
-
-function Td({
-  children,
-  align = 'left',
-  className = '',
-}: {
-  children: ReactNode
-  align?: 'left' | 'right'
-  className?: string
-}) {
-  return (
-    <td className={`px-3 py-2 ${align === 'right' ? 'text-right' : 'text-left'} ${className}`}>
-      {children}
-    </td>
   )
 }
 
@@ -283,8 +292,6 @@ type AddProps = {
 }
 
 function AddHoldingModal({ accounts, onClose, onSubmit }: AddProps) {
-  // Default to investment-typed accounts when present; otherwise any
-  // account. Empty list is handled in the render path.
   const investmentAccounts = useMemo(
     () => accounts.filter((a) => a.account_type === 'investment'),
     [accounts],
@@ -435,19 +442,32 @@ function SnapshotHistoryModal({ inv, account, fetchHistory, onClose }: HistoryPr
                   <Th align="right">Quantity</Th>
                   <Th align="right">Cost basis</Th>
                   <Th align="right">Market value</Th>
+                  <Th align="right">Unrealized G/L</Th>
                   <Th>Source</Th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 bg-white">
-                {rows.map((r) => (
-                  <tr key={r.id}>
-                    <Td>{r.snapshot_date}</Td>
-                    <Td align="right" className="font-mono">{formatQuantity(r.quantity)}</Td>
-                    <Td align="right"><AmountDisplay amount={r.cost_basis} currency="USD" /></Td>
-                    <Td align="right"><AmountDisplay amount={r.market_value} currency="USD" /></Td>
-                    <Td className="capitalize text-gray-500">{r.source}</Td>
-                  </tr>
-                ))}
+                {rows.map((r) => {
+                  const gl = computeGainLoss(r)
+                  return (
+                    <tr key={r.id}>
+                      <Td>{r.snapshot_date}</Td>
+                      <Td align="right" className="tabular-nums">{formatQuantity(r.quantity)}</Td>
+                      <Td align="right" className="tabular-nums"><AmountDisplay amount={r.cost_basis} currency="USD" /></Td>
+                      <Td align="right" className="tabular-nums"><AmountDisplay amount={r.market_value} currency="USD" /></Td>
+                      <Td align="right" className="tabular-nums">
+                        {gl === null ? <span className="text-gray-400">—</span> : (
+                          <AmountDisplay
+                            amount={gl}
+                            currency="USD"
+                            className={gl.startsWith('-') ? 'text-red-700' : 'text-emerald-700'}
+                          />
+                        )}
+                      </Td>
+                      <Td className="capitalize text-gray-500">{r.source}</Td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -455,6 +475,33 @@ function SnapshotHistoryModal({ inv, account, fetchHistory, onClose }: HistoryPr
       </div>
       <ModalFooter submitting={false} submitLabel="Close" onCancel={onClose} onSubmit={async () => onClose()} />
     </Modal>
+  )
+}
+
+function Th({ children, align = 'left' }: { children: ReactNode; align?: 'left' | 'right' }) {
+  return (
+    <th
+      scope="col"
+      className={`px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500 ${align === 'right' ? 'text-right' : 'text-left'}`}
+    >
+      {children}
+    </th>
+  )
+}
+
+function Td({
+  children,
+  align = 'left',
+  className = '',
+}: {
+  children: ReactNode
+  align?: 'left' | 'right'
+  className?: string
+}) {
+  return (
+    <td className={`px-3 py-2 align-top ${align === 'right' ? 'text-right' : 'text-left'} ${className}`}>
+      {children}
+    </td>
   )
 }
 
