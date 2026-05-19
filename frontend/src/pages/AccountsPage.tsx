@@ -1,9 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
+import { AccountVisibilityChip } from '../components/AccountVisibilityChip'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { PIIPanel } from '../components/PIIPanel'
 import { SyncStatusPill } from '../components/SyncStatusPill'
 import { useAccountsStore } from '../store/accountsStore'
+import { useScopeStore } from '../store/scopeStore'
 import {
   ACCOUNT_TYPES,
   type Account,
@@ -14,6 +16,11 @@ import {
 
 export function AccountsPage() {
   const { accounts, loading, error, fetch, create, update, remove } = useAccountsStore()
+  // householdId is null when the user belongs to no household — the
+  // visibility column is omitted entirely in that case (private-only
+  // mode), matching the rule in `.claude/rules/frontend.md`: don't
+  // surface a column the user can't act on.
+  const householdId = useScopeStore((s) => s.householdId)
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<Account | null>(null)
 
@@ -54,15 +61,16 @@ export function AccountsPage() {
               <th className="px-4 py-2 text-right">Balance</th>
               <th className="px-4 py-2 text-center">Active</th>
               <th className="px-4 py-2 text-left">Sync</th>
+              {householdId != null && <th className="px-4 py-2 text-left">Household visibility</th>}
               <th className="px-4 py-2"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading && accounts.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>
+              <tr><td colSpan={householdId != null ? 9 : 8} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>
             )}
             {!loading && accounts.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">No accounts yet.</td></tr>
+              <tr><td colSpan={householdId != null ? 9 : 8} className="px-4 py-6 text-center text-gray-400">No accounts yet.</td></tr>
             )}
             {accounts.map((a) => (
               <tr key={a.id} className="hover:bg-gray-50">
@@ -81,6 +89,11 @@ export function AccountsPage() {
                 <td className="px-4 py-2">
                   <SyncStatusPill account={a} />
                 </td>
+                {householdId != null && (
+                  <td className="px-4 py-2">
+                    <AccountVisibilityChip accountID={a.id} householdID={householdId} />
+                  </td>
+                )}
                 <td className="px-4 py-2 text-right">
                   <button
                     type="button"
