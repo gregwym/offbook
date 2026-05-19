@@ -139,16 +139,16 @@ See [ADR-0006](ADR/0006-multi-tenant-model.md), [ADR-0007](ADR/0007-member-lifec
 
 ---
 
-## M7 — AI Advisor [NOT STARTED]
+## M7 — AI Advisor [DONE]
 
 **Goal:** Privacy-preserving financial assistant using only DB data.
 
-- [ ] AIProvider interface + ClaudeProvider (SSE streaming) + OllamaProvider
-- [ ] context_builder.go — anonymized financial context from DB (no pii_repo in deps)
-- [ ] AI service orchestration
-- [ ] Chat UI: model switcher, context preview panel, conversation history
-- [ ] Suggested prompts
-- [ ] Settings page: Claude API key, Ollama URL
+- [x] AIProvider interface + ClaudeProvider (SSE streaming) + OllamaProvider
+- [x] context_builder.go — anonymized financial context from DB (no pii_repo in deps)
+- [x] AI service orchestration
+- [x] Chat UI: model switcher, context preview panel, conversation history
+- [x] Suggested prompts
+- [x] Settings page: Claude API key, Ollama URL
 
 **Done criteria:** Chat with AI; context preview shows only aggregated data; pii_store data absent from context; switch to Ollama and chat works.
 
