@@ -85,7 +85,12 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		repository.NewInstanceConfigRepository(gormDB),
 		userRepo,
 		cfg.SessionSecret,
-	).WithDB(gormDB)
+	).
+		WithDB(gormDB).
+		WithSharedBudgets(
+			repository.NewSharedBudgetRepository(gormDB),
+			categoryRepo,
+		)
 	householdHandler := handler.NewHouseholdHandler(householdSvc)
 
 	// Now that the household service exists, wire it into auth so the
