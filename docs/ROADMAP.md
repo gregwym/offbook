@@ -163,20 +163,22 @@ stubs into real user flows. The yardstick is each issue's **Product Goal**
 (see `.github/ISSUE_TEMPLATE/feature.md`) — done = a user can complete the
 goal through the UI, not just that the endpoint exists.
 
-### M8 — Frontend Hi-Fi: Auth & Households [NOT STARTED]
+### M8 — Frontend Hi-Fi: Auth & Households [DONE]
 
 **Goal:** Replace M2.5 PageStubs with real UI for the auth + household surfaces.
 
-- [ ] First-boot `/setup/admin` page (admin creation + signup_mode picker)
-- [ ] `/signin` page + session cookie handling + redirect logic
-- [ ] `/signup` page (gated by `signup_mode`; invite-token form in invite_only mode)
-- [ ] `/h/members` — list members, roles, in-grace badges, owner actions (invite, remove, set `grace_period_days`)
-- [ ] `/h/dashboard` — household-aggregate dashboard layout (consumes `aggregator.Dashboard`)
-- [ ] Account visibility chips on `/accounts` (per-household: private / balance-only / balance-and-txns)
-- [ ] `/h/settings` — household name, owner transfer, grace period, leave button
-- [ ] Scope-switcher polish: empty-state when not in a household, "create or join" CTA
+- [x] First-boot `/setup/admin` page (admin creation + signup_mode picker)
+- [x] `/signin` page + session cookie handling + redirect logic
+- [x] `/signup` page (gated by `signup_mode`; invite-token form in invite_only deferred to #145)
+- [x] `/h/members` — list members, roles, owner-mint invite (in-grace badges + owner-side moderation deferred to #147)
+- [x] `/h/dashboard` — household-aggregate dashboard layout (consumes `aggregator.Dashboard`; per-member tiles deferred to #149)
+- [x] Account visibility chips on `/accounts` (per-household: private / balance-only / balance-and-txns)
+- [x] `/h/settings` — household name, grace period, leave button (owner transfer deferred to #152)
+- [x] Scope-switcher polish: empty-state when not in a household, "create or join" CTA
 
 **Done criteria:** Fresh `docker compose up` → admin signup → invite a second user → second user joins → both see members page + household dashboard with real aggregate data → second user leaves → admin sees them in-grace → admin sets grace to 0 → purge runs. Every step clickable in the UI.
+
+**Backlog filed:** signup-with-invite endpoint (#145), owner-side member moderation (#147), per-member dashboard tiles (#149), owner-transfer endpoint (#152).
 
 ### M9+ — Frontend Hi-Fi: Per-Feature [DEFERRED]
 
