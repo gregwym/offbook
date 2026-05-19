@@ -1,6 +1,7 @@
 import {
   ArrowDownToLine,
   Bot,
+  Home,
   Landmark,
   LayoutDashboard,
   LogOut,
@@ -13,8 +14,9 @@ import {
   Users,
   Wallet,
 } from 'lucide-react'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { HouseholdJoinModal } from './HouseholdJoinModal'
 import { useAuthStore } from '../store/authStore'
 import { useScopeStore } from '../store/scopeStore'
 import { SCOPE_HOUSEHOLD, SCOPE_PERSONAL, type Scope } from '../types/scope'
@@ -61,6 +63,7 @@ export function AppShell() {
 
   const items = active === SCOPE_HOUSEHOLD ? HOUSEHOLD_NAV : PERSONAL_NAV
   const canSwitch = available.includes(SCOPE_HOUSEHOLD)
+  const [joinOpen, setJoinOpen] = useState(false)
 
   const handleSignout = async () => {
     await signout()
@@ -71,7 +74,11 @@ export function AppShell() {
     <div className="flex h-screen w-screen bg-gray-50">
       <aside className="flex w-60 flex-col border-r border-gray-200 bg-white">
         <div className="px-6 py-5 text-lg font-semibold text-gray-900">offbook</div>
-        {canSwitch && <ScopePicker active={active} onChange={setScope} />}
+        {canSwitch ? (
+          <ScopePicker active={active} onChange={setScope} />
+        ) : (
+          hydrated && <JoinCTA onClick={() => setJoinOpen(true)} />
+        )}
         <nav className="flex-1 space-y-1 px-3 pb-4 overflow-y-auto">
           {items.map(({ to, label, icon: Icon }) => (
             <NavLink
@@ -107,7 +114,27 @@ export function AppShell() {
           <Outlet />
         </div>
       </main>
+      {joinOpen && <HouseholdJoinModal onClose={() => setJoinOpen(false)} />}
     </div>
+  )
+}
+
+// JoinCTA replaces the scope picker when the user belongs to no household.
+// Clicking it opens the create-or-join modal. Once a membership exists,
+// the regular two-pill switcher renders instead.
+function JoinCTA({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="mx-3 mb-3 flex w-[calc(100%-1.5rem)] items-center gap-2 rounded-md border border-dashed border-indigo-300 bg-indigo-50/50 px-3 py-2 text-left text-xs text-indigo-700 hover:bg-indigo-50"
+    >
+      <Home size={14} className="shrink-0" />
+      <span className="leading-tight">
+        <span className="font-medium block">Create or join</span>
+        <span className="text-[10px] text-indigo-500">a household</span>
+      </span>
+    </button>
   )
 }
 
