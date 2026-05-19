@@ -11,6 +11,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/handler"
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/service/ai"
 	"github.com/gregwym/offbook/backend/internal/service/auth"
 	"github.com/gregwym/offbook/backend/internal/service/household"
 	plaidsvc "github.com/gregwym/offbook/backend/internal/service/plaid"
@@ -103,6 +104,18 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	plaidSvc := newPlaidService(cfg, gormDB, plaidItemRepo, accountRepo, transactionRepo, plaidSyncErrRepo, piiSvc).WithRuleRepo(ruleRepo)
 	plaidHandler := handler.NewPlaidHandler(plaidSvc)
 
+	// AI advisor: provider is optional. Without CLAUDE_API_KEY the service
+	// still registers (so threads/list/history work for past conversations)
+	// but SendMessage returns ErrNoProvider until the user adds a key.
+	aiBuilder := ai.NewContextBuilder(dashboardSvc, budgetSvc, savingsGoalSvc, investmentSvc, categorySvc)
+	aiSvc := ai.NewService(
+		repository.NewAIThreadRepository(gormDB),
+		repository.NewAIMessageRepository(gormDB),
+		aiBuilder,
+		newAIProvider(cfg),
+	)
+	aiHandler := handler.NewAIHandler(aiSvc)
+
 	v1 := r.Group("/api/v1")
 	{
 		// Open routes — no session required.
@@ -126,6 +139,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		aggregatorHandler.Register(secured)
 		scopeHandler.Register(secured)
 		plaidHandler.Register(secured)
+		aiHandler.Register(secured)
 	}
 
 	return r
@@ -178,6 +192,27 @@ func newPlaidService(
 		mapper,
 		gormDB,
 	)
+}
+
+// newAIProvider returns the configured Claude provider when
+// CLAUDE_API_KEY is set, otherwise nil. The AI service treats a nil
+// provider as "send disabled" — see ai.Service.ProviderConfigured.
+//
+// Ollama is also a valid choice but it isn't a startup-config flip: it's
+// a per-thread/per-user setting that ships with the settings UI in a
+// later issue. Until then, Claude is the only auto-wired provider.
+func newAIProvider(cfg config.Config) ai.Provider {
+	if !cfg.ClaudeConfigured() {
+		return nil
+	}
+	p, err := ai.NewClaudeProvider(ai.ClaudeConfig{APIKey: cfg.ClaudeAPIKey})
+	if err != nil {
+		// Misconfigured key (empty after validation). Fall through to
+		// "no provider" rather than panicking at boot — the operator can
+		// fix and reload without restarting if they need to.
+		return nil
+	}
+	return p
 }
 
 func corsMiddleware(origin string) gin.HandlerFunc {
