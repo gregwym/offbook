@@ -23,6 +23,7 @@ func NewInvestmentHandler(s *service.InvestmentService) *InvestmentHandler {
 
 func (h *InvestmentHandler) Register(g *gin.RouterGroup) {
 	g.POST("/investments", h.Create)
+	g.POST("/investments/import-csv", h.ImportCSV)
 	g.GET("/investments", h.List)
 	// /portfolio sits above /:id so the literal segment wins the route match.
 	g.GET("/investments/portfolio", h.Portfolio)
@@ -119,6 +120,61 @@ func (h *InvestmentHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": rows, "total": int64(len(rows))})
 }
 
+// ImportCSV accepts a multipart "file" upload + optional ?account_id=N
+// and returns counts + per-row errors. When account_id is missing we
+// fall back to the user's lone investment-typed account; 0 or >1 such
+// accounts → 400 MISSING_ACCOUNT_ID.
+func (h *InvestmentHandler) ImportCSV(c *gin.Context) {
+	userID := auth.MustUserID(c.Request.Context())
+
+	// Cap the upload at 5 MiB — brokerage holdings CSVs are KB-scale.
+	// Anything larger is almost certainly the wrong file.
+	const maxUpload = 5 << 20
+	if err := c.Request.ParseMultipartForm(maxUpload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_UPLOAD"})
+		return
+	}
+	fileHdr, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing form field 'file'", "code": "INVALID_UPLOAD"})
+		return
+	}
+	if fileHdr.Size > maxUpload {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "file too large", "code": "FILE_TOO_LARGE"})
+		return
+	}
+	f, err := fileHdr.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_UPLOAD"})
+		return
+	}
+	defer f.Close()
+
+	var accountID int64
+	if q := c.Query("account_id"); q != "" {
+		id, err := strconv.ParseInt(q, 10, 64)
+		if err != nil || id <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "account_id must be a positive integer", "code": "INVALID_REQUEST"})
+			return
+		}
+		accountID = id
+	} else {
+		id, err := h.svc.ResolveInvestmentAccount(c.Request.Context(), userID)
+		if err != nil {
+			h.writeServiceError(c, err)
+			return
+		}
+		accountID = id
+	}
+
+	result, err := h.svc.ImportCSV(c.Request.Context(), userID, accountID, f)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
 func (h *InvestmentHandler) Portfolio(c *gin.Context) {
 	summary, err := h.svc.PortfolioSummary(c.Request.Context(), auth.MustUserID(c.Request.Context()))
 	if err != nil {
@@ -139,6 +195,10 @@ func (h *InvestmentHandler) writeServiceError(c *gin.Context, err error) {
 		errors.Is(err, service.ErrNegativeCostBasis),
 		errors.Is(err, service.ErrNegativeMarketValue):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_INVESTMENT"})
+	case errors.Is(err, service.ErrMissingAccountID):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "MISSING_ACCOUNT_ID"})
+	case errors.Is(err, service.ErrUnknownCSVFormat):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "UNKNOWN_CSV_FORMAT"})
 	case errors.Is(err, service.ErrInvalidInvestmentSrc):
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   err.Error(),
