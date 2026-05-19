@@ -1,7 +1,7 @@
 # ADR 0005: Pluggable AI Providers
 
 ## Status
-Accepted
+Accepted. Extended by [ADR-0012](0012-ai-provider-resolution-and-household-routing.md), which covers per-user API keys, the `ProviderResolver` indirection, household-context routing, and per-message authorship on shared threads.
 
 ## Context
 The AI financial assistant should support both cloud (Claude API) and local (Ollama) inference. Users should choose based on their privacy comfort level.
