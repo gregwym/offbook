@@ -80,7 +80,7 @@ func newSvc(t *testing.T) (*household.Service, *service.AccountService, *gorm.DB
 		repository.NewInstanceConfigRepository(g),
 		repository.NewUserRepository(g),
 		testSecret,
-	)
+	).WithDB(g)
 	return svc, service.NewAccountService(accRepo), g
 }
 

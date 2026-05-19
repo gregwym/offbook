@@ -1,12 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Building2, DoorOpen, UserCog } from 'lucide-react'
+import { listMembers, transferOwner } from '../api/households'
+import { useAuthStore } from '../store/authStore'
 import { useHouseholdStore } from '../store/householdStore'
 import { useScopeStore } from '../store/scopeStore'
+import type { HouseholdMember } from '../types/household'
 
 export function HouseholdSettingsPage() {
   const { householdId } = useScopeStore()
   const hydrateScope = useScopeStore((s) => s.hydrate)
+  const meID = useAuthStore((s) => s.user?.id ?? null)
   const { detail, loading, error, load, updateHousehold, leave, clearError } =
     useHouseholdStore()
   const navigate = useNavigate()
@@ -18,10 +22,29 @@ export function HouseholdSettingsPage() {
   const [graceEdit, setGraceEdit] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [leaving, setLeaving] = useState(false)
+  // Member list for the transfer-owner dropdown. Only loaded when the
+  // page renders the Ownership section (i.e. caller is owner).
+  const [otherActive, setOtherActive] = useState<HouseholdMember[]>([])
+  const [transferTarget, setTransferTarget] = useState<number | ''>('')
+  const [transferring, setTransferring] = useState(false)
+  const [transferError, setTransferError] = useState<string | null>(null)
 
   useEffect(() => {
     if (householdId != null) void load(householdId)
   }, [householdId, load])
+
+  const reloadMembers = useCallback(() => {
+    if (householdId == null || meID == null) return Promise.resolve()
+    return listMembers(householdId, false)
+      .then((res) => setOtherActive(res.active.filter((m) => m.user_id !== meID)))
+      .catch(() => setOtherActive([]))
+  }, [householdId, meID])
+
+  useEffect(() => {
+    if (detail?.role === 'owner') {
+      void reloadMembers()
+    }
+  }, [detail, reloadMembers])
 
   const name = nameEdit ?? detail?.household.name ?? ''
   const grace = graceEdit ?? (detail ? String(detail.household.grace_period_days) : '30')
@@ -160,19 +183,73 @@ export function HouseholdSettingsPage() {
             <UserCog size={16} className="text-gray-500" />
             <h2 className="text-base font-medium text-gray-900">Ownership</h2>
           </header>
-          <div className="px-5 py-4">
-            <button
-              type="button"
-              disabled
-              title="Backend endpoint pending — tracked in #152"
-              className="rounded-md border border-gray-300 bg-gray-50 px-3 py-1.5 text-sm font-medium text-gray-400 cursor-not-allowed"
-            >
-              Transfer ownership…
-            </button>
-            <p className="mt-1 text-xs text-gray-500">
-              Coming in #152. Until then, the sole owner cannot leave (the `LAST_OWNER` guard returns
-              a conflict — dissolve the household instead).
-            </p>
+          <div className="px-5 py-4 space-y-2">
+            {otherActive.length === 0 ? (
+              <p className="text-xs text-gray-500">
+                Transfer ownership requires at least one other active member. Invite someone first
+                from the Members page.
+              </p>
+            ) : (
+              <>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={transferTarget === '' ? '' : String(transferTarget)}
+                    onChange={(e) =>
+                      setTransferTarget(e.target.value === '' ? '' : Number.parseInt(e.target.value, 10))
+                    }
+                    disabled={transferring}
+                    className="flex-1 max-w-xs rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                  >
+                    <option value="">Transfer ownership to…</option>
+                    {otherActive.map((m) => (
+                      <option key={m.user_id} value={m.user_id}>
+                        User #{m.user_id} · {m.role}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={transferring || transferTarget === ''}
+                    onClick={async () => {
+                      if (transferTarget === '' || householdId == null) return
+                      if (
+                        !window.confirm(
+                          `Transfer ownership to user #${transferTarget}? You become a contributor; ` +
+                            `they become owner immediately.`,
+                        )
+                      )
+                        return
+                      setTransferring(true)
+                      setTransferError(null)
+                      try {
+                        await transferOwner(householdId, transferTarget)
+                        // Refresh detail + members so the page reflects the new
+                        // role (no more owner-only controls).
+                        await load(householdId)
+                        await reloadMembers()
+                        setTransferTarget('')
+                      } catch (e) {
+                        setTransferError(errMsg(e))
+                      } finally {
+                        setTransferring(false)
+                      }
+                    }}
+                    className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+                  >
+                    {transferring ? 'Transferring…' : 'Transfer'}
+                  </button>
+                </div>
+                {transferError && (
+                  <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                    {transferError}
+                  </div>
+                )}
+                <p className="text-xs text-gray-500">
+                  After transfer, the new owner can mint invites, kick members, and change the grace
+                  period; you keep contributor access until you leave or are removed.
+                </p>
+              </>
+            )}
           </div>
         </section>
       )}
@@ -201,4 +278,13 @@ export function HouseholdSettingsPage() {
       </section>
     </div>
   )
+}
+
+function errMsg(err: unknown): string {
+  if (err && typeof err === 'object' && 'response' in err) {
+    const r = (err as { response?: { data?: { error?: string } } }).response
+    if (r?.data?.error) return r.data.error
+  }
+  if (err instanceof Error) return err.message
+  return 'request failed'
 }

@@ -23,4 +23,5 @@ var (
 	ErrInstanceNotReady = errors.New("instance not configured")
 	ErrCannotModifySelf = errors.New("cannot modify your own membership through owner actions; use Leave")
 	ErrMemberNotFound   = errors.New("member not found in this household")
+	ErrTxUnavailable    = errors.New("transactional operations require WithDB wiring")
 )
