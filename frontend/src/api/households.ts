@@ -71,3 +71,7 @@ export async function updateMemberRole(
 export async function removeMember(householdID: number, userID: number): Promise<void> {
   await apiClient.delete(`/households/${householdID}/members/${userID}`)
 }
+
+export async function transferOwner(householdID: number, userID: number): Promise<void> {
+  await apiClient.post(`/households/${householdID}/transfer-owner`, { user_id: userID })
+}

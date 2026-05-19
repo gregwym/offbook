@@ -42,6 +42,7 @@ func (h *HouseholdHandler) Register(g *gin.RouterGroup) {
 	g.GET("/households/:id/members", h.ListMembers)
 	g.PATCH("/households/:id/members/:userID", h.UpdateMemberRole)
 	g.DELETE("/households/:id/members/:userID", h.RemoveMember)
+	g.POST("/households/:id/transfer-owner", h.TransferOwner)
 
 	g.GET("/accounts/:id/shares", h.ListShares)
 	g.PUT("/accounts/:id/shares/:householdID", h.SetShare)
@@ -69,6 +70,10 @@ type setShareRequest struct {
 
 type updateMemberRoleRequest struct {
 	Role string `json:"role"`
+}
+
+type transferOwnerRequest struct {
+	UserID int64 `json:"user_id"`
 }
 
 // --- handlers ---
@@ -226,6 +231,27 @@ func (h *HouseholdHandler) RemoveMember(c *gin.Context) {
 		return
 	}
 	if err := h.svc.RemoveMember(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, targetUserID); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *HouseholdHandler) TransferOwner(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var req transferOwnerRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	if req.UserID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id must be a positive integer", "code": "INVALID_REQUEST"})
+		return
+	}
+	if err := h.svc.TransferOwner(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, req.UserID); err != nil {
 		h.writeError(c, err)
 		return
 	}

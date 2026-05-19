@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service/auth"
@@ -65,8 +67,13 @@ type Service struct {
 	accounts   repository.AccountRepository
 	config     repository.InstanceConfigRepository
 	users      repository.UserRepository
-	secret     string
-	now        func() time.Time
+	// db is held for multi-write operations (currently only TransferOwner)
+	// that need atomicity beyond what a single repo call provides.
+	// Nil-safe: methods that don't require it work without it; tests set
+	// it via WithDB.
+	db     *gorm.DB
+	secret string
+	now    func() time.Time
 }
 
 func NewService(
@@ -94,6 +101,15 @@ func NewService(
 
 // SetClock lets tests freeze time for invite-expiry assertions.
 func (s *Service) SetClock(fn func() time.Time) { s.now = fn }
+
+// WithDB wires the gorm handle used by multi-write operations (e.g.
+// TransferOwner). Returns the receiver for chaining. Production wiring
+// always calls this; older tests that don't exercise such operations may
+// skip it.
+func (s *Service) WithDB(db *gorm.DB) *Service {
+	s.db = db
+	return s
+}
 
 // --- Household CRUD ---
 
@@ -502,6 +518,70 @@ func (s *Service) RemoveMember(ctx context.Context, userID, householdID, targetU
 		return fmt.Errorf("mark left: %w", err)
 	}
 	return nil
+}
+
+// TransferOwner promotes targetUserID to owner and demotes the caller to
+// contributor. Caller must be the current owner. Target must be an active
+// member of this household. Both role updates AND the households.owner_id
+// flip happen in a single DB transaction so a mid-flight failure can't
+// produce a "two owners" or "owner_id mismatches role" intermediate state.
+//
+// Self-transfer is rejected (no-op anyway). After the transfer the caller
+// is no longer the owner — they may then call Leave if they want to exit
+// the household.
+func (s *Service) TransferOwner(ctx context.Context, callerID, householdID, targetUserID int64) error {
+	if s.db == nil {
+		return ErrTxUnavailable
+	}
+	if err := s.requireOwner(ctx, callerID, householdID); err != nil {
+		return err
+	}
+	if targetUserID == callerID {
+		return ErrCannotModifySelf
+	}
+	target, err := s.members.GetActive(ctx, householdID, targetUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrMemberNotFound
+		}
+		return err
+	}
+	// The caller's row is needed for the demotion step. Fetch it inside
+	// the tx below to keep both reads consistent; but pre-fetch the ID
+	// here so we can short-circuit if something's already wrong.
+	caller, err := s.members.GetActive(ctx, householdID, callerID)
+	if err != nil {
+		return fmt.Errorf("get caller membership: %w", err)
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Promote target to owner.
+		if res := tx.Model(&model.HouseholdMember{}).
+			Where("id = ? AND left_at IS NULL AND purged_at IS NULL", target.ID).
+			Update("role", model.RoleOwner); res.Error != nil {
+			return fmt.Errorf("promote target: %w", res.Error)
+		} else if res.RowsAffected == 0 {
+			return ErrMemberNotFound
+		}
+		// 2. Demote caller to contributor (chosen over view_only — the
+		// previous owner deserves write access by default).
+		if res := tx.Model(&model.HouseholdMember{}).
+			Where("id = ? AND left_at IS NULL AND purged_at IS NULL", caller.ID).
+			Update("role", model.RoleContributor); res.Error != nil {
+			return fmt.Errorf("demote caller: %w", res.Error)
+		} else if res.RowsAffected == 0 {
+			return ErrForbidden
+		}
+		// 3. Flip the owner_id on the household row to match.
+		if res := tx.Model(&model.Household{}).
+			Where("id = ?", householdID).
+			Update("owner_id", targetUserID); res.Error != nil {
+			return fmt.Errorf("update owner_id: %w", res.Error)
+		} else if res.RowsAffected == 0 {
+			return ErrHouseholdNotFound
+		}
+		return nil
+	})
 }
 
 // isValidRole is a string allowlist for the three documented roles.
