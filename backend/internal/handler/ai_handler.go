@@ -110,7 +110,7 @@ func (h *AIHandler) SendMessage(c *gin.Context) {
 		if !ok {
 			return false
 		}
-		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, string(ev.Data))
+		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, string(ev.Data))
 		return ev.Type != ai.SSEDone && ev.Type != ai.SSEError
 	})
 }
