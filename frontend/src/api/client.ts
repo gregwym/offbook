@@ -13,6 +13,35 @@ export const apiClient = axios.create({
   withCredentials: true,
 })
 
+// onUnauthorized is called when any API request returns 401. The auth
+// store registers a handler at boot to clear the user + redirect to
+// /signin. Module-level rather than a direct store import to avoid the
+// circular dep (client → store → api/auth → client).
+let onUnauthorized: (() => void) | null = null
+export function setUnauthorizedHandler(fn: () => void) {
+  onUnauthorized = fn
+}
+
+apiClient.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    const url: string = err?.config?.url ?? ''
+    const status: number | undefined = err?.response?.status
+    if (
+      status === 401 &&
+      // Auth-probe and signin endpoints expect 401s — handling them here
+      // would loop the user back to signin from inside signin.
+      !url.includes('/auth/signin') &&
+      !url.includes('/auth/signup') &&
+      !url.includes('/setup/') &&
+      !url.includes('/me') // hydrate() probes /me and handles 401 itself
+    ) {
+      onUnauthorized?.()
+    }
+    return Promise.reject(err)
+  },
+)
+
 // Standard backend envelope shapes (mirror backend handler conventions).
 export type ApiList<T> = { data: T[]; total: number }
 export type ApiItem<T> = { data: T }
