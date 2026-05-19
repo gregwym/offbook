@@ -14,6 +14,14 @@ export type CategorySpendingItem = {
   amount: string // decimal string (NUMERIC(30,18))
 }
 
+export type HouseholdMemberContribution = {
+  user_id: number
+  role: 'owner' | 'contributor' | 'view_only'
+  net_worth_contribution: string
+  spending_contribution: string
+  account_count: number
+}
+
 export type HouseholdDashboard = {
   period: HouseholdPeriod
   net_worth: string
@@ -24,4 +32,5 @@ export type HouseholdDashboard = {
   by_category: CategorySpendingItem[]
   live_member_count: number
   in_grace_count: number
+  members: HouseholdMemberContribution[]
 }

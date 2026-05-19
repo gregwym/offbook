@@ -496,4 +496,77 @@ func TestAggregator_HouseholdNotFound(t *testing.T) {
 	}
 }
 
+// TestAggregator_PerMemberContributions checks scenario (f) — Dashboard.Members
+// gives one row per active member that owns at least one shared account,
+// and each row reflects that member's contribution to net worth and
+// period spending. In-grace members are excluded; balance_only accounts
+// contribute to net worth only.
+func TestAggregator_PerMemberContributions(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	ownerID := seedUser(t, g, "pm-owner")
+	contribID := seedUser(t, g, "pm-contrib")
+	leaverID := seedUser(t, g, "pm-leaver")
+	hh := seedHouseholdRow(t, g, ownerID, "Per-Member", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+	addMember(t, g, hh.ID, contribID, model.RoleContributor, nil)
+	leftAt := time.Now().Add(-time.Hour)
+	addMember(t, g, hh.ID, leaverID, model.RoleContributor, &leftAt)
+
+	// Owner shares a balance_and_txns checking + a balance_only savings.
+	ownerChk := seedAccount(t, g, ownerID, "owner-chk")
+	ownerSav := seedAccount(t, g, ownerID, "owner-sav")
+	setBalance(t, g, ownerChk, "200")
+	setBalance(t, g, ownerSav, "300")
+	setShare(t, g, ownerChk.ID, hh.ID, model.VisibilityBalanceAndTxns)
+	setShare(t, g, ownerSav.ID, hh.ID, model.VisibilityBalanceOnly)
+
+	// Contributor shares one balance_and_txns account.
+	contribChk := seedAccount(t, g, contribID, "contrib-chk")
+	setBalance(t, g, contribChk, "100")
+	setShare(t, g, contribChk.ID, hh.ID, model.VisibilityBalanceAndTxns)
+
+	// In-grace leaver also has a shared account — must NOT appear.
+	leaverChk := seedAccount(t, g, leaverID, "leaver-chk")
+	setBalance(t, g, leaverChk, "9999")
+	setShare(t, g, leaverChk.ID, hh.ID, model.VisibilityBalanceAndTxns)
+
+	when := time.Now().Add(-time.Hour)
+	seedTxn(t, g, ownerID, ownerChk.ID, "-40", nil, when)   // owner spend
+	seedTxn(t, g, ownerID, ownerSav.ID, "-1000", nil, when) // balance_only, must be ignored
+	seedTxn(t, g, contribID, contribChk.ID, "-15", nil, when)
+
+	d, err := agg.Dashboard(ctx, hh.ID, household.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Dashboard: %v", err)
+	}
+	if len(d.Members) != 2 {
+		t.Fatalf("Members len = %d, want 2 (leaver excluded); got %+v", len(d.Members), d.Members)
+	}
+	byUser := map[int64]household.HouseholdMemberContribution{}
+	for _, m := range d.Members {
+		byUser[m.UserID] = m
+	}
+	owner := byUser[ownerID]
+	if owner.NetWorthContribution != "500" {
+		t.Errorf("owner NetWorthContribution = %q, want 500 (200 chk + 300 sav)", owner.NetWorthContribution)
+	}
+	if owner.SpendingContribution != "40" {
+		t.Errorf("owner SpendingContribution = %q, want 40 (only balance_and_txns)", owner.SpendingContribution)
+	}
+	if owner.AccountCount != 2 {
+		t.Errorf("owner AccountCount = %d, want 2 (both visibilities count toward net worth)", owner.AccountCount)
+	}
+	contrib := byUser[contribID]
+	if contrib.NetWorthContribution != "100" {
+		t.Errorf("contrib NetWorthContribution = %q, want 100", contrib.NetWorthContribution)
+	}
+	if contrib.SpendingContribution != "15" {
+		t.Errorf("contrib SpendingContribution = %q, want 15", contrib.SpendingContribution)
+	}
+	if _, leakedLeaver := byUser[leaverID]; leakedLeaver {
+		t.Errorf("in-grace leaver leaked into Members: %+v", d.Members)
+	}
+}
+
 func ptr[T any](v T) *T { return &v }
