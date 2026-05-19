@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -422,6 +423,69 @@ func TestInvestmentService_PortfolioSummary_MultiTenant(t *testing.T) {
 	}
 	if got.HoldingsCount != 0 || !got.TotalMarketValue.IsZero() {
 		t.Errorf("user B saw user A's data: %+v", got)
+	}
+}
+
+func TestInvestmentService_ImportCSV_EndToEnd(t *testing.T) {
+	svc, userID, accountID, _ := newInvestmentSvc(t)
+	csv := `Symbol,Description,Quantity,Last Price,Current Value,Cost Basis Total,Average Cost Basis,Type
+AAPL,APPLE INC,10,$184,"$1,840.00","$1,500.00",$150,Cash
+VTI,VANGUARD TOTAL,50,$240,"$12,000.00","$10,000.00",$200,Cash
+`
+	res, err := svc.ImportCSV(context.Background(), userID, accountID, strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Imported != 2 || res.Skipped != 0 || len(res.Errors) != 0 {
+		t.Fatalf("got %+v, want imported=2 skipped=0", res)
+	}
+	holdings, err := svc.ListLatest(context.Background(), userID)
+	if err != nil {
+		t.Fatalf("list latest: %v", err)
+	}
+	if len(holdings) != 2 {
+		t.Fatalf("len(holdings) = %d, want 2", len(holdings))
+	}
+	for _, h := range holdings {
+		if h.Source != "csv" {
+			t.Errorf("source = %q, want csv", h.Source)
+		}
+	}
+}
+
+func TestInvestmentService_ImportCSV_UnknownFormat(t *testing.T) {
+	svc, userID, accountID, _ := newInvestmentSvc(t)
+	_, err := svc.ImportCSV(context.Background(), userID, accountID, strings.NewReader("Foo,Bar\n1,2\n"))
+	if !errors.Is(err, service.ErrUnknownCSVFormat) {
+		t.Errorf("err = %v, want ErrUnknownCSVFormat", err)
+	}
+}
+
+func TestInvestmentService_ResolveInvestmentAccount(t *testing.T) {
+	svc, userID, _, g := newInvestmentSvc(t)
+	ctx := context.Background()
+
+	// The fixture seeds one investment-typed account → should resolve.
+	id, err := svc.ResolveInvestmentAccount(ctx, userID)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if id == 0 {
+		t.Errorf("got id 0, want fixture id")
+	}
+
+	// Add a second investment-typed account → should fail with ErrMissingAccountID.
+	second := &model.Account{
+		UserID: userID, Name: "Second-" + time.Now().Format("150405.000000"),
+		InstitutionSlug: "fixture", AccountType: "investment", Currency: "USD",
+	}
+	if err := g.Create(second).Error; err != nil {
+		t.Fatalf("seed second: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Account{}, second.ID) })
+
+	if _, err := svc.ResolveInvestmentAccount(ctx, userID); !errors.Is(err, service.ErrMissingAccountID) {
+		t.Errorf("err = %v, want ErrMissingAccountID", err)
 	}
 }
 

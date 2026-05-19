@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
+	"github.com/gregwym/offbook/backend/internal/service/ingestion"
 )
 
 // Investment source enum. Mirrors the CHECK constraint on
@@ -35,6 +37,8 @@ var (
 	ErrInvalidInvestmentSrc = errors.New("source must be one of: plaid, csv, manual")
 	ErrNegativeCostBasis    = errors.New("cost_basis must be >= 0")
 	ErrNegativeMarketValue  = errors.New("market_value must be >= 0")
+	ErrMissingAccountID     = errors.New("account_id is required: user has no unique investment account")
+	ErrUnknownCSVFormat     = errors.New("unknown CSV format: expected Vanguard or Fidelity holdings export")
 )
 
 // CreateInvestmentInput is the validated payload for snapshot creation.
@@ -239,4 +243,90 @@ func (s *InvestmentService) PortfolioSummary(ctx context.Context, userID int64) 
 	}
 
 	return out, nil
+}
+
+// ImportResult mirrors the JSON contract for the CSV import endpoint.
+type ImportResult struct {
+	Imported int                  `json:"imported"`
+	Skipped  int                  `json:"skipped"`
+	Errors   []ingestion.RowError `json:"errors"`
+	Format   string               `json:"format"`
+}
+
+// ResolveInvestmentAccount picks an account for an import when the caller
+// didn't supply one. Returns the lone investment-typed account or
+// ErrMissingAccountID when there are 0 or >1 matches. Used by both the
+// handler and CSV import to honor the "single investment account =
+// implicit destination" UX from #115.
+func (s *InvestmentService) ResolveInvestmentAccount(ctx context.Context, userID int64) (int64, error) {
+	accounts, _, err := s.acctRepo.List(ctx, userID, repository.AccountFilter{AccountType: "investment", Limit: 2})
+	if err != nil {
+		return 0, fmt.Errorf("list investment accounts: %w", err)
+	}
+	if len(accounts) != 1 {
+		return 0, ErrMissingAccountID
+	}
+	return accounts[0].ID, nil
+}
+
+// ImportCSV parses a Vanguard or Fidelity holdings export and creates one
+// snapshot per row (source='csv'). Each row is validated and persisted
+// independently; per-row errors are accumulated into the result instead
+// of aborting the whole import, so a single bad row doesn't lose the
+// good ones. Each row is its own single-row insert (no cross-row
+// invariant), so the GORM connection's SkipDefaultTransaction is fine
+// and we don't wrap in db.Transaction.
+func (s *InvestmentService) ImportCSV(ctx context.Context, userID, accountID int64, r io.Reader) (*ImportResult, error) {
+	// Confirm the destination account belongs to the user before parsing.
+	if _, err := s.acctRepo.GetByID(ctx, userID, accountID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrAccountNotFound
+		}
+		return nil, fmt.Errorf("validate account: %w", err)
+	}
+
+	parsed, err := ingestion.ParseHoldingsCSV(r)
+	if err != nil {
+		if errors.Is(err, ingestion.ErrUnknownCSVFormat) {
+			return nil, ErrUnknownCSVFormat
+		}
+		return nil, fmt.Errorf("parse csv: %w", err)
+	}
+
+	result := &ImportResult{
+		Format: parsed.Format,
+		Errors: append([]ingestion.RowError{}, parsed.Errors...),
+	}
+
+	for i, h := range parsed.Holdings {
+		in := CreateInvestmentInput{
+			AccountID:    accountID,
+			Ticker:       h.Ticker,
+			Quantity:     h.Quantity,
+			CostBasis:    h.CostBasis,
+			MarketValue:  h.MarketValue,
+			SnapshotDate: parsed.SnapshotDate,
+			Source:       InvestmentSourceCSV,
+		}
+		if h.Name != "" {
+			n := h.Name
+			in.Name = &n
+		}
+		if h.AssetClass != "" {
+			c := h.AssetClass
+			in.AssetClass = &c
+		}
+		if _, err := s.Create(ctx, userID, in); err != nil {
+			// Surface the broker symbol + the validation error so the
+			// frontend can render a list of offending rows.
+			result.Errors = append(result.Errors, ingestion.RowError{
+				Line:    i + 1, // 1-based holding index within parsed set
+				Message: fmt.Sprintf("%s: %s", h.Ticker, err.Error()),
+			})
+			result.Skipped++
+			continue
+		}
+		result.Imported++
+	}
+	return result, nil
 }
