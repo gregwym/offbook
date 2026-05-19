@@ -24,6 +24,8 @@ func NewInvestmentHandler(s *service.InvestmentService) *InvestmentHandler {
 func (h *InvestmentHandler) Register(g *gin.RouterGroup) {
 	g.POST("/investments", h.Create)
 	g.GET("/investments", h.List)
+	// /portfolio sits above /:id so the literal segment wins the route match.
+	g.GET("/investments/portfolio", h.Portfolio)
 	g.GET("/investments/:id", h.Get)
 }
 
@@ -115,6 +117,15 @@ func (h *InvestmentHandler) List(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": rows, "total": int64(len(rows))})
+}
+
+func (h *InvestmentHandler) Portfolio(c *gin.Context) {
+	summary, err := h.svc.PortfolioSummary(c.Request.Context(), auth.MustUserID(c.Request.Context()))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": summary})
 }
 
 func (h *InvestmentHandler) writeServiceError(c *gin.Context, err error) {
