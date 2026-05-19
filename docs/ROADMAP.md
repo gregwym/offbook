@@ -122,18 +122,20 @@ See [ADR-0006](ADR/0006-multi-tenant-model.md), [ADR-0007](ADR/0007-member-lifec
 
 ---
 
-## M6 — Investments [NOT STARTED]
+## M6 — Investments [DONE]
 
 **Goal:** Portfolio tracking.
 
-- [ ] Investment snapshot model (append-only)
-- [ ] Manual holdings entry (NUMERIC quantity for crypto)
-- [ ] CSV import for brokerage statements (Vanguard, Fidelity formats)
-- [ ] Portfolio summary: total value, allocation by asset class
-- [ ] Holdings table: cost basis, market value, unrealized G/L (all NUMERIC)
-- [ ] Allocation donut chart
+- [x] Investment snapshot model (append-only)
+- [x] Manual holdings entry (NUMERIC quantity for crypto)
+- [x] CSV import for brokerage statements (Vanguard, Fidelity formats)
+- [x] Portfolio summary: total value, allocation by asset class
+- [x] Holdings table: cost basis, market value, unrealized G/L (all NUMERIC)
+- [x] Allocation donut chart
 
 **Done criteria:** Enter 0.05123456789012345 BTC, see value without precision loss; enter VTSAX, see allocation chart.
+
+**Backlog filed:** today's P&L tile (#122) — requires daily snapshots or a price feed.
 
 ---
 
