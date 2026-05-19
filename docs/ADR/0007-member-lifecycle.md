@@ -26,7 +26,7 @@ Household membership changes over time. People move out, take a break, or come b
 
 **Purge on expiry.** When `NOW() - left_at > grace_period_days`, the member's `account_shares` rows are physically deleted and `household_members.purged_at` is set. Past contributions remain in historical aggregates because aggregates are computed from transaction history, not from membership state at query time.
 
-**Purge mechanism.** Lazy: the aggregator filters by the current time on every read, so correctness does not depend on the purge ever running. A `cmd/household-purge` runner is deferred to a follow-up issue and handles disk hygiene only.
+**Purge mechanism.** Lazy: the aggregator filters by the current time on every read, so correctness does not depend on the purge ever running. The `cmd/household-purge` runner (shipped in #161) handles disk hygiene — operators schedule it via cron / launchd / k8s CronJob.
 
 ## Rationale
 
@@ -40,5 +40,5 @@ Household membership changes over time. People move out, take a break, or come b
 
 - `household_members` carries `left_at TIMESTAMPTZ NULL` and `purged_at TIMESTAMPTZ NULL`. Soft-delete-safe uniqueness on `(household_id, user_id) WHERE purged_at IS NULL` so the same user can rejoin and (eventually) be purged repeatedly without UNIQUE collisions.
 - Aggregator (ADR-0008) is the single read-side enforcement point — it knows which members are "live" and which contribute only to historical sums.
-- The `cmd/household-purge` runner is non-essential for correctness; it can ship later without blocking M2.5.
+- The `cmd/household-purge` runner is non-essential for correctness — shipped in #161 as an idempotent CLI meant to be scheduled.
 - Owner-configurable grace exposes a `PATCH /households/:id` (or similar) with `grace_period_days`. UI lands with the Members page (hi-fi pending).
