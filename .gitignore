@@ -4,6 +4,7 @@ frontend/node_modules/
 
 # Build output
 backend/bin/
+backend/tmp/
 frontend/dist/
 
 # Environment
@@ -38,6 +39,7 @@ go.work.sum
 
 # Claude Code local settings
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Test coverage
 coverage/
