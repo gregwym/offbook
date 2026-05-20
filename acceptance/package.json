@@ -1,0 +1,15 @@
+{
+  "name": "offbook-acceptance",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.57.0",
+    "@types/pg": "^8.20.0",
+    "bcryptjs": "^3.0.3",
+    "pg": "^8.21.0"
+  }
+}
