@@ -35,6 +35,14 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 8. Commit, push, `gh pr create --body "Closes #{issue-number}"`.
 9. Move to next issue.
 
+## Autonomous QA
+- QA is manually triggered only. Do not run a standalone QA pass unless the user explicitly asks for it.
+- The same agent session should not be both developer and QA for the same change. Developer agents may run targeted verification, but they do not QA-certify their own work.
+- QA should work from `main`, preferably in a separate worktree, and should start its own isolated compose stack with `docker-compose.qa.yml` instead of using the development agent's running environment.
+- QA may use headless Chrome for browser verification.
+- Follow @docs/QA.md for QA runs: compare against the last QAed commit in `docs/qa/ledger.md`, record the reviewed commit, and include the "found at" commit when filing or commenting on bugs.
+- Acceptance tests live outside unit tests. They start as optional, manually run suites and are not merge-required until the owner explicitly promotes them.
+
 ## Git Discipline
 - Auto-commit completed work without asking.
 - **`main` is protected — all changes land via PR.** Never commit directly to `main`; always work on a feature branch (`{type}/{issue-number}-{slug}`) and push when opening/updating the PR.

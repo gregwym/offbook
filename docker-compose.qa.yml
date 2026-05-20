@@ -1,0 +1,14 @@
+services:
+  postgres:
+    ports: !override
+      - "15432:5432"
+
+  backend:
+    ports: !override
+      - "18000:8000"
+    environment:
+      FRONTEND_URL: http://localhost:15173
+
+  frontend:
+    ports: !override
+      - "15173:80"
