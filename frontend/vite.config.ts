@@ -12,6 +12,9 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), tailwindcss()],
     server: {
       port: 5173,
+      // Allow Tailscale MagicDNS (*.ts.net) and Bonjour (*.local) so dev server
+      // is reachable from phones/tablets without disabling Vite's host check.
+      allowedHosts: ['.ts.net', '.local'],
       proxy: {
         '/api': {
           target: proxyTarget,
