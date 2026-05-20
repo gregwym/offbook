@@ -81,7 +81,7 @@ QA service URLs:
 - Backend: `http://localhost:18000`
 - Postgres host port: `15432`
 
-The QA compose project name (`offbook-qa`) gives QA separate containers and Docker-managed identity. The separate worktree gives QA a separate `./data/postgres` bind-mounted database directory. The QA compose override gives QA separate host ports so it can run at the same time as the development stack.
+The QA compose project name (`offbook-qa`) gives QA separate containers and Docker-managed identity. The QA compose override gives QA separate host ports and a dedicated `qa_postgres_data` named volume, so the QA database is isolated even if someone accidentally runs the QA stack from the main development worktree. A separate worktree is still required to avoid file and branch conflicts with the development agent.
 
 Stop the QA stack when done:
 
@@ -89,7 +89,30 @@ Stop the QA stack when done:
 docker compose -p offbook-qa -f docker-compose.yml -f docker-compose.qa.yml down
 ```
 
+To reset only QA data, remove the QA volume after stopping the QA stack:
+
+```sh
+docker volume rm offbook-qa_qa_postgres_data
+```
+
 Use a dedicated Chrome profile for QA, for example under `/private/tmp/offbook-qa-chrome-profile`, so cookies and local storage do not bleed between development and QA.
+
+## QA Credentials
+
+QA credentials are fixed test personas for the isolated QA stack only. They are not secrets and must not be used in development, production, or any shared real-data environment.
+
+Default personas:
+
+| Persona | Email | Password | Purpose |
+| --- | --- | --- | --- |
+| Primary admin | `qa-admin@offbook.local` | `qa-admin-password-2026!` | First `/setup/admin` user, owner-level household flows, settings, invites |
+| Contributor | `qa-contributor@offbook.local` | `qa-contributor-password-2026!` | Household member with own accounts and share settings |
+| Viewer | `qa-viewer@offbook.local` | `qa-viewer-password-2026!` | View-only/member lifecycle and aggregate visibility checks |
+| Solo user | `qa-solo@offbook.local` | `qa-solo-password-2026!` | Personal-only scope, no-household empty states |
+
+On a fresh QA database, create the primary admin through `/setup/admin` with `invite_only` mode unless the test specifically covers local multi-tenant signup. Create the remaining personas through invite flows so QA exercises the product path.
+
+Acceptance tests should use these credentials by default and may recreate them after resetting the QA volume. If a test needs a one-off user, use a `qa+<suite>-<timestamp>@offbook.local` address and keep it inside the isolated QA stack.
 
 ## QA Ledger
 

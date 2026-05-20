@@ -2,6 +2,9 @@ services:
   postgres:
     ports: !override
       - "15432:5432"
+    volumes: !override
+      - qa_postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
 
   backend:
     ports: !override
@@ -12,3 +15,6 @@ services:
   frontend:
     ports: !override
       - "15173:80"
+
+volumes:
+  qa_postgres_data:

@@ -40,6 +40,7 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 - The same agent session should not be both developer and QA for the same change. Developer agents may run targeted verification, but they do not QA-certify their own work.
 - QA should work from `main`, preferably in a separate worktree, and should start its own isolated compose stack with `docker-compose.qa.yml` instead of using the development agent's running environment.
 - QA may use headless Chrome for browser verification.
+- QA credentials are defined in @docs/QA.md and are for the isolated QA stack only.
 - Follow @docs/QA.md for QA runs: compare against the last QAed commit in `docs/qa/ledger.md`, record the reviewed commit, and include the "found at" commit when filing or commenting on bugs.
 - Acceptance tests live outside unit tests. They start as optional, manually run suites and are not merge-required until the owner explicitly promotes them.
 
