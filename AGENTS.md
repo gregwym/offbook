@@ -48,6 +48,12 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 - If the Docker daemon isn't running, fix the daemon (Colima / Podman / Docker Desktop) — don't bypass with a native install. When containerization is blocked, stop and ask.
 - **Project-specific CLIs live in the repo, not the system.** Migration runners, code generators, and similar tools belong as `backend/cmd/<tool>/main.go` (or equivalent), invoked via `go run ./cmd/<tool>`. Example: `cmd/migrate` wraps `golang-migrate` — no system `migrate` binary needed. A teammate cloning the repo shouldn't have to `brew install` anything beyond the language toolchain.
 
+## Environment Isolation
+- **Every environment gets its own database.** Dev, test, prod (and any future staging) never share a DB. Sharing leaks fixtures between them — `make test` running against the dev DB has corrupted dev data in the past (test-fixture `categories` showing up in the user's category dropdown; see #183).
+- DB selection routes through `APP_ENV` (or equivalent), not a single shared `DATABASE_URL`. Each env resolves its own URL; prod refuses to start without an explicit one.
+- When adding a new entry point (CLI, cron, worker), make it env-aware too — it picks up the right DB automatically.
+- "Just use a `TEST_DATABASE_URL` env var" is not enough — the structural fix is config-layer isolation across all envs, not a Makefile flag.
+
 ## Plaid Sandbox
 - Set `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV=sandbox`, and `PLAID_TOKEN_KEY` (32-byte hex, `openssl rand -hex 32`) in `.env`.
 - Frontend entry point is `/connect` ("Connect Bank" in the personal sidebar). Click → Plaid Link opens → pick any sandbox institution (e.g. Chase) → sign in with `user_good` / `pass_good`. The page chains exchange → sync-accounts → sync-transactions, then navigates to `/accounts`.
