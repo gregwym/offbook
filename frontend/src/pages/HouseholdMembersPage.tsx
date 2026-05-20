@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Check, Copy, Mail, Trash2, Users } from 'lucide-react'
+import { DateDisplay } from '../components/DateDisplay'
+import { TimeAgo } from '../components/TimeAgo'
 import {
   createInvite,
   listMembers,
@@ -185,7 +187,7 @@ export function HouseholdMembersPage() {
                 <div className="min-w-0">
                   <div className="font-medium text-gray-900">User #{m.user_id}</div>
                   <div className="text-xs text-gray-500">
-                    Left {m.left_at ? new Date(m.left_at).toLocaleDateString() : 'recently'} ·
+                    Left {m.left_at ? <DateDisplay value={m.left_at.slice(0, 10)} /> : 'recently'} ·
                     can rejoin via a fresh invite within {detail.household.grace_period_days} days
                   </div>
                 </div>
@@ -239,7 +241,7 @@ function MemberRow({
           )}
         </div>
         <div className="mt-0.5 text-xs text-gray-500">
-          Joined {new Date(member.joined_at).toLocaleDateString()}
+          Joined <DateDisplay value={member.joined_at.slice(0, 10)} />
         </div>
       </div>
       {showControls ? (
@@ -388,7 +390,7 @@ function InviteModal({
                 </button>
               </div>
               <div className="text-[11px] text-gray-400">
-                Expires {new Date(lastInvite.invite.expires_at).toLocaleString()}.
+                Expires <TimeAgo when={lastInvite.invite.expires_at} />.
               </div>
             </div>
           )}

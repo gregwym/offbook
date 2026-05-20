@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Coins, Pencil, PiggyBank, Plus, Trash2 } from 'lucide-react'
 import { AmountDisplay } from '../components/AmountDisplay'
+import { DateDisplay } from '../components/DateDisplay'
 import {
   contributeToSharedGoal,
   createSharedGoal,
@@ -202,7 +203,7 @@ function GoalCard({
         <div className="min-w-0">
           <div className="truncate font-medium text-gray-900">{goal.name}</div>
           <div className="mt-0.5 text-xs text-gray-500">
-            {goal.target_date ? `By ${new Date(goal.target_date).toLocaleDateString()}` : 'No deadline'}
+            {goal.target_date ? <>By <DateDisplay value={goal.target_date} /></> : 'No deadline'}
           </div>
         </div>
         {canMutate && (

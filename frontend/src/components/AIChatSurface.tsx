@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import { Plus, Send, Square, Sparkles } from 'lucide-react'
 import type { UseBoundStore, StoreApi } from 'zustand'
 import type { AIMessage, AIModel, AIThread } from '../types/ai'
+import { TimeAgo } from './TimeAgo'
 
 type State = {
   threads: AIThread[]
@@ -155,7 +156,7 @@ export function AIChatSurface({
             >
               <div className="truncate">{t.title || `Thread ${t.id}`}</div>
               <div className="text-[11px] text-gray-400">
-                {new Date(t.updated_at).toLocaleString()}
+                <TimeAgo when={t.updated_at} />
               </div>
             </button>
           ))}
