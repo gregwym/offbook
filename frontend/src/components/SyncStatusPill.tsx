@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { Account } from '../types/account'
+import { TimeAgo } from './TimeAgo'
 
 // SyncStatusPill renders a compact traffic-light indicator for a Plaid-linked
 // account. Manual accounts (last_sync_status === null) render nothing — the
@@ -37,7 +38,7 @@ export function SyncStatusPill({ account }: { account: Account }) {
   )
 }
 
-function pillLabel(status: NonNullable<Account['last_sync_status']>, lastSyncedAt: string | null): string {
+function pillLabel(status: NonNullable<Account['last_sync_status']>, lastSyncedAt: string | null): ReactNode {
   switch (status) {
     case 'syncing':
       return 'Syncing…'
@@ -46,7 +47,9 @@ function pillLabel(status: NonNullable<Account['last_sync_status']>, lastSyncedA
     case 'never':
       return 'Not synced'
     case 'ok':
-      return lastSyncedAt ? `Synced ${formatRelative(lastSyncedAt)}` : 'Synced'
+      return lastSyncedAt ? (
+        <>Synced <TimeAgo when={lastSyncedAt} /></>
+      ) : 'Synced'
   }
 }
 
@@ -76,19 +79,3 @@ function dotTone(status: NonNullable<Account['last_sync_status']>): string {
   }
 }
 
-// formatRelative renders a coarse "Xm/h/d ago" — enough resolution for a
-// sync indicator. Anything older than 30 days falls back to a calendar date
-// so the pill doesn't claim "1y ago" forever.
-function formatRelative(iso: string): string {
-  const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return 'recently'
-  const diffSec = Math.max(0, Math.floor((Date.now() - then) / 1000))
-  if (diffSec < 60) return 'just now'
-  const mins = Math.floor(diffSec / 60)
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 30) return `${days}d ago`
-  return new Date(iso).toLocaleDateString()
-}

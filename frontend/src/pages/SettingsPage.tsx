@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertTriangle, Bot, Check, Landmark, Plug, Trash2, X } from 'lucide-react'
+import { TimeAgo } from '../components/TimeAgo'
 import {
   disconnectItem,
   dismissSyncError,
@@ -427,7 +428,7 @@ function SyncErrorsModal({ item, onClose }: { item: PlaidItem; onClose: () => vo
                       {row.error_code}
                     </span>
                     <span className="text-xs text-gray-500">
-                      {new Date(row.occurred_at).toLocaleString()}
+                      <TimeAgo when={row.occurred_at} />
                     </span>
                   </div>
                   <p className="mt-1 text-sm text-gray-900">{row.error_message}</p>
@@ -467,14 +468,14 @@ function SyncErrorsModal({ item, onClose }: { item: PlaidItem; onClose: () => vo
   )
 }
 
-function statusSummary(it: PlaidItem): string {
+function statusSummary(it: PlaidItem): ReactNode {
   const status = it.last_sync_status
   switch (status) {
     case 'ok':
-      return it.last_synced_at ? `Synced ${formatRelative(it.last_synced_at)}` : 'Synced'
+      return it.last_synced_at ? <>Synced <TimeAgo when={it.last_synced_at} /></> : 'Synced'
     case 'ok_with_errors':
       return it.last_synced_at
-        ? `Synced ${formatRelative(it.last_synced_at)} (with errors)`
+        ? <>Synced <TimeAgo when={it.last_synced_at} /> (with errors)</>
         : 'Synced (with errors)'
     case 'syncing':
       return 'Syncing…'
@@ -485,20 +486,6 @@ function statusSummary(it: PlaidItem): string {
     default:
       return status
   }
-}
-
-function formatRelative(iso: string): string {
-  const t = new Date(iso).getTime()
-  if (Number.isNaN(t)) return 'recently'
-  const diff = Math.max(0, Math.floor((Date.now() - t) / 1000))
-  if (diff < 60) return 'just now'
-  const mins = Math.floor(diff / 60)
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 30) return `${days}d ago`
-  return new Date(iso).toLocaleDateString()
 }
 
 function errMsg(err: unknown): string {

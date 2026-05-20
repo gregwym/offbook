@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Plus, Sparkles, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
+import { DateDisplay } from '../components/DateDisplay'
 import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
 import { useAccountsStore } from '../store/accountsStore'
 import { useCategoriesStore } from '../store/categoriesStore'
@@ -280,7 +281,7 @@ type RowProps = {
 function TransactionRow({ tx, account, categories, currentCategory, onCategoryChange, onCreateRule, onDelete }: RowProps) {
   return (
     <tr className="hover:bg-gray-50">
-      <td className="px-3 py-2 text-gray-700">{tx.transaction_date}</td>
+      <td className="px-3 py-2 text-gray-700"><DateDisplay value={tx.transaction_date} /></td>
       <td className="px-3 py-2 text-gray-900">{tx.description ?? '—'}</td>
       <td className="px-3 py-2 text-gray-700">{tx.merchant_name ?? '—'}</td>
       <td className="px-3 py-2 text-right">

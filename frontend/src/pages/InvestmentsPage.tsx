@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { LineChart, Plus, TrendingUp } from 'lucide-react'
 import { AmountDisplay } from '../components/AmountDisplay'
+import { DateDisplay } from '../components/DateDisplay'
 import { AllocationDonut } from '../components/InvestmentsCharts'
 import { useAccountsStore } from '../store/accountsStore'
 import { useInvestmentsStore } from '../store/investmentsStore'
@@ -476,7 +477,7 @@ function SnapshotHistoryModal({ inv, account, fetchHistory, onClose }: HistoryPr
                   const gl = computeGainLoss(r)
                   return (
                     <tr key={r.id}>
-                      <Td>{r.snapshot_date}</Td>
+                      <Td><DateDisplay value={r.snapshot_date} /></Td>
                       <Td align="right" className="tabular-nums">{formatQuantity(r.quantity)}</Td>
                       <Td align="right" className="tabular-nums"><AmountDisplay amount={r.cost_basis} currency="USD" /></Td>
                       <Td align="right" className="tabular-nums"><AmountDisplay amount={r.market_value} currency="USD" /></Td>
