@@ -270,6 +270,12 @@ func (c *SDKClient) SyncTransactions(ctx context.Context, accessToken, cursor st
 	if cursor != "" {
 		req.SetCursor(cursor)
 	}
+	// Opt in to personal_finance_category on every row. Without this flag
+	// Plaid omits PFC for new items, so MapPlaidCategory("","") returns
+	// (0, false) and the row stays uncategorized — #181.
+	opts := plaid.NewTransactionsSyncRequestOptions()
+	opts.SetIncludePersonalFinanceCategory(true)
+	req.SetOptions(*opts)
 	resp, _, err := c.api.PlaidApi.TransactionsSync(ctx).TransactionsSyncRequest(*req).Execute()
 	if err != nil {
 		return SyncTransactionsPage{}, fmt.Errorf("plaid: transactions/sync: %w", err)
