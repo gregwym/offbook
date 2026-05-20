@@ -66,7 +66,11 @@ func (r *investmentRepo) ListLatestPerHolding(ctx context.Context, userID int64)
 	// SELECT so the final result can be ordered however we like (here:
 	// stable by account_id, then ticker) without breaking the DISTINCT ON
 	// requirement that its ORDER BY start with the same columns.
-	var out []model.Investment
+	//
+	// `out` is initialized non-nil so the JSON handler serializes an empty
+	// result as `[]` rather than `null` (#180). encoding/json renders nil
+	// slices as `null`, which crashed the frontend's `holdings.length` read.
+	out := make([]model.Investment, 0)
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT * FROM (
 			SELECT DISTINCT ON (account_id, ticker) *
@@ -86,7 +90,7 @@ func (r *investmentRepo) ListLatestPairPerHolding(ctx context.Context, userID in
 	// Window function picks the two newest snapshots per holding.
 	// Single query — paired-rows pattern via ROW_NUMBER beats two
 	// separate DISTINCT ON queries that would have to be zipped in Go.
-	var out []model.Investment
+	out := make([]model.Investment, 0)
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT id, user_id, account_id, ticker, name, asset_class,
 		       quantity, cost_basis, market_value,
@@ -111,7 +115,7 @@ func (r *investmentRepo) ListLatestPairPerHolding(ctx context.Context, userID in
 
 func (r *investmentRepo) ListSnapshotsByHolding(ctx context.Context, userID, accountID int64, ticker string) ([]model.Investment, error) {
 	tk := strings.ToUpper(strings.TrimSpace(ticker))
-	var out []model.Investment
+	out := make([]model.Investment, 0)
 	err := r.db.WithContext(ctx).
 		Where("user_id = ? AND account_id = ? AND UPPER(ticker) = ?", userID, accountID, tk).
 		Order("snapshot_date ASC, id ASC").

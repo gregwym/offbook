@@ -7,7 +7,10 @@ import type {
 
 export async function listLatestHoldings(): Promise<Investment[]> {
   const res = await apiClient.get<ApiList<Investment>>('/investments')
-  return res.data.data
+  // The backend fix in #180 returns `[]` for the empty case, but normalize
+  // here too so stale containers or future regressions don't crash the page
+  // (`holdings.length` reads further down the call stack).
+  return res.data.data ?? []
 }
 
 export async function listSnapshotHistory(
@@ -17,7 +20,7 @@ export async function listSnapshotHistory(
   const res = await apiClient.get<ApiList<Investment>>('/investments', {
     params: { account_id: accountID, ticker },
   })
-  return res.data.data
+  return res.data.data ?? []
 }
 
 export async function createInvestment(
