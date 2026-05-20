@@ -116,28 +116,32 @@ Acceptance tests should use these credentials by default and may recreate them a
 
 ## QA Ledger
 
-Maintain a lightweight ledger at `docs/qa/ledger.md`. If it does not exist, create it during the first QA run.
+Use GitHub Discussion #199 as the shared QA Ledger:
 
-Each full or scoped QA run gets an entry:
+- `https://github.com/gregwym/offbook/discussions/199`
+
+Do not record QA run history in committed repo files. A QA run should append a comment to Discussion #199 after filing or updating any issues. This keeps QA bookkeeping shared across agents without creating PRs only for operational state.
+
+Each full or scoped QA run gets a discussion comment:
 
 ```md
-## YYYY-MM-DD HH:MM PT — <scope>
+## QA Run — YYYY-MM-DD HH:MM PT — <scope>
 
 - Reviewed commit: `<sha>`
 - Compared from: `<previous-reviewed-sha>` or `none`
-- Branch: `<branch>`
+- Branch/target: `<branch | PR | commit>`
 - Trigger: `<manual user request summary>`
-- Environment: `<compose/dev/browser details>`
+- Environment: `<offbook-qa compose stack, browser, persona details>`
 - Result: `<pass | issues filed | blocked>`
-- Issues filed:
-  - `#123` — <title> — found at `<sha>`
-- Issues updated:
-  - `#122` — <comment summary>
-- Acceptance tests added/updated: `<none | paths>`
+- Issues filed: `<none | #123>`
+- Issues updated: `<none | #122>`
+- Acceptance tests: `<not run | GitHub Actions run/check/artifact link | suites>`
 - Notes: <short residual risk>
+
+-- Codex QA
 ```
 
-The most recent `Reviewed commit` in this ledger is the last QAed commit. At the start of a QA run, compare it to `HEAD`:
+The most recent QA run comment in Discussion #199 is the source of truth for the last QAed commit. At the start of a QA run, compare that commit to the target under review:
 
 ```sh
 git rev-parse HEAD
@@ -159,7 +163,7 @@ Required issue body fields:
 ## Found At
 - Commit: `<sha>`
 - Branch: `<branch>`
-- QA run: `<ledger timestamp or scope>`
+- QA run: `Discussion #199 comment <url>`
 
 ## Environment
 
@@ -193,7 +197,7 @@ If a matching issue already exists, comment instead of creating a duplicate. The
 
 1. Read the product contract files.
 2. Check worktree and branch.
-3. Read the latest QA ledger entry and compute the delta from the last reviewed commit.
+3. Read the latest QA Ledger comment in Discussion #199 and compute the delta from the last reviewed commit.
 4. Check open GitHub issues to avoid duplicates.
 5. Start or confirm the isolated QA compose stack and backend health.
 6. Log in with the test personas required for the run.
@@ -202,7 +206,7 @@ If a matching issue already exists, comment instead of creating a duplicate. The
 9. Use API/database inspection to verify privacy and data-shape claims.
 10. File or update issues with evidence and `Found At`.
 11. Add or update acceptance tests when a core requirement is stable enough to automate.
-12. Append the ledger entry.
+12. Append a QA Ledger comment to Discussion #199.
 
 Critical baseline routes:
 
@@ -295,6 +299,13 @@ Initial suites to build:
    - scope switcher usable on mobile
    - AI composer visible on mobile
    - primary actions meet mobile tap-target expectations
+
+Acceptance test run history:
+
+- Manual QA narrative belongs in Discussion #199.
+- Automated acceptance test history should eventually live in GitHub Actions runs, non-required checks, logs, screenshots, and uploaded artifacts.
+- When acceptance suites are introduced, publish a GitHub Actions run or check result against the reviewed commit and link it from the Discussion #199 QA run comment.
+- Keep acceptance checks non-required until the owner explicitly promotes a stable subset.
 
 Promotion rule:
 

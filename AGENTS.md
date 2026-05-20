@@ -41,7 +41,7 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 - QA should work from `main`, preferably in a separate worktree, and should start its own isolated compose stack with `docker-compose.qa.yml` instead of using the development agent's running environment.
 - QA may use headless Chrome for browser verification.
 - QA credentials are defined in @docs/QA.md and are for the isolated QA stack only.
-- Follow @docs/QA.md for QA runs: compare against the last QAed commit in `docs/qa/ledger.md`, record the reviewed commit, and include the "found at" commit when filing or commenting on bugs.
+- Follow @docs/QA.md for QA runs: use GitHub Discussion #199 as the QA Ledger, compare against the last QAed commit recorded there, and include the "found at" commit when filing or commenting on bugs.
 - Acceptance tests live outside unit tests. They start as optional, manually run suites and are not merge-required until the owner explicitly promotes them.
 
 ## Git Discipline
