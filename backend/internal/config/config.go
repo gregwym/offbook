@@ -10,7 +10,16 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// AppEnv is the environment label that drives DB selection and any other
+// per-env behavior. See ResolveDatabaseURL.
+const (
+	AppEnvDev  = "dev"
+	AppEnvTest = "test"
+	AppEnvProd = "prod"
+)
+
 type Config struct {
+	AppEnv         string // dev | test | prod (see Resolve* helpers)
 	Port           string
 	DatabaseURL    string
 	FrontendURL    string
@@ -42,6 +51,46 @@ func (c Config) ClaudeConfigured() bool {
 	return c.ClaudeAPIKey != ""
 }
 
+// ResolveAppEnv normalizes and validates APP_ENV. Empty → "dev" (the default
+// for a fresh local checkout).
+func ResolveAppEnv(raw string) (string, error) {
+	if raw == "" {
+		return AppEnvDev, nil
+	}
+	switch raw {
+	case AppEnvDev, AppEnvTest, AppEnvProd:
+		return raw, nil
+	default:
+		return "", fmt.Errorf("APP_ENV must be %s|%s|%s, got %q",
+			AppEnvDev, AppEnvTest, AppEnvProd, raw)
+	}
+}
+
+// ResolveDatabaseURL picks the DB URL for the given app env. Explicit
+// DATABASE_URL always wins (this is how docker-compose and prod inject the
+// connection string). When unset:
+//   - dev → local Postgres, database "offbook_dev"
+//   - test → local Postgres, database "offbook_test"
+//   - prod → no default; returns an error (force operators to be explicit)
+//
+// This is the structural fix for #183: every env resolves its own URL through
+// one place, so the dev DB and the test DB can never accidentally collide.
+func ResolveDatabaseURL(appEnv, explicitURL string) (string, error) {
+	if explicitURL != "" {
+		return explicitURL, nil
+	}
+	switch appEnv {
+	case AppEnvDev:
+		return "postgres://offbook:offbook@localhost:5432/offbook_dev?sslmode=disable", nil
+	case AppEnvTest:
+		return "postgres://offbook:offbook@localhost:5432/offbook_test?sslmode=disable", nil
+	case AppEnvProd:
+		return "", errors.New("APP_ENV=prod requires DATABASE_URL to be set explicitly (no default)")
+	default:
+		return "", fmt.Errorf("unknown APP_ENV %q", appEnv)
+	}
+}
+
 // Load reads env vars (with .env support) and validates required combinations.
 // Fails fast on misconfiguration so the server never starts with broken
 // invariants (e.g. PLAID_CLIENT_ID set but no encryption key — would silently
@@ -53,9 +102,19 @@ func Load() (Config, error) {
 	loadDotenv(".env")
 	loadDotenv("../.env")
 
+	appEnv, err := ResolveAppEnv(os.Getenv("APP_ENV"))
+	if err != nil {
+		return Config{}, err
+	}
+	dbURL, err := ResolveDatabaseURL(appEnv, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
+		AppEnv:         appEnv,
 		Port:           getenv("PORT", "8000"),
-		DatabaseURL:    os.Getenv("DATABASE_URL"),
+		DatabaseURL:    dbURL,
 		FrontendURL:    getenv("FRONTEND_URL", "http://localhost:5173"),
 		MigrationsPath: getenv("MIGRATIONS_PATH", "migrations"),
 		SessionSecret:  os.Getenv("SESSION_SECRET"),

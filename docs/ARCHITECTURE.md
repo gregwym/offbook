@@ -287,7 +287,8 @@ func (h *AccountHandler) Create(c *gin.Context) {
 
 | Variable | Required | Description |
 |---|---|---|
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `APP_ENV` | No | `dev` \| `test` \| `prod`. Default `dev`. Selects the default DB when `DATABASE_URL` is unset: `dev` → `offbook_dev`, `test` → `offbook_test`, `prod` → no default (refuses to start). See #183. |
+| `DATABASE_URL` | Yes in prod, optional elsewhere | PostgreSQL connection string. Overrides the `APP_ENV`-derived default. docker-compose injects this internally so the container uses the in-network `postgres` hostname. |
 | `PORT` | No | Backend port (default: 8000) |
 | `FRONTEND_URL` | No | CORS origin (default: http://localhost:5173) |
 | `MIGRATIONS_PATH` | No | Path to golang-migrate SQL dir (default: `migrations`) |

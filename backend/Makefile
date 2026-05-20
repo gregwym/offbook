@@ -13,6 +13,12 @@ PIDFILE    ?= /tmp/offbook-server.pid
 LOGFILE    ?= /tmp/offbook-server.log
 HEALTH_URL  = http://localhost:$(PORT)/api/v1/health
 
+# Env isolation (#183): dev / test / prod each resolve their own DB through
+# internal/config. `make dev` runs against APP_ENV=dev (offbook_dev DB);
+# `make test` runs against APP_ENV=test (offbook_test DB). Override with
+# DATABASE_URL on either if you need to point at a non-local Postgres.
+TEST_DATABASE_URL ?= postgres://offbook:offbook@localhost:5432/offbook_test?sslmode=disable
+
 .PHONY: help dev stop restart smoke test test-v test-fast lint vet build verify clean routes logs
 
 help:
@@ -39,7 +45,7 @@ stop:
 	@echo "stopped (port $(PORT) free)"
 
 dev: stop
-	@go run ./cmd/server > $(LOGFILE) 2>&1 & echo $$! > $(PIDFILE)
+	@APP_ENV=dev go run ./cmd/server > $(LOGFILE) 2>&1 & echo $$! > $(PIDFILE)
 	@echo "started (pid $$(cat $(PIDFILE)), log $(LOGFILE))"
 
 restart: stop dev
@@ -62,14 +68,19 @@ smoke: dev
 # -race -p 1 mirrors CI exactly. Integration tests share one DATABASE_URL,
 # so parallel packages step on each other's rows. Use `make test-fast` for
 # tight dev loops on a single package, but `make test` is what CI sees.
+#
+# APP_ENV=test + DATABASE_URL=offbook_test guarantees the test suite cannot
+# touch the dev DB (#183). Migrations run first so a fresh checkout works
+# without manual setup.
 test:
-	@go test -race -p 1 ./...
+	@APP_ENV=test DATABASE_URL='$(TEST_DATABASE_URL)' go run ./cmd/migrate up >/dev/null
+	@APP_ENV=test DATABASE_URL='$(TEST_DATABASE_URL)' go test -race -p 1 ./...
 
 test-fast:
-	@go test ./...
+	@APP_ENV=test DATABASE_URL='$(TEST_DATABASE_URL)' go test ./...
 
 test-v:
-	@go test -race -p 1 -v ./...
+	@APP_ENV=test DATABASE_URL='$(TEST_DATABASE_URL)' go test -race -p 1 -v ./...
 
 lint:
 	@docker run --rm -v "$$PWD":/app -w /app golangci/golangci-lint:latest-alpine golangci-lint run ./...
