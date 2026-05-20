@@ -270,6 +270,26 @@ func portfolioCreate(
 func intPtr(v int64) *int64   { return &v }
 func strPtr(s string) *string { return &s }
 
+// TestInvestmentService_ListLatest_EmptyReturnsNonNilSlice guards against
+// #180: an empty result was a nil slice, which encoding/json serialized as
+// `null`. The frontend read `holdings.length` on that null and the page
+// crashed before the empty state could render. The fix is in
+// investment_repo.go (init with make([]…, 0)); this test pins the contract.
+func TestInvestmentService_ListLatest_EmptyReturnsNonNilSlice(t *testing.T) {
+	svc, userID, _, _ := newInvestmentSvc(t)
+
+	rows, err := svc.ListLatest(context.Background(), userID)
+	if err != nil {
+		t.Fatalf("ListLatest: %v", err)
+	}
+	if rows == nil {
+		t.Fatal("ListLatest returned nil slice; must be non-nil so JSON renders [] not null")
+	}
+	if len(rows) != 0 {
+		t.Errorf("len(rows) = %d, want 0 for a user with no investments", len(rows))
+	}
+}
+
 func TestInvestmentService_PortfolioSummary_EmptyReturnsZeros(t *testing.T) {
 	svc, userID, _, _ := newInvestmentSvc(t)
 
