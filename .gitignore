@@ -1,6 +1,9 @@
 # Dependencies
 backend/vendor/
 frontend/node_modules/
+acceptance/node_modules/
+.pnpm-store/
+.cache/
 
 # Build output
 backend/bin/
@@ -9,6 +12,7 @@ frontend/dist/
 
 # Environment
 .env
+.env.qa
 .env.local
 .env.*.local
 
@@ -44,3 +48,6 @@ go.work.sum
 # Test coverage
 coverage/
 *.coverprofile
+
+# Acceptance test output
+acceptance/reports/

@@ -2,7 +2,7 @@
 
 Offbook QA is a manually triggered role. The same agent session should not both implement a change and certify it as QA. A developer agent may run focused checks while building, but autonomous QA starts only when the user explicitly asks for it, for example: "be QA", "run QA", "QA issue #123", or "QA since the last reviewed commit."
 
-QA work is evidence gathering, issue filing, and acceptance-test development. It must not make product code changes unless the user explicitly switches the session from QA to development. QA should normally use headless Chrome for browser verification.
+QA work is evidence gathering, issue filing, and acceptance-test development. It must not make product code changes unless the user explicitly switches the session from QA to development. Browser automation uses Playwright with headless Chromium.
 
 ## Product Contract
 
@@ -50,7 +50,7 @@ QA agents:
 
 If the user asks the current agent to fix an issue found during QA, treat that as a role switch. Record the QA finding first, then stop calling the resulting work QA certification.
 
-## Worktree and Environment Isolation
+## Worktree And Environment Isolation
 
 QA should not share a working tree, containers, ports, browser profile, or database volume with an active development agent.
 
@@ -69,9 +69,19 @@ git -C ../offbook-qa pull --ff-only
 
 Run QA from the QA worktree. Use a branch or detached commit only when the user explicitly asks to QA that target. Do not switch the developer's active worktree.
 
+QA tooling requires a visible QA-mode signal. The default signal is running from a worktree whose directory name is `offbook-qa` or ends in `-qa`. If a scoped QA run must happen elsewhere, explicitly set:
+
+```sh
+export OFFBOOK_ROLE=qa
+```
+
+Helper scripts refuse to run without one of those signals, making accidental dev/QA role mixing visible.
+
 Default isolated QA stack:
 
 ```sh
+cp .env.qa.example .env.qa
+# Edit .env.qa with a QA-only SESSION_SECRET and optional QA-only Plaid sandbox keys.
 docker compose -p offbook-qa -f docker-compose.yml -f docker-compose.qa.yml up -d --build
 ```
 
@@ -82,6 +92,8 @@ QA service URLs:
 - Postgres host port: `15432`
 
 The QA compose project name (`offbook-qa`) gives QA separate containers and Docker-managed identity. The QA compose override gives QA separate host ports and a dedicated `qa_postgres_data` named volume, so the QA database is isolated even if someone accidentally runs the QA stack from the main development worktree. A separate worktree is still required to avoid file and branch conflicts with the development agent.
+
+The backend container runs migrations on boot when `MIGRATIONS_PATH=/app/migrations` is set. On a cold QA volume, `docker compose -p offbook-qa -f docker-compose.yml -f docker-compose.qa.yml up -d --build` should leave the DB migrated and `/setup/admin` renderable.
 
 Stop the QA stack when done:
 
@@ -97,22 +109,28 @@ docker volume rm offbook-qa_qa_postgres_data
 
 Use a dedicated Chrome profile for QA, for example under `/private/tmp/offbook-qa-chrome-profile`, so cookies and local storage do not bleed between development and QA.
 
-## QA Credentials
+## QA Environment And Credentials
 
-QA credentials are fixed test personas for the isolated QA stack only. They are not secrets and must not be used in development, production, or any shared real-data environment.
+The QA compose override loads backend environment from `.env.qa` and `.env.qa.local`, not the repo-root `.env`. This keeps QA Plaid sandbox credentials and `PLAID_TOKEN_KEY` separate from development. `.env.qa.local` is generated or edited locally and is gitignored.
+
+QA persona emails are fixed. Passwords are derived from `QA_SECRET` by the acceptance fixture loader, so they are reproducible without committing plaintext credentials. If `QA_SECRET` is absent, `command make acceptance` writes a generated value to `.env.qa.local`; use that file for manual login during the same QA run.
 
 Default personas:
 
-| Persona | Email | Password | Purpose |
-| --- | --- | --- | --- |
-| Primary admin | `qa-admin@offbook.local` | `qa-admin-password-2026!` | First `/setup/admin` user, owner-level household flows, settings, invites |
-| Contributor | `qa-contributor@offbook.local` | `qa-contributor-password-2026!` | Household member with own accounts and share settings |
-| Viewer | `qa-viewer@offbook.local` | `qa-viewer-password-2026!` | View-only/member lifecycle and aggregate visibility checks |
-| Solo user | `qa-solo@offbook.local` | `qa-solo-password-2026!` | Personal-only scope, no-household empty states |
+| Persona | Email | Purpose |
+| --- | --- | --- |
+| Primary admin | `qa-admin@offbook.local` | First `/setup/admin` user, owner-level household flows, settings, invites |
+| Contributor | `qa-contributor@offbook.local` | Household member with own accounts and share settings |
+| Viewer | `qa-viewer@offbook.local` | View-only/member lifecycle and aggregate visibility checks |
+| Solo user | `qa-solo@offbook.local` | Personal-only scope and no-household empty states |
 
-On a fresh QA database, create the primary admin through `/setup/admin` with `invite_only` mode unless the test specifically covers local multi-tenant signup. Create the remaining personas through invite flows so QA exercises the product path.
+The fixture loader provisions these personas idempotently:
 
-Acceptance tests should use these credentials by default and may recreate them after resetting the QA volume. If a test needs a one-off user, use a `qa+<suite>-<timestamp>@offbook.local` address and keep it inside the isolated QA stack.
+```sh
+node acceptance/fixtures/bootstrap.mjs
+```
+
+`command make acceptance` invokes the loader before running browser suites. If a test needs a one-off user, use a `qa+<suite>-<timestamp>@offbook.local` address and keep it inside the isolated QA stack.
 
 ## QA Ledger
 
@@ -120,7 +138,7 @@ Use GitHub Discussion #199 as the shared QA Ledger:
 
 - `https://github.com/gregwym/offbook/discussions/199`
 
-Do not record QA run history in committed repo files. A QA run should append a comment to Discussion #199 after filing or updating any issues. This keeps QA bookkeeping shared across agents without creating PRs only for operational state.
+Do not record QA run history in committed repo files. A QA run should append a comment to Discussion #199 after filing or updating any issues.
 
 Each full or scoped QA run gets a discussion comment:
 
@@ -141,7 +159,13 @@ Each full or scoped QA run gets a discussion comment:
 -- Codex QA
 ```
 
-The most recent QA run comment in Discussion #199 is the source of truth for the last QAed commit. At the start of a QA run, compare that commit to the target under review:
+The most recent QA run comment in Discussion #199 is the source of truth for the last QAed commit. Fetch it with:
+
+```sh
+scripts/qa-last-reviewed.sh
+```
+
+Then compare that commit to the target under review:
 
 ```sh
 git rev-parse HEAD
@@ -186,6 +210,20 @@ Required issue body fields:
 
 If a matching issue already exists, comment instead of creating a duplicate. The comment must still include `Found At: <sha>` if the failure is reproduced at a new commit.
 
+When a QA-filed bug is fixed, re-test it before closing. The close comment must include:
+
+```md
+## QA Re-Verification
+
+- Verified Fixed At: `<sha>`
+- Verified By: `<QA ledger comment URL or GitHub Actions run URL>`
+- Result: `<pass | still failing>`
+
+-- Codex QA
+```
+
+Apply `qa-verified` on verified close. Use `qa-needs-verify` for a merged fix that still needs a QA re-test.
+
 ## Severity
 
 - P0: privacy leak, auth bypass, cross-user data exposure, destructive action without confirmation.
@@ -197,35 +235,31 @@ If a matching issue already exists, comment instead of creating a duplicate. The
 
 1. Read the product contract files.
 2. Check worktree and branch.
-3. Read the latest QA Ledger comment in Discussion #199 and compute the delta from the last reviewed commit.
+3. Run `scripts/qa-last-reviewed.sh` and compute the delta from the last reviewed commit.
 4. Check open GitHub issues to avoid duplicates.
 5. Start or confirm the isolated QA compose stack and backend health.
 6. Log in with the test personas required for the run.
-7. Run browser smoke over changed routes and baseline critical routes.
+7. Run `command make acceptance`, or `command make qa-smoke` for a baseline-only run, then add changed-route checks as needed.
 8. Run targeted workflow checks from the design contract.
 9. Use API/database inspection to verify privacy and data-shape claims.
 10. File or update issues with evidence and `Found At`.
 11. Add or update acceptance tests when a core requirement is stable enough to automate.
-12. Append a QA Ledger comment to Discussion #199.
+12. Append a QA Ledger comment to Discussion #199, manually or with `scripts/qa-append-ledger.sh <markdown-file>`.
 
-Critical baseline routes:
-
-- Personal: `/dashboard`, `/accounts`, `/transactions`, `/rules`, `/budgets`, `/savings-goals`, `/investments`, `/import`, `/ai`, `/settings`.
-- Household: `/h/dashboard`, `/h/budgets`, `/h/goals`, `/h/members`, `/h/ai`, `/h/settings`.
-- Auth: `/setup/admin`, `/signin`, `/signup`.
+The canonical baseline route list lives in `acceptance/smoke/baseline.spec.ts`. It covers auth, personal, and household routes and asserts page load, no console/runtime errors, no 5xx responses, and no mobile horizontal overflow.
 
 Browser checks:
 
 - Desktop: `1280x900`.
 - Mobile: `393x852` with iPhone Safari user agent.
-- Use headless Chrome unless a bug specifically requires another browser.
+- Use Playwright headless Chromium unless a bug specifically requires another browser.
 - Use the isolated QA frontend URL, normally `http://localhost:15173`.
 - Capture uncaught exceptions, console errors, blank page state, network 5xx responses, and horizontal overflow.
 - For mobile, verify primary controls remain visible and usable.
 
 ## Acceptance Test Suites
 
-Acceptance tests are separate from unit tests and from `make verify`. They should exercise user-level product requirements through the running app and API. They start as optional, manually run checks and are not required for merging until the owner explicitly promotes them.
+Acceptance tests are separate from unit tests and from `make verify`. They exercise user-level product requirements through the running app and API. They start as optional, manually run checks and are not required for merging until the owner explicitly promotes them.
 
 Location:
 
@@ -233,93 +267,26 @@ Location:
 - Test fixtures and personas: `acceptance/fixtures/`.
 - Reports and screenshots: ignored output under `acceptance/reports/`.
 
-Expected command shape once implemented:
+Command:
 
 ```sh
 command make acceptance
 ```
 
-Acceptance tests should target the isolated QA stack by default, not the developer stack. If they need to start services themselves, they should use the `offbook-qa` compose project and `docker-compose.qa.yml` ports.
+Plaid sandbox acceptance must not drive the Plaid Link iframe. Use `acceptance/plaid/helper.mjs` to mint a public token through `/sandbox/public_token/create`, exchange it through `/api/v1/plaid/link/exchange`, then sync accounts and transactions through Offbook. A smaller browser smoke should still assert `/connect` renders and the Plaid Link button mounts.
 
 Initial suites to build:
 
-1. Auth and setup
-   - first admin setup
-   - invite-only signup
-   - signin/signout
-   - unauthorized redirects
+1. Auth and setup: first admin setup, invite-only signup, signin/signout, unauthorized redirects.
+2. Personal finance core: create account, PII masking/reveal, create/categorize transaction, dashboard totals.
+3. Plaid sandbox smoke: public-token helper, exchange, sync accounts, sync transactions, no duplicate rows on re-sync.
+4. Budgets and goals: create budget, spend calculation, over-budget warning, savings goal contribution.
+5. Investments: empty portfolio, crypto precision, allocation summary, CSV import happy path.
+6. Household privacy: invite member, private/balance-only/balance-and-transactions visibility, aggregate-only household UI/API.
+7. Household lifecycle: leave, grace, rejoin, last-owner protection, purge preserving historical aggregates.
+8. AI privacy: personal/household context exclusions and context-preview parity with provider-bound payload.
+9. Responsive contract: mobile overflow, scope switcher, AI composer, and primary tap targets.
 
-2. Personal finance core
-   - create account
-   - PII masked by default and revealable only from account PII surface
-   - create transaction
-   - categorize transaction
-   - dashboard totals update
+Each suite should write or link machine-readable run history. Today, manually link the local run output or note `not run` in the QA Ledger. When these suites are promoted into CI, GitHub Actions runs, checks, and artifacts become the durable acceptance-test run history. QA Ledger comments should then link the relevant Actions run/check/artifact instead of duplicating full logs in Discussion #199.
 
-3. Plaid sandbox smoke
-   - connect sandbox institution
-   - sync accounts
-   - sync transactions
-   - re-sync does not duplicate
-
-4. Budgets and goals
-   - create budget
-   - budget spend calculation
-   - over-budget warning
-   - create savings goal and contribution
-
-5. Investments
-   - empty portfolio renders
-   - crypto precision is preserved
-   - allocation summary renders
-   - CSV import happy path
-
-6. Household privacy
-   - create household
-   - invite member
-   - private account excluded
-   - balance-only account contributes balance but not transaction category detail
-   - balance-and-transactions account contributes allowed aggregates
-   - no raw other-member transactions appear in household UI or API responses
-
-7. Household lifecycle
-   - member leaves
-   - leaving member is excluded from live aggregates during grace
-   - rejoin auto-resumes preserved links
-   - last owner cannot leave without transfer
-   - purge removes expired links while preserving historical aggregates
-
-8. AI privacy
-   - personal AI context excludes PII
-   - household AI context excludes PII, private accounts, individual balances, raw other-member transactions, and other members' private chats
-   - context preview matches the API payload sent to the model provider boundary
-
-9. Responsive contract
-   - no route-level horizontal overflow on mobile except intentional local table scrollers
-   - scope switcher usable on mobile
-   - AI composer visible on mobile
-   - primary actions meet mobile tap-target expectations
-
-Acceptance test run history:
-
-- Manual QA narrative belongs in Discussion #199.
-- Automated acceptance test history should eventually live in GitHub Actions runs, non-required checks, logs, screenshots, and uploaded artifacts.
-- When acceptance suites are introduced, publish a GitHub Actions run or check result against the reviewed commit and link it from the Discussion #199 QA run comment.
-- Keep acceptance checks non-required until the owner explicitly promotes a stable subset.
-
-Promotion rule:
-
-- Optional at first: failures file bugs but do not block merges.
-- Required later only by explicit decision, after the suite is stable and fast enough for CI.
-- When promoted, document the required subset in `AGENTS.md` and CI config in the same PR.
-
-## QA Output
-
-End every QA run with:
-
-- commit reviewed
-- previous reviewed commit
-- changed surfaces tested
-- issues filed or updated
-- acceptance tests added or missing
-- blockers or residual risk
+End every QA run with the commit reviewed, previous reviewed commit, changed surfaces tested, issues filed or updated, acceptance tests added or missing, and blockers or residual risk.
