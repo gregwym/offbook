@@ -70,7 +70,7 @@ func TestPlaidSync_RuleWinsOverPlaidDefault(t *testing.T) {
 					"pending":           false,
 					"personal_finance_category": map[string]any{
 						"primary":  "FOOD_AND_DRINK",
-						"detailed": "GROCERIES",
+						"detailed": "FOOD_AND_DRINK_GROCERIES",
 					},
 				},
 			},
@@ -179,7 +179,7 @@ func TestPlaidSync_OtherUsersRuleDoesNotApply(t *testing.T) {
 					"pending":           false,
 					"personal_finance_category": map[string]any{
 						"primary":  "FOOD_AND_DRINK",
-						"detailed": "GROCERIES",
+						"detailed": "FOOD_AND_DRINK_GROCERIES",
 					},
 				},
 			},

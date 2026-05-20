@@ -34,9 +34,13 @@ func fakeServerPFC(t *testing.T, plaidAcctID, plaidTxnID string) (*httptest.Serv
 			"merchant_name":     "Whole Foods",
 			"date":              "2026-05-10",
 			"pending":           false,
+			// detailed is the wire form Plaid actually returns: the
+			// primary token is repeated as a prefix
+			// ("FOOD_AND_DRINK_GROCERIES", not "GROCERIES"). #181 fallout —
+			// 000005 seeded the un-prefixed legacy form, 000012 normalized.
 			"personal_finance_category": map[string]any{
 				"primary":  "FOOD_AND_DRINK",
-				"detailed": "GROCERIES",
+				"detailed": "FOOD_AND_DRINK_GROCERIES",
 			},
 		}
 		var added, modified []map[string]any
