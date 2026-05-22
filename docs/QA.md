@@ -93,6 +93,8 @@ QA service URLs:
 
 The QA compose project name (`offbook-qa`) gives QA separate containers and Docker-managed identity. The QA compose override gives QA separate host ports and a dedicated `qa_postgres_data` named volume, so the QA database is isolated even if someone accidentally runs the QA stack from the main development worktree. A separate worktree is still required to avoid file and branch conflicts with the development agent.
 
+The QA backend runs with `APP_ENV=qa` and defaults to the `offbook_qa` database. The init scripts create `offbook_qa` alongside `offbook_dev` and `offbook_test` on a fresh Postgres volume.
+
 The backend container runs migrations on boot when `MIGRATIONS_PATH=/app/migrations` is set. On a cold QA volume, `docker compose -p offbook-qa -f docker-compose.yml -f docker-compose.qa.yml up -d --build` should leave the DB migrated and `/setup/admin` renderable.
 
 Stop the QA stack when done:
@@ -112,6 +114,14 @@ Use a dedicated Chrome profile for QA, for example under `/private/tmp/offbook-q
 ## QA Environment And Credentials
 
 The QA compose override loads backend environment from `.env.qa` and `.env.qa.local`, not the repo-root `.env`. This keeps QA Plaid sandbox credentials and `PLAID_TOKEN_KEY` separate from development. `.env.qa.local` is generated or edited locally and is gitignored.
+
+`SESSION_SECRET` is intentionally blank in `.env.qa.example`. Set it to a QA-only value before booting the QA stack:
+
+```sh
+openssl rand -hex 32
+```
+
+Backend startup and `command make acceptance` refuse known placeholder values such as `replace-with-*`, `change-me`, and `changeme`.
 
 QA persona emails are fixed. Passwords are derived from `QA_SECRET` by the acceptance fixture loader, so they are reproducible without committing plaintext credentials. If `QA_SECRET` is absent, `command make acceptance` writes a generated value to `.env.qa.local`; use that file for manual login during the same QA run.
 
@@ -272,6 +282,28 @@ Command:
 ```sh
 command make acceptance
 ```
+
+Discover root-level QA commands with:
+
+```sh
+command make help
+```
+
+Run only the baseline suite:
+
+```sh
+command make qa-smoke
+```
+
+Run one suite or spec pattern:
+
+```sh
+command make qa-suite QA_SUITE=plaid
+pnpm --dir acceptance exec playwright test plaid
+OFFBOOK_ROLE=qa pnpm --dir acceptance exec playwright test smoke/baseline.spec.ts:19
+```
+
+Acceptance helpers that call `personaPassword()` load `.env.qa` and `.env.qa.local` as a side effect. Helpers that do not need persona passwords must call `loadQAEnv()` explicitly before reading `process.env`; the Plaid helper does this because Plaid credentials normally live in `.env.qa.local`.
 
 Plaid sandbox acceptance must not drive the Plaid Link iframe. Use `acceptance/plaid/helper.mjs` to mint a public token through `/sandbox/public_token/create`, exchange it through `/api/v1/plaid/link/exchange`, then sync accounts and transactions through Offbook. A smaller browser smoke should still assert `/connect` renders and the Plaid Link button mounts.
 

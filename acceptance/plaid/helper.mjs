@@ -1,4 +1,6 @@
-import { acceptanceAPIURL } from '../fixtures/env.mjs'
+import { acceptanceAPIURL, loadQAEnv } from '../fixtures/env.mjs'
+
+loadQAEnv()
 
 export async function plaidSandboxPublicToken() {
   const clientID = process.env.PLAID_CLIENT_ID

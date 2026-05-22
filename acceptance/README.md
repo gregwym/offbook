@@ -22,3 +22,26 @@ Run from the QA worktree or set `OFFBOOK_ROLE=qa`:
 ```sh
 command make acceptance
 ```
+
+For discoverability, the repo root exposes:
+
+```sh
+command make help
+command make qa-smoke
+command make qa-suite QA_SUITE=plaid
+```
+
+Run a suite or spec directly when you need Playwright flags:
+
+```sh
+pnpm --dir acceptance exec playwright test plaid
+OFFBOOK_ROLE=qa pnpm --dir acceptance exec playwright test smoke/baseline.spec.ts:19
+```
+
+## Environment Loading
+
+Acceptance helpers read `.env.qa` first and `.env.qa.local` second. Helpers that
+call `personaPassword()` get that loading for free through `ensureQASecret()`.
+Helpers that do not need persona passwords must call `loadQAEnv()` explicitly
+before reading `process.env`; `plaid/helper.mjs` does this so Plaid credentials
+set only in `.env.qa.local` are visible without manual `export`.

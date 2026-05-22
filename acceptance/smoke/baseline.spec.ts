@@ -18,6 +18,12 @@ const personalRoutes = [
 const householdRoutes = ['/h/dashboard', '/h/budgets', '/h/goals', '/h/members', '/h/ai', '/h/settings']
 
 test.describe('baseline route smoke', () => {
+  test('unexpected auth failures are reported', () => {
+    expect(isUnexpectedAuthFailure(401, 'http://localhost:18000/api/v1/dashboard/summary')).toBe(true)
+    expect(isUnexpectedAuthFailure(403, 'http://localhost:18000/api/v1/h/dashboard/summary')).toBe(true)
+    expect(isUnexpectedAuthFailure(401, 'http://localhost:18000/api/v1/me')).toBe(false)
+  })
+
   for (const route of publicRoutes) {
     test(`public route ${route}`, async ({ page }) => {
       const errors = collectRuntimeErrors(page)
@@ -47,13 +53,24 @@ function collectRuntimeErrors(page: Page) {
   })
   page.on('pageerror', (err) => errors.push(err.message))
   page.on('response', (response) => {
-    if (response.status() >= 500) errors.push(`${response.status()} ${response.url()}`)
+    if (response.status() >= 500 || isUnexpectedAuthFailure(response.status(), response.url())) {
+      errors.push(`${response.status()} ${response.url()}`)
+    }
   })
   return errors
 }
 
 function isExpectedBrowserNoise(message: string) {
+  // Chromium reports failed 401 fetches as console errors without a reliable URL.
+  // Response listeners do have the URL, so auth regressions are checked there.
   return message.includes('Failed to load resource: the server responded with a status of 401 (Unauthorized)')
+}
+
+function isUnexpectedAuthFailure(status: number, url: string) {
+  if (status !== 401 && status !== 403) return false
+
+  const expectedUnauthenticatedProbe = url.includes('/api/v1/me')
+  return !expectedUnauthenticatedProbe
 }
 
 async function login(page: Page) {
