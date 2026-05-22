@@ -36,3 +36,37 @@ export async function exchangePublicToken(cookie, publicToken) {
   if (!res.ok) throw new Error(`Offbook Plaid exchange failed: HTTP ${res.status} ${await res.text()}`)
   return res.json()
 }
+
+export async function syncPlaidAccounts(cookie, plaidItemID) {
+  const res = await fetch(`${acceptanceAPIURL()}/plaid/items/${encodeURIComponent(plaidItemID)}/sync-accounts`, {
+    method: 'POST',
+    headers: { cookie },
+  })
+  if (!res.ok) throw new Error(`Offbook Plaid account sync failed: HTTP ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+export async function syncPlaidTransactions(cookie, plaidItemID) {
+  const res = await fetch(`${acceptanceAPIURL()}/plaid/items/${encodeURIComponent(plaidItemID)}/sync-transactions`, {
+    method: 'POST',
+    headers: { cookie },
+  })
+  if (!res.ok) throw new Error(`Offbook Plaid transaction sync failed: HTTP ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+export async function listAccounts(cookie) {
+  const res = await fetch(`${acceptanceAPIURL()}/accounts?limit=200`, {
+    headers: { cookie },
+  })
+  if (!res.ok) throw new Error(`Offbook accounts list failed: HTTP ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+export async function listTransactions(cookie) {
+  const res = await fetch(`${acceptanceAPIURL()}/transactions?limit=500`, {
+    headers: { cookie },
+  })
+  if (!res.ok) throw new Error(`Offbook transactions list failed: HTTP ${res.status} ${await res.text()}`)
+  return res.json()
+}

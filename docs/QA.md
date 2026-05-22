@@ -305,7 +305,25 @@ OFFBOOK_ROLE=qa pnpm --dir acceptance exec playwright test smoke/baseline.spec.t
 
 Acceptance helpers that call `personaPassword()` load `.env.qa` and `.env.qa.local` as a side effect. Helpers that do not need persona passwords must call `loadQAEnv()` explicitly before reading `process.env`; the Plaid helper does this because Plaid credentials normally live in `.env.qa.local`.
 
-Plaid sandbox acceptance must not drive the Plaid Link iframe. Use `acceptance/plaid/helper.mjs` to mint a public token through `/sandbox/public_token/create`, exchange it through `/api/v1/plaid/link/exchange`, then sync accounts and transactions through Offbook. A smaller browser smoke should still assert `/connect` renders and the Plaid Link button mounts.
+The direct SQL persona bootstrap is only a fixture loader. It does not test `/setup/admin`, `/auth/signup`, `/auth/signup-with-invite`, or invite acceptance. Those first-boot product paths live in the opt-in cold-start suite, which is ignored by default because it resets QA data:
+
+```sh
+OFFBOOK_ROLE=qa QA_COLD_START=1 pnpm --dir acceptance exec playwright test auth/setup.cold-start.spec.ts
+```
+
+Default suites must not mutate the four shared personas. Write-heavy suites use `createThrowawayUser({ suite })` from `acceptance/fixtures/state.mjs` and clean up with `deleteThrowawayUsers(suite)`. If a run needs to scrub all mutable QA state and rebuild the shared personas, use:
+
+```sh
+OFFBOOK_ROLE=qa node acceptance/fixtures/bootstrap.mjs --reset
+```
+
+If a run needs true first-boot state without personas, use:
+
+```sh
+OFFBOOK_ROLE=qa node acceptance/fixtures/cold-start.mjs
+```
+
+Plaid sandbox acceptance must not drive the Plaid Link iframe. Use `acceptance/plaid/helper.mjs` to mint a public token through `/sandbox/public_token/create`, exchange it through `/api/v1/plaid/link/exchange`, then sync accounts and transactions through Offbook. The suite must assert accounts and transactions land for the signed-in QA user, and a second transaction sync inserts zero new rows. A smaller browser smoke should still assert `/connect` renders and the Plaid Link button mounts.
 
 Initial suites to build:
 

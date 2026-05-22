@@ -2,54 +2,10 @@
 import bcrypt from 'bcryptjs'
 import pg from 'pg'
 import { acceptanceAPIURL, personaPassword, personas, qaDatabaseURL } from './env.mjs'
+import { assertQARole, resetToColdStart, signin, waitForBackend } from './state.mjs'
 
 const { Client } = pg
 const apiURL = acceptanceAPIURL()
-
-function assertQARole() {
-  const cwd = process.cwd().split('/').pop() ?? ''
-  if (process.env.OFFBOOK_ROLE === 'qa' || cwd === 'offbook-qa' || cwd.endsWith('-qa')) return
-  throw new Error('QA bootstrap requires a QA signal: run from a *-qa worktree or set OFFBOOK_ROLE=qa')
-}
-
-async function waitForBackend() {
-  for (let i = 0; i < 30; i += 1) {
-    try {
-      const res = await fetch(`${apiURL}/health`)
-      if (res.ok) return
-    } catch {
-      // keep polling
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-  }
-  throw new Error(`backend health did not become ready at ${apiURL}/health`)
-}
-
-async function request(path, { method = 'GET', body, cookie } = {}) {
-  const res = await fetch(`${apiURL}${path}`, {
-    method,
-    headers: {
-      'content-type': 'application/json',
-      ...(cookie ? { cookie } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    redirect: 'manual',
-  })
-  const setCookie = res.headers.get('set-cookie')?.split(';')[0]
-  const text = await res.text()
-  let json = null
-  if (text) json = JSON.parse(text)
-  return { res, json, cookie: setCookie }
-}
-
-async function signin(email) {
-  const out = await request('/auth/signin', {
-    method: 'POST',
-    body: { email, password: personaPassword(email) },
-  })
-  if (!out.res.ok) throw new Error(`signin failed for ${email}: HTTP ${out.res.status} ${JSON.stringify(out.json)}`)
-  return out.cookie
-}
 
 async function upsertUser(client, persona) {
   const hash = await bcrypt.hash(personaPassword(persona.email), 12)
@@ -161,7 +117,10 @@ async function provisionPersonas() {
 }
 
 assertQARole()
-await waitForBackend()
+await waitForBackend(apiURL)
+if (process.argv.includes('--reset')) {
+  await resetToColdStart()
+}
 await provisionPersonas()
 for (const persona of personas) {
   await signin(persona.email)
