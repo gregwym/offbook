@@ -14,6 +14,7 @@ func TestResolveAppEnv(t *testing.T) {
 	}{
 		{name: "empty defaults to dev", in: "", want: AppEnvDev},
 		{name: "dev", in: AppEnvDev, want: AppEnvDev},
+		{name: "qa", in: AppEnvQA, want: AppEnvQA},
 		{name: "test", in: AppEnvTest, want: AppEnvTest},
 		{name: "prod", in: AppEnvProd, want: AppEnvProd},
 		{name: "garbage rejected", in: "staging", wantErr: true},
@@ -61,6 +62,11 @@ func TestResolveDatabaseURL(t *testing.T) {
 			name:       "dev default",
 			appEnv:     AppEnvDev,
 			wantSubstr: "/offbook_dev?",
+		},
+		{
+			name:       "qa default",
+			appEnv:     AppEnvQA,
+			wantSubstr: "/offbook_qa?",
 		},
 		{
 			name:       "test default",
@@ -135,6 +141,33 @@ func TestLoad_TestEnvUsesTestDB(t *testing.T) {
 	}
 	if !strings.Contains(cfg.DatabaseURL, "/offbook_test?") {
 		t.Errorf("DatabaseURL = %q, want it to point at offbook_test", cfg.DatabaseURL)
+	}
+}
+
+func TestLoad_QAEnvUsesQADB(t *testing.T) {
+	t.Setenv("APP_ENV", AppEnvQA)
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv("PLAID_CLIENT_ID", "")
+	t.Setenv("PLAID_SECRET", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !strings.Contains(cfg.DatabaseURL, "/offbook_qa?") {
+		t.Errorf("DatabaseURL = %q, want it to point at offbook_qa", cfg.DatabaseURL)
+	}
+}
+
+func TestLoad_RejectsPlaceholderSessionSecret(t *testing.T) {
+	t.Setenv("APP_ENV", AppEnvQA)
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv("SESSION_SECRET", "replace-with-qa-session-secret")
+	t.Setenv("PLAID_CLIENT_ID", "")
+	t.Setenv("PLAID_SECRET", "")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "placeholder") {
+		t.Fatalf("Load error = %v, want placeholder SESSION_SECRET error", err)
 	}
 }
 

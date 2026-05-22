@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -14,12 +15,13 @@ import (
 // per-env behavior. See ResolveDatabaseURL.
 const (
 	AppEnvDev  = "dev"
+	AppEnvQA   = "qa"
 	AppEnvTest = "test"
 	AppEnvProd = "prod"
 )
 
 type Config struct {
-	AppEnv         string // dev | test | prod (see Resolve* helpers)
+	AppEnv         string // dev | qa | test | prod (see Resolve* helpers)
 	Port           string
 	DatabaseURL    string
 	FrontendURL    string
@@ -58,11 +60,11 @@ func ResolveAppEnv(raw string) (string, error) {
 		return AppEnvDev, nil
 	}
 	switch raw {
-	case AppEnvDev, AppEnvTest, AppEnvProd:
+	case AppEnvDev, AppEnvQA, AppEnvTest, AppEnvProd:
 		return raw, nil
 	default:
-		return "", fmt.Errorf("APP_ENV must be %s|%s|%s, got %q",
-			AppEnvDev, AppEnvTest, AppEnvProd, raw)
+		return "", fmt.Errorf("APP_ENV must be %s|%s|%s|%s, got %q",
+			AppEnvDev, AppEnvQA, AppEnvTest, AppEnvProd, raw)
 	}
 }
 
@@ -70,6 +72,7 @@ func ResolveAppEnv(raw string) (string, error) {
 // DATABASE_URL always wins (this is how docker-compose and prod inject the
 // connection string). When unset:
 //   - dev → local Postgres, database "offbook_dev"
+//   - qa → local Postgres, database "offbook_qa"
 //   - test → local Postgres, database "offbook_test"
 //   - prod → no default; returns an error (force operators to be explicit)
 //
@@ -82,6 +85,8 @@ func ResolveDatabaseURL(appEnv, explicitURL string) (string, error) {
 	switch appEnv {
 	case AppEnvDev:
 		return "postgres://offbook:offbook@localhost:5432/offbook_dev?sslmode=disable", nil
+	case AppEnvQA:
+		return "postgres://offbook:offbook@localhost:5432/offbook_qa?sslmode=disable", nil
 	case AppEnvTest:
 		return "postgres://offbook:offbook@localhost:5432/offbook_test?sslmode=disable", nil
 	case AppEnvProd:
@@ -125,6 +130,10 @@ func Load() (Config, error) {
 		OllamaBaseURL:  getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
 	}
 
+	if isPlaceholderSecret(cfg.SessionSecret) {
+		return Config{}, errors.New("SESSION_SECRET is a placeholder; generate a real QA/dev secret with `openssl rand -hex 32`")
+	}
+
 	if cfg.PlaidClientID != "" {
 		if cfg.PlaidSecret == "" {
 			return Config{}, errors.New("PLAID_CLIENT_ID is set but PLAID_SECRET is empty")
@@ -149,6 +158,18 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func isPlaceholderSecret(secret string) bool {
+	if strings.HasPrefix(secret, "replace-with-") {
+		return true
+	}
+	switch secret {
+	case "change-me", "changeme":
+		return true
+	default:
+		return false
+	}
 }
 
 // MustLoad is a thin wrapper for main(), where any error is fatal.

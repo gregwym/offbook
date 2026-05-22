@@ -50,5 +50,5 @@ export function acceptanceBaseURL() {
 }
 
 export function qaDatabaseURL() {
-  return process.env.QA_DATABASE_URL ?? 'postgres://offbook:offbook@localhost:15432/offbook_dev?sslmode=disable'
+  return process.env.QA_DATABASE_URL ?? 'postgres://offbook:offbook@localhost:15432/offbook_qa?sslmode=disable'
 }

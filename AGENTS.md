@@ -59,9 +59,10 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 
 ## Environment Isolation
 - **Every environment gets its own database.** Dev, test, prod (and any future staging) never share a DB. Sharing leaks fixtures between them — `make test` running against the dev DB has corrupted dev data in the past (test-fixture `categories` showing up in the user's category dropdown; see #183).
-- DB selection routes through `APP_ENV`, resolved by `internal/config.ResolveDatabaseURL`. Defaults: `dev` → `offbook_dev`, `test` → `offbook_test`, `prod` → no default (refuses to start without explicit `DATABASE_URL`). Explicit `DATABASE_URL` always wins (docker-compose and prod inject one).
+- DB selection routes through `APP_ENV`, resolved by `internal/config.ResolveDatabaseURL`. Defaults: `dev` → `offbook_dev`, `qa` → `offbook_qa`, `test` → `offbook_test`, `prod` → no default (refuses to start without explicit `DATABASE_URL`). Explicit `DATABASE_URL` always wins (docker-compose and prod inject one).
 - When adding a new entry point (CLI, cron, worker), call `config.Load()` so it picks up the right DB automatically. Don't re-read `DATABASE_URL` from `os.Getenv` directly.
 - `make dev` / `make smoke` set `APP_ENV=dev`. `make test` sets `APP_ENV=test` and points at `offbook_test`, migrating it first.
+- The isolated QA compose stack sets `APP_ENV=qa` and points at `offbook_qa`.
 - One-shot cleanup of a polluted pre-#183 DB: `cd backend && go run ./cmd/db-clean-fixtures --apply` (dry-run by default; refuses to run against `offbook_test`).
 - "Just use a `TEST_DATABASE_URL` env var" is not enough — the structural fix is config-layer isolation across all envs, not a Makefile flag.
 
