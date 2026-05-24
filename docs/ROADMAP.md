@@ -180,8 +180,29 @@ goal through the UI, not just that the endpoint exists.
 
 **Backlog landed post-M8:** signup-with-invite endpoint (#145), owner-side member moderation (#147), per-member dashboard tiles (#149), owner-transfer endpoint (#152).
 
-### M9+ — Frontend Hi-Fi: Per-Feature [DEFERRED]
+### M9 — Frontend Hi-Fi: v6 Personal Scope
 
-Each future backend milestone (M4 categorization, M5 budgets, M6 investments, M7 AI) gets a paired frontend milestone filed when the backend milestone closes. Pattern:
-- File each FE issue with a one-sentence **Product Goal** (see issue template)
-- Done = a user can reach the product goal through the UI
+**Goal:** Restructure personal-scope IA to match `docs/designs/App Hierarchy v6.html`. Five durable surfaces, no wrapper: Sign up · Add account · Transactions · Insights · Settings. Household pages collapse onto the same components — scope swaps the data source, not the page.
+
+Locked v6 decisions (see design doc for full rationale):
+1. **Add account** — two tiles up front (Connect bank / Add manually). "Connect bank" hands off to the Plaid *native* picker; dismissing it falls back to manual within the same surface.
+2. **Auto-categorize** — silent on import. Surfaced only via a banner + "Needs review" filter on the Transactions page.
+3. **Manual import** — folded into Add Account and per-account "add more" affordances. No top-level `/import` route.
+4. **Review** — one Insights page with 5 bands: net worth · allocation · spending · budgets · goals. Replaces Dashboard for both scopes.
+5. **AI chat** — deferred. Provider config lives once in Settings; no sidebar route in personal scope.
+
+Issues:
+- [ ] #224 — Scope-agnostic page foundation; consolidate Budgets + Goals pairs
+- [ ] #225 — Insights page (5 bands, replaces Dashboard for both scopes)
+- [ ] #226 — Sidebar + route restructure (drop `/import`, drop personal `/ai`, AI provider → Settings)
+- [ ] #227 — Add Account two-tile picker (absorbs `/import` and `/connect`)
+- [ ] #228 — Transactions: silent auto-categorize + "Needs review" banner & filter
+- [ ] #229 — Sign up strip-down (3 fields; kill vault/recovery/AI language)
+
+**Done criteria:** Fresh `docker compose up` → sign up (3 fields) → land on empty `/insights` → click "Add your first account" → two-tile picker → Plaid sandbox flow OR manual fallback → transactions appear with silent auto-categorize → "Needs review" banner surfaces low-confidence rows → Insights page shows all 5 bands populated. Household scope routes (`/h/insights`, `/h/budgets`, `/h/goals`) render via the same components as personal, with aggregator-sourced data. No `Household*Page.tsx` duplicates remain for surfaces shared between scopes.
+
+**Open question:** household AI surface (`/h/ai`) — personal AI chat is deferred entirely in v6; household AI was not explicitly addressed. Decide before closing M9 whether the household AI route stays, follows personal in being deferred, or moves under household Settings.
+
+### M10+ — Frontend Hi-Fi: Visual Pass [DEFERRED]
+
+Once M9 IA is in place, apply the visual hi-fi treatment from `docs/designs/Offbook Hi-Fi v1.html` — typography, color tokens, spacing, polished empty/loading/error states. Vertical-slice approach: pick one high-traffic surface (likely Insights or Transactions), establish the design-system reference there, then propagate.
