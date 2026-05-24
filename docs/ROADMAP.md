@@ -203,6 +203,29 @@ Issues:
 
 **Open question:** household AI surface (`/h/ai`) — personal AI chat is deferred entirely in v6; household AI was not explicitly addressed. Decide before closing M9 whether the household AI route stays, follows personal in being deferred, or moves under household Settings.
 
-### M10+ — Frontend Hi-Fi: Visual Pass [DEFERRED]
+---
 
-Once M9 IA is in place, apply the visual hi-fi treatment from `docs/designs/Offbook Hi-Fi v1.html` — typography, color tokens, spacing, polished empty/loading/error states. Vertical-slice approach: pick one high-traffic surface (likely Insights or Transactions), establish the design-system reference there, then propagate.
+## M10 — Unified Position Model
+
+**Goal:** Refactor account valuation to a position-based model. Every account is a bag of positions; **quantities are facts**, **valuations derive from positions × prices** (never stored). Closes the multi-currency, brokerage-cash-sleeve, trade-visibility, and household-allocation gaps the current two-shape schema (`accounts.balance` scalar + separate `investments` snapshots) leaves open.
+
+See [ADR-0013](ADR/0013-position-based-account-model.md) for the full rationale. Phased so the system runs after each phase:
+
+- [ ] #231 — Phase 1: Foundation tables (`assets`, `positions`, `prices`) + backfill from existing data. Dual representation; no reads switched.
+- [ ] #232 — Phase 2: Reads migrate to positions/prices; Plaid sync dual-writes; **household allocation aggregator** lands (closes M9 #225 gap).
+- [ ] #233 — Phase 3: `transactions.asset_id` + paired-row trade ingestion from Plaid investment-transactions and a manual trade form. Cost-basis recomputation (average cost).
+- [ ] #234 — Phase 4: Drop legacy `accounts.balance`, `investments.market_value`, `transactions.currency` columns. Retire dual-write code.
+
+**Invariant carried throughout:** the app never invents transactions. Trade rows come from real import sources (Plaid, statement CSV) or explicit user input — never synthesized to reconcile a holdings-snapshot delta.
+
+**Done criteria:** A user with mixed cash + brokerage + crypto accounts (across multiple currencies) sees the same net worth they saw before the refactor, computed from `positions × prices` with FX conversion to their primary currency. Plaid trades appear as paired rows in the Transactions list. Household scope shows asset allocation with per-account share visibility honored. Legacy `accounts.balance` is gone from the schema.
+
+**Deferred to follow-up ADRs:**
+- ADR-0014: Pluggable Tier-3 price provider (Yahoo, Polygon, ECB, CoinGecko).
+- ADR-0015: Tax-lot precision opt-in (FIFO/LIFO/spec ID).
+
+---
+
+### M11+ — Frontend Hi-Fi: Visual Pass [DEFERRED]
+
+Once M9 IA and M10 data model are in place, apply the visual hi-fi treatment from `docs/designs/Offbook Hi-Fi v1.html` — typography, color tokens, spacing, polished empty/loading/error states. Vertical-slice approach: pick one high-traffic surface (likely Insights or Transactions), establish the design-system reference there, then propagate.
