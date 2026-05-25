@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronRight, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Eye, Plus, Sparkles, Trash2, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { DateDisplay } from '../components/DateDisplay'
 import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
+import { listTransactions } from '../api/transactions'
 import { useAccountsStore } from '../store/accountsStore'
 import { useAssetsStore } from '../store/assetsStore'
 import { useCategoriesStore } from '../store/categoriesStore'
@@ -48,6 +49,18 @@ export function TransactionsPage() {
   const [searchInput, setSearchInput] = useState<string>(filter.search ?? '')
   const search = useDebounce(searchInput, 300)
   const [adding, setAdding] = useState(false)
+  // "Needs review" filter chip + banner. needsReview drives the store
+  // filter (categorization_method=plaid_default). reviewCount is a
+  // separate query so the banner can announce a number independent of
+  // whatever filter the user is currently looking at.
+  const [needsReview, setNeedsReview] = useState<boolean>(
+    filter.categorization_method === 'plaid_default',
+  )
+  const [reviewCount, setReviewCount] = useState<number | null>(null)
+  // bannerDismissed mirrors localStorage by key. We let it lag behind a
+  // sync-driven key change for one frame, but the showBanner logic also
+  // checks against the live key, so the user never sees a stale banner.
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null)
 
   useEffect(() => {
     void fetchAccounts()
@@ -84,12 +97,74 @@ export function TransactionsPage() {
     setFilter({
       account_id: accountID === '' ? undefined : Number(accountID),
       category_id: categoryID === '' ? undefined : categoryID === 'null' ? null : Number(categoryID),
+      categorization_method: needsReview ? 'plaid_default' : undefined,
       from: from === '' ? undefined : from,
       to: to === '' ? undefined : to,
       search: search === '' ? undefined : search,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountID, categoryID, from, to, search])
+  }, [accountID, categoryID, from, to, search, needsReview])
+
+  // Recent-import signal: the most recent last_synced_at across all
+  // Plaid-linked accounts. The banner key is built off this so a new
+  // sync (= newer timestamp) re-shows the banner even if the user
+  // dismissed an earlier one.
+  const recentSyncAt = useMemo(() => {
+    let max: string | null = null
+    for (const a of accounts) {
+      if (!a.last_synced_at) continue
+      if (max == null || a.last_synced_at > max) max = a.last_synced_at
+    }
+    return max
+  }, [accounts])
+
+  const bannerKey = recentSyncAt ? `txn-review-banner:${recentSyncAt}` : null
+
+  // Pull the count of rows that would land in the "Needs review" filter,
+  // independently from the main list (which honors all current filters).
+  // limit=1 keeps the fetch cheap — we only need `total`.
+  useEffect(() => {
+    let cancelled = false
+    void listTransactions({ categorization_method: 'plaid_default', limit: 1 })
+      .then((r) => { if (!cancelled) setReviewCount(r.total) })
+      .catch(() => { /* swallow — banner just won't surface */ })
+    return () => { cancelled = true }
+  }, [recentSyncAt])
+
+  // Dismissal is persisted in localStorage keyed by bannerKey, so a newer
+  // sync (newer key) re-shows the banner without needing reset state. We
+  // read once per key change via useMemo (pure derivation); the local
+  // `dismissedKey` state covers the in-session click without round-tripping
+  // through storage.
+  const storedDismissedKey = useMemo(() => {
+    if (!bannerKey) return null
+    try {
+      return window.localStorage.getItem(bannerKey) === '1' ? bannerKey : null
+    } catch {
+      return null
+    }
+  }, [bannerKey])
+  const bannerDismissed = dismissedKey === bannerKey || storedDismissedKey === bannerKey
+
+  const dismissBanner = () => {
+    if (!bannerKey) return
+    setDismissedKey(bannerKey)
+    try { window.localStorage.setItem(bannerKey, '1') } catch { /* private mode etc. */ }
+  }
+
+  // Capture "now" at mount via lazy state init. React's purity rule
+  // forbids Date.now() in render or useMemo, and pure state inits sidestep
+  // that; coarse 24h window means we don't need a ticker.
+  const [nowAtMount] = useState(() => Date.now())
+  const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000
+  const recentlySynced =
+    recentSyncAt != null && nowAtMount - new Date(recentSyncAt).getTime() < RECENT_WINDOW_MS
+
+  const showBanner =
+    !needsReview &&
+    !bannerDismissed &&
+    reviewCount != null && reviewCount > 0 &&
+    recentlySynced
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const accountByID = useMemo(() => mapByID(accounts), [accounts])
@@ -136,7 +211,53 @@ export function TransactionsPage() {
         <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
       )}
 
-      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-5">
+      {showBanner && (
+        <div className="mt-4 flex items-start justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <div className="flex items-start gap-2">
+            <Eye size={16} className="mt-0.5 shrink-0" />
+            <span>
+              {reviewCount} row{reviewCount === 1 ? '' : 's'} need a category review after the recent sync —{' '}
+              <button
+                type="button"
+                onClick={() => setNeedsReview(true)}
+                className="underline hover:text-amber-700"
+              >
+                show needs review
+              </button>
+              .
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={dismissBanner}
+            aria-label="Dismiss banner"
+            className="text-amber-700 hover:text-amber-900"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setNeedsReview((v) => !v)}
+          className={[
+            'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium',
+            needsReview
+              ? 'border-amber-400 bg-amber-50 text-amber-800'
+              : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
+          ].join(' ')}
+        >
+          <Eye size={12} />
+          Needs review
+          {reviewCount != null && reviewCount > 0 && (
+            <span className={needsReview ? 'text-amber-700' : 'text-gray-500'}>· {reviewCount}</span>
+          )}
+        </button>
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-5">
         <Field label="Account">
           <select className={inputClass} value={accountID} onChange={(e) => setAccountID(e.target.value)}>
             <option value="">All</option>
