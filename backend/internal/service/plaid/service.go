@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/plaid/plaid-go/v40/plaid"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 
 	"github.com/gregwym/offbook/backend/internal/crypto"
@@ -74,13 +75,15 @@ type SyncTransactionsResult struct {
 // at the handler layer. Holder names from /identity/get are routed through
 // piiSvc into pii_store — never written onto the accounts row directly.
 type Service struct {
-	client      Client
-	box         *crypto.SecretBox
-	itemRepo    repository.PlaidItemRepository
-	acctRepo    repository.AccountRepository
-	txRepo      repository.TransactionRepository
-	syncErrRepo repository.PlaidSyncErrorRepository
-	piiSvc      *service.PIIService
+	client       Client
+	box          *crypto.SecretBox
+	itemRepo     repository.PlaidItemRepository
+	acctRepo     repository.AccountRepository
+	txRepo       repository.TransactionRepository
+	syncErrRepo  repository.PlaidSyncErrorRepository
+	assetRepo    repository.AssetRepository
+	positionRepo repository.PositionRepository
+	piiSvc       *service.PIIService
 	// catMapper resolves Plaid PFCs to local categories at sync time.
 	// Nil = no auto-categorization (rows land uncategorized; user picks).
 	catMapper *CategoryMapper
@@ -93,7 +96,9 @@ type Service struct {
 	// single Postgres transaction so it can use savepoints around each
 	// row insert (see #80 / docs/ADR/0011 — partial-success DLQ). Inside
 	// the transaction callback we construct fresh tx-bound repo instances
-	// so all writes hit the same transaction.
+	// so all writes hit the same transaction. SyncAccounts also uses it
+	// to wrap the per-account (account + cash position) write pair so a
+	// mid-flight failure rolls back both rows together.
 	db *gorm.DB
 }
 
@@ -111,20 +116,24 @@ func NewService(
 	acctRepo repository.AccountRepository,
 	txRepo repository.TransactionRepository,
 	syncErrRepo repository.PlaidSyncErrorRepository,
+	assetRepo repository.AssetRepository,
+	positionRepo repository.PositionRepository,
 	piiSvc *service.PIIService,
 	catMapper *CategoryMapper,
 	db *gorm.DB,
 ) *Service {
 	return &Service{
-		client:      client,
-		box:         box,
-		itemRepo:    itemRepo,
-		acctRepo:    acctRepo,
-		txRepo:      txRepo,
-		syncErrRepo: syncErrRepo,
-		piiSvc:      piiSvc,
-		catMapper:   catMapper,
-		db:          db,
+		client:       client,
+		box:          box,
+		itemRepo:     itemRepo,
+		acctRepo:     acctRepo,
+		txRepo:       txRepo,
+		syncErrRepo:  syncErrRepo,
+		assetRepo:    assetRepo,
+		positionRepo: positionRepo,
+		piiSvc:       piiSvc,
+		catMapper:    catMapper,
+		db:           db,
 	}
 }
 
@@ -298,22 +307,29 @@ func (s *Service) SyncAccounts(ctx context.Context, userID int64, plaidItemID st
 
 	var out SyncAccountsResult
 	for _, da := range result.Accounts {
+		// Resolve the fiat asset for the account's currency before the
+		// account write — both the account row and its cash position need it.
+		quoteAsset, err := s.assetRepo.EnsureBySymbolKind(ctx, da.Currency, model.AssetKindFiat, da.Currency)
+		if err != nil {
+			return out, fmt.Errorf("plaid: resolve currency %s: %w", da.Currency, err)
+		}
+
 		existing, err := s.acctRepo.FindByPlaidAccountID(ctx, userID, da.PlaidAccountID)
 		switch {
 		case errors.Is(err, repository.ErrNotFound):
 			acct := &model.Account{
-				UserID:          userID,
-				Name:            da.Name,
-				InstitutionSlug: institutionSlug,
-				AccountType:     MapAccountType(da.Type, da.Subtype),
-				Currency:        da.Currency,
-				Balance:         da.Balance,
-				LastFour:        da.Mask,
-				PlaidAccountID:  strPtr(da.PlaidAccountID),
-				PlaidItemID:     strPtr(plaidItemID),
-				IsActive:        true,
+				UserID:              userID,
+				Name:                da.Name,
+				InstitutionSlug:     institutionSlug,
+				AccountType:         MapAccountType(da.Type, da.Subtype),
+				Currency:            da.Currency,
+				PrimaryQuoteAssetID: quoteAsset.ID,
+				LastFour:            da.Mask,
+				PlaidAccountID:      strPtr(da.PlaidAccountID),
+				PlaidItemID:         strPtr(plaidItemID),
+				IsActive:            true,
 			}
-			if err := s.acctRepo.Create(ctx, acct); err != nil {
+			if err := s.writeAccountAndCashPosition(ctx, acct, quoteAsset.ID, da.Balance); err != nil {
 				return out, fmt.Errorf("plaid: create account %s: %w", da.PlaidAccountID, err)
 			}
 			out.Created++
@@ -327,11 +343,11 @@ func (s *Service) SyncAccounts(ctx context.Context, userID int64, plaidItemID st
 			existing.InstitutionSlug = institutionSlug
 			existing.AccountType = MapAccountType(da.Type, da.Subtype)
 			existing.Currency = da.Currency
-			existing.Balance = da.Balance
+			existing.PrimaryQuoteAssetID = quoteAsset.ID
 			existing.LastFour = da.Mask
 			existing.PlaidItemID = strPtr(plaidItemID)
 			existing.IsActive = true
-			if err := s.acctRepo.Update(ctx, existing); err != nil {
+			if err := s.updateAccountAndCashPosition(ctx, existing, quoteAsset.ID, da.Balance); err != nil {
 				return out, fmt.Errorf("plaid: update account %d: %w", existing.ID, err)
 			}
 			out.Updated++
@@ -341,6 +357,46 @@ func (s *Service) SyncAccounts(ctx context.Context, userID int64, plaidItemID st
 		}
 	}
 	return out, nil
+}
+
+// writeAccountAndCashPosition inserts a new account row and seeds its
+// single cash-currency position in one DB transaction. Per ADR-0013, the
+// account's value derives from positions × prices — without a position
+// row a fresh account would display as $0 even with a non-zero Plaid
+// balance.
+func (s *Service) writeAccountAndCashPosition(ctx context.Context, acct *model.Account, assetID int64, quantity decimal.Decimal) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		acctRepo := repository.NewAccountRepository(tx)
+		if err := acctRepo.Create(ctx, acct); err != nil {
+			return err
+		}
+		pos := &model.Position{
+			UserID:    acct.UserID,
+			AccountID: acct.ID,
+			AssetID:   assetID,
+			Quantity:  quantity,
+		}
+		return repository.NewPositionRepository(tx).Upsert(ctx, pos)
+	})
+}
+
+// updateAccountAndCashPosition mirrors writeAccountAndCashPosition for the
+// upsert path — refreshes the account row and re-bases the cash position
+// to whatever Plaid currently reports.
+func (s *Service) updateAccountAndCashPosition(ctx context.Context, acct *model.Account, assetID int64, quantity decimal.Decimal) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		acctRepo := repository.NewAccountRepository(tx)
+		if err := acctRepo.Update(ctx, acct); err != nil {
+			return err
+		}
+		pos := &model.Position{
+			UserID:    acct.UserID,
+			AccountID: acct.ID,
+			AssetID:   assetID,
+			Quantity:  quantity,
+		}
+		return repository.NewPositionRepository(tx).Upsert(ctx, pos)
+	})
 }
 
 // writeHolderNames routes Plaid's owner names into pii_store. We coalesce
@@ -526,7 +582,7 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 		itemRepo := repository.NewPlaidItemRepository(tx)
 		acctRepo := repository.NewAccountRepository(tx)
 		syncErrRepo := repository.NewPlaidSyncErrorRepository(tx)
-		accountIDCache := map[string]int64{}
+		accountIDCache := map[string]accountRef{}
 		spIdx := 0
 
 		// withSavepoint wraps fn in a Postgres SAVEPOINT so a row-level
@@ -628,11 +684,11 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 					continue
 				}
 				perRowErr := withSavepoint(func() error {
-					localID, err := resolveAccountID(ctx, acctRepo, userID, incoming.PlaidAccountID, accountIDCache)
+					ref, err := resolveAccount(ctx, acctRepo, userID, incoming.PlaidAccountID, accountIDCache)
 					if err != nil {
 						return err
 					}
-					merged, err := MergePlaidUpdate(existing, incoming, localID, s.catMapper, userRules)
+					merged, err := MergePlaidUpdate(existing, incoming, ref.ID, ref.AssetID, s.catMapper, userRules)
 					if err != nil {
 						return err
 					}
@@ -656,11 +712,11 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 					continue
 				}
 				perRowErr := withSavepoint(func() error {
-					localID, err := resolveAccountID(ctx, acctRepo, userID, pt.PlaidAccountID, accountIDCache)
+					ref, err := resolveAccount(ctx, acctRepo, userID, pt.PlaidAccountID, accountIDCache)
 					if err != nil {
 						return err
 					}
-					row, err := MapPlaidTransaction(pt, userID, localID, s.catMapper, userRules)
+					row, err := MapPlaidTransaction(pt, userID, ref.ID, ref.AssetID, s.catMapper, userRules)
 					if err != nil {
 						return err
 					}
@@ -685,7 +741,7 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 		for _, pt := range modified {
 			var insertedAsNew bool
 			perRowErr := withSavepoint(func() error {
-				localID, err := resolveAccountID(ctx, acctRepo, userID, pt.PlaidAccountID, accountIDCache)
+				ref, err := resolveAccount(ctx, acctRepo, userID, pt.PlaidAccountID, accountIDCache)
 				if err != nil {
 					return err
 				}
@@ -696,7 +752,7 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					// Plaid sent a `modified` for something we never
 					// recorded. Treat as a fresh insert so we don't lose it.
-					row, mapErr := MapPlaidTransaction(pt, userID, localID, s.catMapper, userRules)
+					row, mapErr := MapPlaidTransaction(pt, userID, ref.ID, ref.AssetID, s.catMapper, userRules)
 					if mapErr != nil {
 						return mapErr
 					}
@@ -709,7 +765,7 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 				if err != nil {
 					return err
 				}
-				merged, err := MergePlaidUpdate(existing, pt, localID, s.catMapper, userRules)
+				merged, err := MergePlaidUpdate(existing, pt, ref.ID, ref.AssetID, s.catMapper, userRules)
 				if err != nil {
 					return err
 				}
@@ -773,28 +829,37 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 	return result, nil
 }
 
-// resolveAccountID maps a Plaid account_id to the local accounts.id,
+// accountRef bundles the two values transaction mapping needs from a Plaid
+// account_id lookup: the local accounts.id and the account's
+// primary_quote_asset_id (which becomes the transaction's asset_id).
+type accountRef struct {
+	ID      int64
+	AssetID int64
+}
+
+// resolveAccount maps a Plaid account_id to (local id, primary quote asset),
 // memoizing in a per-call cache. Returns an error if no local account
 // exists — the caller should run /sync-accounts first. Operates against
 // the supplied AccountRepository so transactional callers can pass a
 // tx-bound instance.
-func resolveAccountID(
+func resolveAccount(
 	ctx context.Context,
 	repo repository.AccountRepository,
 	userID int64,
 	plaidAcctID string,
-	cache map[string]int64,
-) (int64, error) {
-	if id, ok := cache[plaidAcctID]; ok {
-		return id, nil
+	cache map[string]accountRef,
+) (accountRef, error) {
+	if ref, ok := cache[plaidAcctID]; ok {
+		return ref, nil
 	}
 	a, err := repo.FindByPlaidAccountID(ctx, userID, plaidAcctID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return 0, fmt.Errorf("plaid: no local account for plaid_account_id=%s (run sync-accounts first)", plaidAcctID)
+			return accountRef{}, fmt.Errorf("plaid: no local account for plaid_account_id=%s (run sync-accounts first)", plaidAcctID)
 		}
-		return 0, fmt.Errorf("plaid: lookup account %s: %w", plaidAcctID, err)
+		return accountRef{}, fmt.Errorf("plaid: lookup account %s: %w", plaidAcctID, err)
 	}
-	cache[plaidAcctID] = a.ID
-	return a.ID, nil
+	ref := accountRef{ID: a.ID, AssetID: a.PrimaryQuoteAssetID}
+	cache[plaidAcctID] = ref
+	return ref, nil
 }

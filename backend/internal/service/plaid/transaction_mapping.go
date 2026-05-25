@@ -27,6 +27,9 @@ import (
 //
 // userID + accountID are supplied by the service after resolving the
 // session user and matching the Plaid account_id to a local accounts.id.
+// assetID is the parent account's primary_quote_asset_id — every cash
+// transaction inherits it. Trade-pair ingestion (#238) will override per
+// leg.
 //
 // The mapper is optional (nil = no Plaid-PFC fallback). User rules win
 // over Plaid defaults: if any compiled rule matches, CategoryID gets the
@@ -34,7 +37,7 @@ import (
 // records which rule fired. Otherwise we fall through to the Plaid PFC
 // mapper (CategorizationMethod="plaid_default"). User-edited values always
 // win on subsequent updates — see MergePlaidUpdate.
-func MapPlaidTransaction(p PlaidTransaction, userID, accountID int64, mapper *CategoryMapper, rules []categorization.CompiledRule) (model.Transaction, error) {
+func MapPlaidTransaction(p PlaidTransaction, userID, accountID, assetID int64, mapper *CategoryMapper, rules []categorization.CompiledRule) (model.Transaction, error) {
 	if p.PlaidTransactionID == "" {
 		return model.Transaction{}, fmt.Errorf("plaid: transaction_id empty")
 	}
@@ -69,8 +72,8 @@ func MapPlaidTransaction(p PlaidTransaction, userID, accountID int64, mapper *Ca
 	out := model.Transaction{
 		UserID:             userID,
 		AccountID:          accountID,
+		AssetID:            assetID,
 		Amount:             p.Amount.Neg(), // sign flip, see header
-		Currency:           p.Currency,
 		Description:        description,
 		MerchantName:       p.MerchantName,
 		TransactionDate:    txDate,
@@ -104,16 +107,16 @@ func MapPlaidTransaction(p PlaidTransaction, userID, accountID int64, mapper *Ca
 // The function is pure — it returns the merged row without writing. Caller
 // passes the result to the repo's update method. accountID is supplied
 // (rather than re-derived) so the merge stays independent of repo state.
-func MergePlaidUpdate(existing model.Transaction, incoming PlaidTransaction, accountID int64, mapper *CategoryMapper, rules []categorization.CompiledRule) (model.Transaction, error) {
-	mapped, err := MapPlaidTransaction(incoming, existing.UserID, accountID, mapper, rules)
+func MergePlaidUpdate(existing model.Transaction, incoming PlaidTransaction, accountID, assetID int64, mapper *CategoryMapper, rules []categorization.CompiledRule) (model.Transaction, error) {
+	mapped, err := MapPlaidTransaction(incoming, existing.UserID, accountID, assetID, mapper, rules)
 	if err != nil {
 		return model.Transaction{}, err
 	}
 	merged := existing
 	// Plaid-owned fields — overwrite.
 	merged.AccountID = accountID
+	merged.AssetID = mapped.AssetID
 	merged.Amount = mapped.Amount
-	merged.Currency = mapped.Currency
 	merged.Description = mapped.Description
 	merged.MerchantName = mapped.MerchantName
 	merged.TransactionDate = mapped.TransactionDate

@@ -18,8 +18,8 @@ func TestMergePlaidUpdate_PendingToPosted(t *testing.T) {
 		ID:                 999,
 		UserID:             7,
 		AccountID:          11,
+		AssetID:            1,
 		Amount:             decimal.NewFromFloat(-50.00), // initial pending amount
-		Currency:           "USD",
 		Description:        ptr("Restaurant pending"),
 		TransactionDate:    mustDate("2026-05-10"),
 		Source:             "plaid",
@@ -43,7 +43,7 @@ func TestMergePlaidUpdate_PendingToPosted(t *testing.T) {
 		AuthorizedDate:     &auth,
 	}
 
-	merged, err := plaidsvc.MergePlaidUpdate(existing, incoming, 11, nil, nil)
+	merged, err := plaidsvc.MergePlaidUpdate(existing, incoming, 11, 1, nil, nil)
 	if err != nil {
 		t.Fatalf("MergePlaidUpdate: %v", err)
 	}
@@ -87,8 +87,8 @@ func TestMergePlaidUpdate_NilFieldsClearable(t *testing.T) {
 		ID:                 1,
 		UserID:             1,
 		AccountID:          1,
+		AssetID:            1,
 		Amount:             decimal.NewFromFloat(-1),
-		Currency:           "USD",
 		MerchantName:       &prior,
 		TransactionDate:    mustDate("2026-05-10"),
 		Source:             "plaid",
@@ -103,7 +103,7 @@ func TestMergePlaidUpdate_NilFieldsClearable(t *testing.T) {
 		Date:               "2026-05-10",
 		// MerchantName intentionally nil
 	}
-	merged, err := plaidsvc.MergePlaidUpdate(existing, incoming, 1, nil, nil)
+	merged, err := plaidsvc.MergePlaidUpdate(existing, incoming, 1, 1, nil, nil)
 	if err != nil {
 		t.Fatalf("MergePlaidUpdate: %v", err)
 	}

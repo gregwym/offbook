@@ -30,7 +30,9 @@ func (h *AccountHandler) Register(g *gin.RouterGroup) {
 	g.DELETE("/accounts/:id", h.Delete)
 }
 
-// JSON request shape for POST /accounts.
+// JSON request shape for POST /accounts. The wire field `balance` becomes
+// the opening cash position quantity per ADR-0013 — there is no scalar
+// balance column anymore.
 type createAccountRequest struct {
 	Name            string           `json:"name"`
 	InstitutionSlug string           `json:"institution_slug"`
@@ -56,7 +58,7 @@ func (h *AccountHandler) Create(c *gin.Context) {
 		IsActive:        req.IsActive,
 	}
 	if req.Balance != nil {
-		in.Balance = *req.Balance
+		in.OpeningBalance = *req.Balance
 	}
 	a, err := h.svc.Create(c.Request.Context(), auth.MustUserID(c.Request.Context()), in)
 	if err != nil {
@@ -127,14 +129,16 @@ func (h *AccountHandler) List(c *gin.Context) {
 	})
 }
 
+// updateAccountRequest excludes balance — per ADR-0013 balance is derived
+// from positions × prices. To change balance, write a transaction (cash
+// account) or upsert the position (trade leg).
 type updateAccountRequest struct {
-	Name            *string          `json:"name"`
-	InstitutionSlug *string          `json:"institution_slug"`
-	AccountType     *string          `json:"account_type"`
-	Currency        *string          `json:"currency"`
-	Balance         *decimal.Decimal `json:"balance"`
-	LastFour        *string          `json:"last_four"`
-	IsActive        *bool            `json:"is_active"`
+	Name            *string `json:"name"`
+	InstitutionSlug *string `json:"institution_slug"`
+	AccountType     *string `json:"account_type"`
+	Currency        *string `json:"currency"`
+	LastFour        *string `json:"last_four"`
+	IsActive        *bool   `json:"is_active"`
 }
 
 func (h *AccountHandler) Update(c *gin.Context) {

@@ -14,6 +14,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
 	plaidsvc "github.com/gregwym/offbook/backend/internal/service/plaid"
+	"github.com/gregwym/offbook/backend/internal/testutil"
 )
 
 // fakeIncrementalServer responds to /transactions/sync with a single page
@@ -72,6 +73,7 @@ func fakeIncrementalServer(t *testing.T, plaidAcctID, modifiedTxnID, removedTxnI
 func TestService_SyncTransactions_IncrementalAddedModifiedRemoved(t *testing.T) {
 	g := openPlaidTestDB(t)
 	userID := seedPlaidTestUser(t, g)
+	usdID := testutil.LookupUSDAssetID(t, g)
 	const plaidAcctID = "pacct-incr-1"
 	const priorCursor = "cursor-from-prior-sync"
 
@@ -79,13 +81,13 @@ func TestService_SyncTransactions_IncrementalAddedModifiedRemoved(t *testing.T) 
 	// One will be modified (with a user-set category_id + notes that must
 	// survive), one will be removed (soft-deleted), one is untouched.
 	acct := &model.Account{
-		UserID:          userID,
-		Name:            "Test Account",
-		InstitutionSlug: "ins_test",
-		AccountType:     "checking",
-		Currency:        "USD",
-		PlaidAccountID:  &[]string{plaidAcctID}[0],
-		IsActive:        true,
+		UserID:              userID,
+		Name:                "Test Account",
+		InstitutionSlug:     "ins_test",
+		AccountType:         "checking",
+		PrimaryQuoteAssetID: usdID,
+		PlaidAccountID:      &[]string{plaidAcctID}[0],
+		IsActive:            true,
 	}
 	if err := g.Create(acct).Error; err != nil {
 		t.Fatalf("seed account: %v", err)
@@ -103,8 +105,8 @@ func TestService_SyncTransactions_IncrementalAddedModifiedRemoved(t *testing.T) 
 	modified := &model.Transaction{
 		UserID:             userID,
 		AccountID:          acct.ID,
+		AssetID:            usdID,
 		Amount:             priorAmount,
-		Currency:           "USD",
 		Description:        ptr("Pending charge"),
 		TransactionDate:    mustDate("2026-05-10"),
 		Source:             "plaid",
@@ -116,8 +118,8 @@ func TestService_SyncTransactions_IncrementalAddedModifiedRemoved(t *testing.T) 
 	removed := &model.Transaction{
 		UserID:             userID,
 		AccountID:          acct.ID,
+		AssetID:            usdID,
 		Amount:             decimal.NewFromFloat(-10.00),
-		Currency:           "USD",
 		Description:        ptr("Will be removed"),
 		TransactionDate:    mustDate("2026-05-09"),
 		Source:             "plaid",
@@ -127,8 +129,8 @@ func TestService_SyncTransactions_IncrementalAddedModifiedRemoved(t *testing.T) 
 	untouched := &model.Transaction{
 		UserID:             userID,
 		AccountID:          acct.ID,
+		AssetID:            usdID,
 		Amount:             decimal.NewFromFloat(-1.00),
-		Currency:           "USD",
 		Description:        ptr("Survives"),
 		TransactionDate:    mustDate("2026-05-08"),
 		Source:             "plaid",
@@ -166,8 +168,8 @@ func TestService_SyncTransactions_IncrementalAddedModifiedRemoved(t *testing.T) 
 	itemRepo := repository.NewPlaidItemRepository(g)
 	acctRepo := repository.NewAccountRepository(g)
 	txRepo := repository.NewTransactionRepository(g)
-	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(acctRepo))
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), piiSvc, nil, g)
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g)
 
 	r, err := svc.SyncTransactions(context.Background(), userID, "item-incr-1")
 	if err != nil {
@@ -263,7 +265,7 @@ func TestService_SyncTransactions_TenantIsolation(t *testing.T) {
 	}
 	bTxn := &model.Transaction{
 		UserID: userB, AccountID: acctB.ID,
-		Amount: decimal.NewFromFloat(-99), Currency: "USD",
+		Amount:      decimal.NewFromFloat(-99),
 		Description: ptr("B's private tx"), TransactionDate: mustDate("2026-05-01"),
 		Source: "plaid", PlaidTransactionID: ptr("ptx-B-only"), ExternalID: ptr("ptx-B-only"),
 	}
@@ -324,8 +326,8 @@ func TestService_SyncTransactions_TenantIsolation(t *testing.T) {
 	itemRepo := repository.NewPlaidItemRepository(g)
 	acctRepo := repository.NewAccountRepository(g)
 	txRepo := repository.NewTransactionRepository(g)
-	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(acctRepo))
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), piiSvc, nil, g)
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g)
 
 	if _, err := svc.SyncTransactions(context.Background(), userA, "item-A"); err != nil {
 		t.Fatalf("Sync user A: %v", err)

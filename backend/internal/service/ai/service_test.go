@@ -265,7 +265,7 @@ func TestService_SendMessage_PersistsContextSnapshot(t *testing.T) {
 	// Pass a builder with all-nil sub-services. Build() returns an empty
 	// Context (no error), which JSON-marshals to a non-empty object — the
 	// AC's "context_snapshot is non-empty" check passes.
-	builder := ai.NewContextBuilder(nil, nil, nil, nil, nil)
+	builder := ai.NewContextBuilder(nil, nil, nil, nil)
 	svc := ai.NewService(threads, msgs, builder, ai.StaticResolver(prov))
 
 	const userID int64 = 7

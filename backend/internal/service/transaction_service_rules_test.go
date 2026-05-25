@@ -42,7 +42,6 @@ func TestTransactionService_Create_AppliesRule(t *testing.T) {
 	in := service.CreateTransactionInput{
 		AccountID:       accountID,
 		Amount:          decimal.NewFromFloat(-50),
-		Currency:        "USD",
 		Description:     &desc,
 		TransactionDate: time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC),
 		Source:          "manual",
@@ -92,7 +91,6 @@ func TestTransactionService_Create_RuleDoesNotCrossTenant(t *testing.T) {
 	tx, err := svc.Create(ctx, userA, service.CreateTransactionInput{
 		AccountID:       accountID,
 		Amount:          decimal.NewFromFloat(-50),
-		Currency:        "USD",
 		Description:     &desc,
 		TransactionDate: time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC),
 		Source:          "manual",
@@ -154,7 +152,6 @@ func TestTransactionService_Create_ManualCategoryWinsOverRule(t *testing.T) {
 		AccountID:       accountID,
 		CategoryID:      &pickedCat,
 		Amount:          decimal.NewFromFloat(-50),
-		Currency:        "USD",
 		Description:     &desc,
 		TransactionDate: time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC),
 		Source:          "manual",
@@ -218,7 +215,6 @@ func TestTransactionService_Create_PriorityBreaksTie(t *testing.T) {
 	tx, err := svc.Create(ctx, userID, service.CreateTransactionInput{
 		AccountID:       accountID,
 		Amount:          decimal.NewFromFloat(-50),
-		Currency:        "USD",
 		Description:     &desc,
 		TransactionDate: time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC),
 		Source:          "manual",

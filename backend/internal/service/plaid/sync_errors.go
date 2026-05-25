@@ -144,7 +144,7 @@ func (s *Service) RetrySyncError(ctx context.Context, userID, errorID int64) err
 		txRepo := repository.NewTransactionRepository(tx)
 		acctRepo := repository.NewAccountRepository(tx)
 		syncErrRepo := repository.NewPlaidSyncErrorRepository(tx)
-		cache := map[string]int64{}
+		cache := map[string]accountRef{}
 
 		// Resurrect-aware insert path, mirroring SyncTransactions.
 		soft, err := txRepo.FindSoftDeletedByPlaidTransactionIDs(ctx, userID, []string{pt.PlaidTransactionID})
@@ -152,11 +152,11 @@ func (s *Service) RetrySyncError(ctx context.Context, userID, errorID int64) err
 			return fmt.Errorf("plaid: retry lookup soft-deleted: %w", err)
 		}
 		if len(soft) > 0 {
-			localID, err := resolveAccountID(ctx, acctRepo, userID, pt.PlaidAccountID, cache)
+			ref, err := resolveAccount(ctx, acctRepo, userID, pt.PlaidAccountID, cache)
 			if err != nil {
 				return fmt.Errorf("%w: %v", ErrSyncErrorReplay, err)
 			}
-			merged, err := MergePlaidUpdate(soft[0], pt, localID, s.catMapper, userRules)
+			merged, err := MergePlaidUpdate(soft[0], pt, ref.ID, ref.AssetID, s.catMapper, userRules)
 			if err != nil {
 				return fmt.Errorf("%w: %v", ErrSyncErrorReplay, err)
 			}
@@ -164,11 +164,11 @@ func (s *Service) RetrySyncError(ctx context.Context, userID, errorID int64) err
 				return fmt.Errorf("%w: %v", ErrSyncErrorReplay, err)
 			}
 		} else {
-			localID, err := resolveAccountID(ctx, acctRepo, userID, pt.PlaidAccountID, cache)
+			ref, err := resolveAccount(ctx, acctRepo, userID, pt.PlaidAccountID, cache)
 			if err != nil {
 				return fmt.Errorf("%w: %v", ErrSyncErrorReplay, err)
 			}
-			mapped, err := MapPlaidTransaction(pt, userID, localID, s.catMapper, userRules)
+			mapped, err := MapPlaidTransaction(pt, userID, ref.ID, ref.AssetID, s.catMapper, userRules)
 			if err != nil {
 				return fmt.Errorf("%w: %v", ErrSyncErrorReplay, err)
 			}

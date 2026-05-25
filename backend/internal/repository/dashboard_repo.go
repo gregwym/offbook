@@ -8,6 +8,31 @@ import (
 	"gorm.io/gorm"
 )
 
+// netWorthQuery sums positions × latest prices in the user's primary
+// currency. Per ADR-0013, balance is derived from (positions, prices) —
+// the legacy accounts.balance column is gone. For positions denominated
+// in the user's primary currency the price is implicit (1); for others
+// we look up the most-recent price into that currency. Missing-price
+// fallback is 0 — calling code can surface a "stale price" warning.
+const netWorthQuery = `
+	SELECT COALESCE(SUM(
+		CASE
+			WHEN p.asset_id = u.primary_currency_asset_id THEN p.quantity
+			ELSE COALESCE(
+				p.quantity * (
+					SELECT pr.price FROM prices pr
+					WHERE pr.asset_id = p.asset_id
+					  AND pr.quote_asset_id = u.primary_currency_asset_id
+					ORDER BY pr.as_of DESC
+					LIMIT 1
+				), 0)
+		END
+	), 0)::text
+	FROM positions p
+	JOIN accounts a ON a.id = p.account_id AND a.deleted_at IS NULL
+	JOIN users    u ON u.id = p.user_id
+	WHERE p.deleted_at IS NULL AND p.user_id = ?`
+
 // DashboardSummaryAggregates is the raw aggregate output from a single
 // /dashboard/summary call. All monetary values are computed in Postgres
 // (NUMERIC arithmetic) and arrive in Go as shopspring/decimal so we never
@@ -89,12 +114,7 @@ func NewDashboardRepository(db *gorm.DB) DashboardRepository {
 func (r *dashboardRepo) Summarize(ctx context.Context, userID int64, from, to time.Time) (*DashboardSummaryAggregates, error) {
 	out := &DashboardSummaryAggregates{}
 
-	if err := r.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(balance), 0)::text
-		FROM accounts
-		WHERE deleted_at IS NULL
-		  AND user_id = ?
-	`, userID).Scan(&out.NetWorth).Error; err != nil {
+	if err := r.db.WithContext(ctx).Raw(netWorthQuery, userID).Scan(&out.NetWorth).Error; err != nil {
 		return nil, err
 	}
 
@@ -298,14 +318,9 @@ func (r *dashboardRepo) NetWorthByMonth(ctx context.Context, userID int64, now t
 		months = 12
 	}
 	now = now.UTC()
-	// Current net worth.
+	// Current net worth, computed from positions × latest prices per ADR-0013.
 	var cur string
-	if err := r.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(balance), 0)::text
-		FROM accounts
-		WHERE deleted_at IS NULL
-		  AND user_id = ?
-	`, userID).Scan(&cur).Error; err != nil {
+	if err := r.db.WithContext(ctx).Raw(netWorthQuery, userID).Scan(&cur).Error; err != nil {
 		return nil, err
 	}
 	curD, _ := decimal.NewFromString(cur)

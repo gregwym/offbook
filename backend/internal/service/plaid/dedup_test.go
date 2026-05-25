@@ -98,7 +98,7 @@ func TestPlaidSync_NoDuplicatesOnReSync(t *testing.T) {
 	itemRepo := repository.NewPlaidItemRepository(g)
 	acctRepo := repository.NewAccountRepository(g)
 	txRepo := repository.NewTransactionRepository(g)
-	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(acctRepo))
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
 
 	enc, _ := box.Encrypt([]byte("access-sandbox-fake"))
 	item := &model.PlaidItem{UserID: userID, PlaidItemID: "item-dedup", AccessTokenEnc: enc, Status: "active"}
@@ -106,7 +106,7 @@ func TestPlaidSync_NoDuplicatesOnReSync(t *testing.T) {
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), piiSvc, nil, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g)
 
 	// First sync: 2 inserts.
 	r1, err := svc.SyncTransactions(context.Background(), userID, "item-dedup")
@@ -196,7 +196,6 @@ func TestPlaidSync_SoftDeletedReSurfaces(t *testing.T) {
 		UserID:             userID,
 		AccountID:          acct.ID,
 		Amount:             decimal.NewFromFloat(-3.14),
-		Currency:           "USD",
 		Description:        ptr("Stable charge A"),
 		TransactionDate:    mustDate("2026-05-10"),
 		Source:             "plaid",
@@ -228,7 +227,7 @@ func TestPlaidSync_SoftDeletedReSurfaces(t *testing.T) {
 	box, _ := crypto.NewSecretBox(newTestKey())
 	itemRepo := repository.NewPlaidItemRepository(g)
 	acctRepo := repository.NewAccountRepository(g)
-	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(acctRepo))
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
 
 	enc, _ := box.Encrypt([]byte("access-sandbox-fake"))
 	item := &model.PlaidItem{UserID: userID, PlaidItemID: "item-resurface", AccessTokenEnc: enc, Status: "active"}
@@ -236,7 +235,7 @@ func TestPlaidSync_SoftDeletedReSurfaces(t *testing.T) {
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), piiSvc, nil, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g)
 
 	r, err := svc.SyncTransactions(context.Background(), userID, "item-resurface")
 	if err != nil {

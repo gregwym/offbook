@@ -103,7 +103,7 @@ func TestPlaidSync_StatusFlipsOnErrorThenClearsOnSuccess(t *testing.T) {
 	itemRepo := repository.NewPlaidItemRepository(g)
 	acctRepo := repository.NewAccountRepository(g)
 	txRepo := repository.NewTransactionRepository(g)
-	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(acctRepo))
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
 
 	enc, _ := box.Encrypt([]byte("access-sandbox-fake"))
 	item := &model.PlaidItem{
@@ -114,7 +114,7 @@ func TestPlaidSync_StatusFlipsOnErrorThenClearsOnSuccess(t *testing.T) {
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), piiSvc, nil, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g)
 
 	// Phase 1: forced error.
 	if _, err := svc.SyncTransactions(context.Background(), userID, "item-status"); err == nil {

@@ -113,7 +113,7 @@ func TestPlaidSync_CategoryMappingFirstPass_AndPreservesUserChoiceOnReSync(t *te
 	itemRepo := repository.NewPlaidItemRepository(g)
 	acctRepo := repository.NewAccountRepository(g)
 	txRepo := repository.NewTransactionRepository(g)
-	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(acctRepo))
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
 
 	// Real mapper loaded from the seeded plaid_category_map table.
 	mapper, err := plaidsvc.NewCategoryMapper(context.Background(),
@@ -131,7 +131,7 @@ func TestPlaidSync_CategoryMappingFirstPass_AndPreservesUserChoiceOnReSync(t *te
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), piiSvc, mapper, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, mapper, g)
 
 	// First sync: row is created with the Plaid default category.
 	if _, err := svc.SyncTransactions(context.Background(), userID, "item-pfc"); err != nil {
@@ -229,7 +229,7 @@ func TestPlaidSync_NoMappingLeavesCategoryNull(t *testing.T) {
 	itemRepo := repository.NewPlaidItemRepository(g)
 	acctRepo := repository.NewAccountRepository(g)
 	txRepo := repository.NewTransactionRepository(g)
-	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(acctRepo))
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
 	mapper, _ := plaidsvc.NewCategoryMapper(context.Background(), repository.NewPlaidCategoryMapRepository(g))
 
 	enc, _ := box.Encrypt([]byte("access-sandbox-fake"))
@@ -238,7 +238,7 @@ func TestPlaidSync_NoMappingLeavesCategoryNull(t *testing.T) {
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), piiSvc, mapper, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, mapper, g)
 	if _, err := svc.SyncTransactions(context.Background(), userID, "item-no-pfc"); err != nil {
 		t.Fatalf("sync: %v", err)
 	}

@@ -35,7 +35,9 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 
 	accountRepo := repository.NewAccountRepository(gormDB)
 	plaidItemRepo := repository.NewPlaidItemRepository(gormDB)
-	accountSvc := service.NewAccountService(accountRepo).WithPlaidItemRepo(plaidItemRepo)
+	assetRepo := repository.NewAssetRepository(gormDB)
+	positionRepo := repository.NewPositionRepository(gormDB)
+	accountSvc := service.NewAccountService(gormDB, accountRepo, assetRepo, positionRepo).WithPlaidItemRepo(plaidItemRepo)
 	accountHandler := handler.NewAccountHandler(accountSvc)
 
 	// PII flow: pii_repo is wired ONLY into pii_service, which is wired ONLY
@@ -69,9 +71,8 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	savingsGoalSvc := service.NewSavingsGoalService(savingsGoalRepo, accountRepo)
 	savingsGoalHandler := handler.NewSavingsGoalHandler(savingsGoalSvc)
 
-	investmentRepo := repository.NewInvestmentRepository(gormDB)
-	investmentSvc := service.NewInvestmentService(investmentRepo, accountRepo)
-	investmentHandler := handler.NewInvestmentHandler(investmentSvc)
+	// Investments wiring removed per ADR-0013 — the snapshot table is gone.
+	// Position-based portfolio + allocation aggregator lands in #238.
 
 	householdRepo := repository.NewHouseholdRepository(gormDB)
 	memberRepo := repository.NewHouseholdMemberRepository(gormDB)
@@ -114,7 +115,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	// registers either way so the frontend gets a clear PLAID_NOT_CONFIGURED
 	// error rather than a 404.
 	plaidSyncErrRepo := repository.NewPlaidSyncErrorRepository(gormDB)
-	plaidSvc := newPlaidService(cfg, gormDB, plaidItemRepo, accountRepo, transactionRepo, plaidSyncErrRepo, piiSvc).WithRuleRepo(ruleRepo)
+	plaidSvc := newPlaidService(cfg, gormDB, plaidItemRepo, accountRepo, transactionRepo, plaidSyncErrRepo, assetRepo, positionRepo, piiSvc).WithRuleRepo(ruleRepo)
 	plaidHandler := handler.NewPlaidHandler(plaidSvc)
 
 	// User settings: per-user AI provider config (Claude key, Ollama URL,
@@ -128,7 +129,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	// service still registers when nothing is configured (threads/list/
 	// history work for past conversations) and SendMessage returns
 	// ErrNoProvider until the user adds a key.
-	aiBuilder := ai.NewContextBuilder(dashboardSvc, budgetSvc, savingsGoalSvc, investmentSvc, categorySvc)
+	aiBuilder := ai.NewContextBuilder(dashboardSvc, budgetSvc, savingsGoalSvc, categorySvc)
 	aiSvc := ai.NewService(
 		repository.NewAIThreadRepository(gormDB),
 		repository.NewAIMessageRepository(gormDB),
@@ -155,7 +156,6 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		dashboardHandler.Register(secured)
 		budgetHandler.Register(secured)
 		savingsGoalHandler.Register(secured)
-		investmentHandler.Register(secured)
 		householdHandler.Register(secured)
 		aggregatorHandler.Register(secured)
 		scopeHandler.Register(secured)
@@ -179,10 +179,12 @@ func newPlaidService(
 	acctRepo repository.AccountRepository,
 	txRepo repository.TransactionRepository,
 	syncErrRepo repository.PlaidSyncErrorRepository,
+	assetRepo repository.AssetRepository,
+	positionRepo repository.PositionRepository,
 	piiSvc *service.PIIService,
 ) *plaidsvc.Service {
 	if !cfg.PlaidConfigured() {
-		return plaidsvc.NewService(nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		return plaidsvc.NewService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	}
 	client, err := plaidsvc.NewSDKClient(plaidsvc.Config{
 		ClientID: cfg.PlaidClientID,
@@ -210,6 +212,8 @@ func newPlaidService(
 		acctRepo,
 		txRepo,
 		syncErrRepo,
+		assetRepo,
+		positionRepo,
 		piiSvc,
 		mapper,
 		gormDB,

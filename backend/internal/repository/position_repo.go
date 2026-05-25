@@ -6,15 +6,21 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-// PositionRepository is the read interface for positions. All reads are
-// scoped by user_id — there is no cross-tenant "fetch by id" path. Phase 2
-// of ADR-0013 adds the write methods.
+// PositionRepository is the data-access contract for positions. All reads
+// are scoped by user_id — there is no cross-tenant "fetch by id" path.
+// A (account_id, asset_id) pair has at most one live row (partial unique
+// index uq_positions_account_asset).
 type PositionRepository interface {
 	GetByID(ctx context.Context, userID, id int64) (*model.Position, error)
 	ListByAccountID(ctx context.Context, userID, accountID int64) ([]model.Position, error)
 	ListByUserID(ctx context.Context, userID int64) ([]model.Position, error)
+	// Upsert sets the position for (account_id, asset_id) to the provided
+	// quantity (replacement, not delta — caller owns delta math). When the
+	// row already exists, cost_basis is updated only if non-nil on `p`.
+	Upsert(ctx context.Context, p *model.Position) error
 }
 
 type positionRepo struct {
@@ -58,4 +64,20 @@ func (r *positionRepo) ListByUserID(ctx context.Context, userID int64) ([]model.
 		return nil, err
 	}
 	return rows, nil
+}
+
+func (r *positionRepo) Upsert(ctx context.Context, p *model.Position) error {
+	// Conflict target is the partial unique index uq_positions_account_asset.
+	// Postgres requires the index_predicate to match for partial-index UPSERT.
+	updates := []string{"quantity", "updated_at"}
+	if p.CostBasis != nil {
+		updates = append(updates, "cost_basis")
+	}
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:     []clause.Column{{Name: "account_id"}, {Name: "asset_id"}},
+			TargetWhere: clause.Where{Exprs: []clause.Expression{clause.Expr{SQL: "deleted_at IS NULL"}}},
+			DoUpdates:   clause.AssignmentColumns(updates),
+		}).
+		Create(p).Error
 }

@@ -63,7 +63,7 @@ func newAccountSvc(t *testing.T) (*service.AccountService, int64, *gorm.DB) {
 	t.Helper()
 	g := openTestDB(t)
 	userID := seedTestUser(t, g)
-	return service.NewAccountService(repository.NewAccountRepository(g)), userID, g
+	return service.NewAccountService(g, repository.NewAccountRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g)), userID, g
 }
 
 // validInput returns a creator that produces fresh, valid create inputs so
@@ -75,7 +75,7 @@ func validInput(suffix string) service.CreateAccountInput {
 		InstitutionSlug: "fixture",
 		AccountType:     "checking",
 		Currency:        "USD",
-		Balance:         decimal.NewFromInt(0),
+		OpeningBalance:  decimal.NewFromInt(0),
 	}
 }
 
@@ -229,13 +229,11 @@ func TestAccountService_Update_DoesNotTouchPII(t *testing.T) {
 	newName := "Renamed via update"
 	newType := "savings"
 	newCurr := "EUR"
-	newBalance := decimal.NewFromFloat(123.456)
 	inactive := false
 	if _, err := svc.Update(ctx, userID, acc.ID, service.UpdateAccountInput{
 		Name:        &newName,
 		AccountType: &newType,
 		Currency:    &newCurr,
-		Balance:     &newBalance,
 		IsActive:    &inactive,
 	}); err != nil {
 		t.Fatalf("update: %v", err)

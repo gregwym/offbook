@@ -67,7 +67,12 @@ func main() {
 	itemRepo := repository.NewPlaidItemRepository(gormDB)
 	acctRepo := repository.NewAccountRepository(gormDB)
 	txRepo := repository.NewTransactionRepository(gormDB)
-	piiSvc := service.NewPIIService(repository.NewPIIRepository(gormDB), service.NewAccountService(acctRepo))
+	assetRepo := repository.NewAssetRepository(gormDB)
+	positionRepo := repository.NewPositionRepository(gormDB)
+	piiSvc := service.NewPIIService(
+		repository.NewPIIRepository(gormDB),
+		service.NewAccountService(gormDB, acctRepo, assetRepo, positionRepo),
+	)
 	mapper, err := plaidsvc.NewCategoryMapper(context.Background(),
 		repository.NewPlaidCategoryMapRepository(gormDB))
 	if err != nil {
@@ -77,7 +82,9 @@ func main() {
 
 	svc := plaidsvc.NewService(
 		client, box, itemRepo, acctRepo, txRepo,
-		repository.NewPlaidSyncErrorRepository(gormDB), piiSvc, mapper, gormDB,
+		repository.NewPlaidSyncErrorRepository(gormDB),
+		assetRepo, positionRepo,
+		piiSvc, mapper, gormDB,
 	).WithRuleRepo(repository.NewCategorizationRuleRepository(gormDB))
 
 	r, err := svc.SyncTransactions(context.Background(), userID, plaidItemID)

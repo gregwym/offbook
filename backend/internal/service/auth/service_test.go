@@ -82,7 +82,7 @@ func truncateAuthState(t *testing.T, g *gorm.DB) {
 	t.Helper()
 	// Order matters where CASCADE isn't already in place.
 	for _, stmt := range []string{
-		`TRUNCATE TABLE ai_messages, ai_threads, ingestion_jobs, investments, savings_goals, budgets, transactions, account_shares, accounts, shared_goals, shared_budgets, household_invites, household_members, households, sessions, instance_config, users RESTART IDENTITY CASCADE`,
+		`TRUNCATE TABLE ai_messages, ai_threads, ingestion_jobs, positions, prices, savings_goals, budgets, transactions, account_shares, accounts, shared_goals, shared_budgets, household_invites, household_members, households, sessions, instance_config, users RESTART IDENTITY CASCADE`,
 	} {
 		if err := g.Exec(stmt).Error; err != nil {
 			t.Fatalf("truncate: %v", err)
