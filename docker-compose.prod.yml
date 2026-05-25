@@ -1,0 +1,46 @@
+# Prod-flavored compose override. Composes with the base docker-compose.yml.
+# Designed to coexist on a single host with the dev stack (no host port
+# collisions, no shared Postgres volume). Tailscale-fronted only — the
+# expected ingress is docker-compose.tailscale.yml; no host ports are bound.
+#
+# Usage (with Tailscale sidecar):
+#   docker compose -p offbook-prod \
+#     --env-file .env.prod \
+#     -f docker-compose.yml \
+#     -f docker-compose.prod.yml \
+#     -f docker-compose.tailscale.yml \
+#     up -d
+#
+# Required env (in .env.prod): SESSION_SECRET, TS_AUTHKEY, TS_HOSTNAME.
+# See .env.prod.example for the full set. See ADR-0016 for the deployment pattern.
+services:
+  postgres:
+    environment:
+      POSTGRES_DB: offbook_prod
+    ports: !override []
+    volumes: !override
+      - prod_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U offbook -d offbook_prod"]
+
+  backend:
+    ports: !override []
+    environment:
+      APP_ENV: prod
+      DATABASE_URL: postgres://offbook:offbook@postgres:5432/offbook_prod?sslmode=disable
+      PORT: "8000"
+      MIGRATIONS_PATH: /app/migrations
+      # FRONTEND_URL and SESSION_SECRET come from .env.prod via --env-file
+      # substitution. Explicit ${VAR} bindings (rather than env_file:) so they
+      # override the base file's hardcoded FRONTEND_URL — Compose merges
+      # environment over env_file, so a base-level hardcoded key wins against
+      # an overlay env_file unless we re-state it here.
+      FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL required (set in .env.prod, then pass --env-file .env.prod)}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET required (set in .env.prod, then pass --env-file .env.prod)}
+    env_file: !override []
+
+  frontend:
+    ports: !override []
+
+volumes:
+  prod_postgres_data:

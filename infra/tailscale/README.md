@@ -20,19 +20,23 @@ TS_AUTHKEY=tskey-auth-... TS_HOSTNAME=offbook-dev \
 
 The node appears in the tailnet as `offbook-dev.<tailnet>.ts.net` once Tailscale has fetched a cert (first boot takes ~30s).
 
-## Bring up a second instance on the same host
+## Bring up a second (prod-flavored) instance on the same host
 
-Same command, different project name + hostname + auth key. Compose project name namespaces containers, networks, and named volumes (including `postgres_data` and `tailscale_state`), so there's no collision:
+Same command, but compose in `docker-compose.prod.yml` and pass a prod env file. Compose project name namespaces containers, networks, and named volumes (including `prod_postgres_data` and `tailscale_state`), so there's no collision with the dev stack:
 
 ```sh
-TS_AUTHKEY=tskey-auth-... TS_HOSTNAME=offbook-prod \
-  docker compose -p offbook-prod \
-    -f docker-compose.yml \
-    -f docker-compose.tailscale.yml \
-    up -d
+cp .env.prod.example .env.prod
+# Fill in SESSION_SECRET (openssl rand -hex 32), TS_AUTHKEY, FRONTEND_URL
+
+docker compose -p offbook-prod \
+  --env-file .env.prod \
+  -f docker-compose.yml \
+  -f docker-compose.prod.yml \
+  -f docker-compose.tailscale.yml \
+  up -d
 ```
 
-(A dedicated `docker-compose.prod.yml` with a different DB name and prod env defaults is a planned follow-up; until it lands, this exposes the dev-flavored stack under the prod hostname.)
+The prod override swaps `POSTGRES_DB` to `offbook_prod`, uses a named volume (no collision with the dev stack's `./data/postgres` bind mount), unbinds all host ports (only the Tailscale sidecar is reachable), and refuses to start without `SESSION_SECRET`.
 
 ## Notes
 
