@@ -5,8 +5,10 @@ Pattern for exposing an Offbook instance over HTTPS at a `*.ts.net` MagicDNS hos
 ## One-time setup
 
 1. Have a Tailscale account and tailnet.
-2. In the admin console, create a tag for Offbook nodes: `tag:offbook` (assign your user as the owner so you can mint keys for it).
-3. Mint a per-instance auth key, **tagged** `tag:offbook`. Reusable + ephemeral is fine for a personal tailnet; choose per your threat model.
+2. Decide how the sidecar nodes will be tagged. Two common shapes:
+   - **Reusable key with auto-applied tag (recommended):** define an Offbook tag in your ACL policy (e.g. `tag:offbook`) and mint a reusable + ephemeral key that auto-applies it. The sidecar inherits the tag automatically; leave `TS_EXTRA_ARGS` unset.
+   - **Untagged key + sidecar-side advertise:** mint an untagged key and set `TS_EXTRA_ARGS=--advertise-tags=tag:offbook` in your env file. Requires the key's identity to have permission for the tag, or registration fails.
+3. ACL recommendation: restrict whatever tag you use so Offbook nodes can only be reached by you, not the broader tailnet.
 
 ## Bring up an instance
 
