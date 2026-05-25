@@ -54,3 +54,29 @@ export type HouseholdDashboard = {
   in_grace_count: number
   members: HouseholdMemberContribution[]
 }
+
+// AssetClassAllocation mirrors service/household.AssetClassAllocation.
+// `kind` is the position's asset kind (e.g. "cash", "equity", "crypto").
+export type HouseholdAssetClassAllocation = {
+  kind: string
+  value: string
+}
+
+// NetWorthPoint mirrors service/household.NetWorthPoint. Date arrives as
+// RFC3339 (e.g. "2024-01-15T00:00:00Z"); the UI slices for month buckets.
+export type HouseholdNetWorthPoint = {
+  date: string
+  value: string
+}
+
+// AccountSummary mirrors service/household.AccountSummary — lightweight,
+// non-PII account projection used for the Insights account list band.
+export type HouseholdAccountSummary = {
+  account_id: number
+  name: string
+  account_type: string
+  currency: string
+  balance: string
+  owner_user_id: number
+  visibility: 'balance_only' | 'balance_and_txns'
+}

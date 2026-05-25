@@ -108,7 +108,7 @@ export function HouseholdSettingsPage() {
       // After leaving, scope must reset to personal — re-hydrate the
       // scope store so the sidebar swaps + the page redirects.
       await hydrateScope()
-      navigate('/dashboard', { replace: true })
+      navigate('/insights', { replace: true })
     } finally {
       setLeaving(false)
     }

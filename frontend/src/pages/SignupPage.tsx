@@ -14,7 +14,7 @@ export function SignupPage() {
     return <Navigate to="/setup/admin" replace />
   }
   if (user) {
-    return <Navigate to="/dashboard" replace />
+    return <Navigate to="/insights" replace />
   }
 
   // Invite-only mode requires a token; local-multi-tenant mode doesn't.

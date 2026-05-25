@@ -14,7 +14,7 @@ export function SigninPage() {
     return <Navigate to="/setup/admin" replace />
   }
   if (user) {
-    return <Navigate to="/dashboard" replace />
+    return <Navigate to="/insights" replace />
   }
 
   const submit = async (e: React.FormEvent) => {

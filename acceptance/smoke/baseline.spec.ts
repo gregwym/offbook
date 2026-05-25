@@ -3,7 +3,7 @@ import { personaPassword } from '../fixtures/env.mjs'
 
 const publicRoutes = ['/setup/admin', '/signin', '/signup']
 const personalRoutes = [
-  '/dashboard',
+  '/insights',
   '/accounts',
   '/connect',
   '/transactions',
@@ -15,7 +15,7 @@ const personalRoutes = [
   '/ai',
   '/settings',
 ]
-const householdRoutes = ['/h/dashboard', '/h/budgets', '/h/goals', '/h/members', '/h/ai', '/h/settings']
+const householdRoutes = ['/h/insights', '/h/budgets', '/h/goals', '/h/members', '/h/ai', '/h/settings']
 
 test.describe('baseline route smoke', () => {
   test('unexpected auth failures are reported', () => {
@@ -78,7 +78,7 @@ async function login(page: Page) {
   await page.getByLabel(/email/i).fill('qa-admin@offbook.local')
   await page.getByLabel(/password/i).fill(personaPassword('qa-admin@offbook.local'))
   await page.getByRole('button', { name: /sign in/i }).click()
-  await page.waitForURL(/\/dashboard|\/h\/dashboard/)
+  await page.waitForURL(/\/insights|\/h\/insights/)
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
