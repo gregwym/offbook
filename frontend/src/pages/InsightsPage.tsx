@@ -82,6 +82,13 @@ export function InsightsPage() {
 }
 
 function InsightsBody({ data }: { data: InsightsData }) {
+  // Personal fresh-signup state: no accounts at all → single primary CTA
+  // per v6 §02 A2, instead of five empty bands. Household scope keeps its
+  // existing "share an account" empty state on the AccountsBand.
+  if (data.scope === 'personal' && data.accounts.length === 0) {
+    return <FreshSignupEmpty />
+  }
+
   return (
     <>
       <NetWorthBand data={data} />
@@ -93,6 +100,25 @@ function InsightsBody({ data }: { data: InsightsData }) {
         {data.period.from.slice(0, 10)} → {data.period.to.slice(0, 10)}
       </p>
     </>
+  )
+}
+
+function FreshSignupEmpty() {
+  return (
+    <div className="rounded-lg border border-dashed border-gray-300 bg-white p-10 text-center">
+      <Wallet size={32} className="mx-auto text-gray-300 mb-3" />
+      <h2 className="text-lg font-medium text-gray-900">Add your first account</h2>
+      <p className="mt-1 text-sm text-gray-500">
+        Connect a bank or add one manually. Your net worth, allocation, and
+        spending will populate as soon as transactions arrive.
+      </p>
+      <Link
+        to="/accounts/add"
+        className="mt-6 inline-flex items-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+      >
+        Add your first account →
+      </Link>
+    </div>
   )
 }
 

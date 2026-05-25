@@ -106,8 +106,8 @@ export function SignupPage() {
               ? 'Accepting invite…'
               : 'Creating account…'
             : inviteRequired
-              ? 'Accept invite & sign up'
-              : 'Sign up'}
+              ? 'Accept invite & create account →'
+              : 'Create account →'}
         </button>
       </form>
 
