@@ -140,34 +140,39 @@ Per constraint #6, computed values (account balance in primary currency, househo
 
 The invariant: `positions` + `prices` are the only sources of truth. Drop the cache, recompute everything.
 
-## Migration Plan
+## Implementation Plan
 
-Phased to keep the system runnable between phases.
+Offbook has not shipped to production. There are no users to migrate and no
+historical data to preserve. Implementation is therefore **a consolidated
+refactor**, not a phased dual-representation rollout. Drop legacy columns
+and switch all reads/writes in one coherent change. Dev databases are wiped
+and re-seeded by re-running `make dev` against a fresh volume.
 
-**Phase 1 — Foundation tables, backfill, dual-write.**
-- Migration creates `assets`, `positions`, `prices`. Seeds common fiat assets (USD, EUR, GBP, JPY, CNY, CAD, AUD) and crypto (BTC, ETH).
-- Add `users.primary_currency_asset_id` (default USD asset id).
-- Backfill `positions` from existing `accounts.balance` (one row per cash account) and from the latest `investments` snapshot per `(account_id, ticker)`.
-- Backfill `prices` from historical `investments.market_value / quantity` rows.
-- Old columns (`accounts.balance`, `investments.market_value`) **stay populated** by a dual-write layer.
+**Step 1 (#231, in flight) — Foundation tables and read-only repositories.**
+Adds `assets`, `positions`, `prices` tables, seeds common assets, adds
+`users.primary_currency_asset_id` and `accounts.primary_quote_asset_id`,
+and exposes read-only repositories. Backfill logic and BEFORE-INSERT
+triggers in this PR are scaffolding that the next step deletes — they
+exist because the PR was authored before the pre-prod confirmation.
 
-**Phase 2 — Reads migrate to positions/prices.**
-- Investment service `PortfolioSummary` reads from positions + prices.
-- Dashboard service net-worth/balance reads from positions + prices (with FX where needed).
-- Plaid sync writes positions in addition to `accounts.balance` and `investments`.
-- Household aggregator gains `Allocation`, `NetWorthTrend`, `AccountSummaries` methods using the new tables (closes the M9 #225 gap).
+**Step 2 (M10a) — Schema completion + service switchover.** One migration
+that:
+- Drops `accounts.balance`, `investments.market_value`, `transactions.currency`.
+- Drops the `investments` table (superseded by `positions` + `prices`).
+- Drops the Phase-1 triggers and backfill remnants.
+- Adds `transactions.asset_id NOT NULL REFERENCES assets(id)`.
 
-**Phase 3 — Trades and `transactions.asset_id`.**
-- Migration adds `transactions.asset_id NOT NULL` (backfilled from `accounts.currency` for existing rows — all current transactions are cash transactions, so `asset_id = currency asset of the parent account`).
-- Plaid investment-transactions API ingestion: writes paired-row trades.
-- CSV/manual trade entry forms produce paired rows.
-- Cost-basis recomputation job populates `positions.cost_basis`.
+Plus all service rewrites in the same PR:
+- Plaid sync writes positions + prices, not balances/holdings.
+- Investment service queries through positions; remove the snapshot model.
+- Dashboard service computes via `positions × prices` (with FX where needed).
+- Household aggregator gains `Allocation`, `NetWorthTrend`,
+  `AccountSummaries` (closes the M9 #225 gap).
 
-**Phase 4 — Drop legacy columns.**
-- Drop `accounts.balance`, `investments.market_value`, `transactions.currency`.
-- `investments` table may remain as the historical snapshot log or be retired in favor of `prices` + `positions` — decide at the end of Phase 3.
-
-Each phase is a separate PR. The system runs the full product surface after each phase; rollback is a single migration `down`.
+**Step 3 (M10b) — Trade ingestion.** Plaid investment-transactions API
+produces paired-row trades; manual trade form ditto; cost-basis recompute
+runs on every trade-affecting write. Smaller surface; isolated from the
+schema completion to keep PR size manageable.
 
 ## Consequences
 
@@ -176,7 +181,7 @@ Each phase is a separate PR. The system runs the full product surface after each
 - Brokerage cash sleeves stop being a special case.
 - Trades become first-class transactions; budgets, categorization rules, AI context, and household aggregation all see them.
 - Allocation, net worth, unrealized G/L become deterministic functions of `(positions, prices, as_of)`. Bug surface drops because there's no second source of truth to keep in sync.
-- Cost is real: 4 phased migrations, sync rewrites for Plaid, frontend refactors for the dashboard and investments pages, an FX layer at the price service. Estimated effort: a full milestone (M10).
+- Cost is real: schema completion + service rewrites + trade ingestion, plus an FX layer at the price service. Estimated effort: a milestone (M10) split into two PRs (schema/reads + trades).
 - Tier 3 price providers, tax-lot precision, and FX-historical revaluation are deferred but unblocked by the schema.
 
 ## Alternatives Considered
@@ -191,4 +196,4 @@ Each phase is a separate PR. The system runs the full product surface after each
 
 - **ADR-0014: Price provider interface (Tier 3).** Pluggable `PriceProvider` covering Yahoo/Polygon for equities, ECB/openexchangerates for FX, CoinGecko for crypto. Mirrors `AIProvider` pattern. Defer until at least one non-Plaid user asks for live prices.
 - **ADR-0015: Tax-lot precision opt-in.** Defines `tax_lots` table, lot-selection method (FIFO/LIFO/spec ID), and the migration path from `positions.cost_basis` average-cost to tax-lot precision. Defer until a user needs it.
-- **Cash sleeve in brokerage Plaid sync.** Plaid's investment-holdings endpoint reports cash as a position with `security.ticker_symbol = 'CUR:USD'` or similar. The Phase 2 sync rewrite must handle this consistently with bank-account cash, not as a separate code path.
+- **Cash sleeve in brokerage Plaid sync.** Plaid's investment-holdings endpoint reports cash as a position with `security.ticker_symbol = 'CUR:USD'` or similar. The M10a sync rewrite must handle this consistently with bank-account cash, not as a separate code path.

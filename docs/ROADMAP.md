@@ -209,16 +209,15 @@ Issues:
 
 **Goal:** Refactor account valuation to a position-based model. Every account is a bag of positions; **quantities are facts**, **valuations derive from positions × prices** (never stored). Closes the multi-currency, brokerage-cash-sleeve, trade-visibility, and household-allocation gaps the current two-shape schema (`accounts.balance` scalar + separate `investments` snapshots) leaves open.
 
-See [ADR-0013](ADR/0013-position-based-account-model.md) for the full rationale. Phased so the system runs after each phase:
+See [ADR-0013](ADR/0013-position-based-account-model.md) for the full rationale. Pre-prod — we wipe dev DBs and rebuild rather than migrating data. Two integrated PRs land the refactor:
 
-- [ ] #231 — Phase 1: Foundation tables (`assets`, `positions`, `prices`) + backfill from existing data. Dual representation; no reads switched.
-- [ ] #232 — Phase 2: Reads migrate to positions/prices; Plaid sync dual-writes; **household allocation aggregator** lands (closes M9 #225 gap).
-- [ ] #233 — Phase 3: `transactions.asset_id` + paired-row trade ingestion from Plaid investment-transactions and a manual trade form. Cost-basis recomputation (average cost).
-- [ ] #234 — Phase 4: Drop legacy `accounts.balance`, `investments.market_value`, `transactions.currency` columns. Retire dual-write code.
+- [ ] #231 — Foundation tables (`assets`, `positions`, `prices`) + read-only repositories. **PR open at #236.** Triggers + backfill in this PR are scaffolding the next step deletes.
+- [ ] #237 — M10a: drop legacy columns + drop `investments` table + add `transactions.asset_id` + rewrite all service reads + Plaid sync writes positions/prices + household aggregator gains `Allocation`/`NetWorthTrend`/`AccountSummaries` (closes M9 #225 gap).
+- [ ] #238 — M10b: trade ingestion — Plaid investment-transactions → paired-row trades; manual trade form; cost-basis recompute (average cost).
 
 **Invariant carried throughout:** the app never invents transactions. Trade rows come from real import sources (Plaid, statement CSV) or explicit user input — never synthesized to reconcile a holdings-snapshot delta.
 
-**Done criteria:** A user with mixed cash + brokerage + crypto accounts (across multiple currencies) sees the same net worth they saw before the refactor, computed from `positions × prices` with FX conversion to their primary currency. Plaid trades appear as paired rows in the Transactions list. Household scope shows asset allocation with per-account share visibility honored. Legacy `accounts.balance` is gone from the schema.
+**Done criteria:** A user with mixed cash + brokerage + crypto accounts (across multiple currencies) sees net worth, allocation, and per-asset values computed from `positions × prices` with FX conversion to their primary currency. Plaid trades appear as paired rows in the Transactions list. Household scope shows asset allocation with per-account share visibility honored. `accounts.balance`, `investments.market_value`, `transactions.currency`, and the `investments` table are gone from the schema.
 
 **Deferred to follow-up ADRs:**
 - ADR-0014: Pluggable Tier-3 price provider (Yahoo, Polygon, ECB, CoinGecko).
