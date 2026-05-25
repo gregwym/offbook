@@ -5,13 +5,12 @@ const publicRoutes = ['/setup/admin', '/signin', '/signup']
 const personalRoutes = [
   '/insights',
   '/accounts',
-  '/connect',
+  '/accounts/add',
   '/transactions',
   '/rules',
   '/budgets',
   '/savings-goals',
   '/investments',
-  '/import',
   '/ai',
   '/settings',
 ]
