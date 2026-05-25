@@ -21,12 +21,15 @@ import (
 const MethodRule = "rule"
 
 // CompiledRule pairs a stored rule with its precompiled regex (when the
-// match_type is "regex"). Re is nil for contains/exact rules.
+// match_type is "regex"). Re is nil for contains/exact rules. AssetID,
+// when non-nil, narrows the rule to transactions whose asset_id matches
+// — see Categorize.
 type CompiledRule struct {
 	ID         int64
 	CategoryID int64
 	MatchType  string
 	Pattern    string
+	AssetID    *int64
 	patternCI  string // pattern uppercased once, for contains/exact fast path
 	Re         *regexp.Regexp
 }
@@ -54,6 +57,7 @@ func Compile(rules []model.CategorizationRule) []CompiledRule {
 			CategoryID: r.CategoryID,
 			MatchType:  r.MatchType,
 			Pattern:    r.Pattern,
+			AssetID:    r.AssetID,
 			patternCI:  strings.ToUpper(r.Pattern),
 		}
 		if r.MatchType == "regex" {
@@ -72,15 +76,32 @@ func Compile(rules []model.CategorizationRule) []CompiledRule {
 // matcher considers, in order: description_clean, description, merchant_name.
 // "contains" and "exact" are case-insensitive; "regex" uses the pattern as
 // authored (callers can prefix `(?i)` if they want case-insensitivity).
-func Categorize(rules []CompiledRule, descriptionClean, description, merchantName *string) (Decision, bool) {
+//
+// assetID, when non-zero, narrows the candidate set: rules with a non-nil
+// CompiledRule.AssetID only fire on a matching assetID. Rules with a nil
+// AssetID stay asset-agnostic. Pass 0 to skip the asset filter entirely
+// (matches the M2-era behavior for callers that pre-date the column).
+func Categorize(rules []CompiledRule, assetID int64, descriptionClean, description, merchantName *string) (Decision, bool) {
 	if len(rules) == 0 {
 		return Decision{}, false
 	}
 	fields := collectFields(descriptionClean, description, merchantName)
-	if len(fields) == 0 {
-		return Decision{}, false
-	}
 	for _, r := range rules {
+		if r.AssetID != nil {
+			if assetID == 0 || *r.AssetID != assetID {
+				continue
+			}
+		}
+		// Asset-bound rules with no pattern match purely on asset_id —
+		// useful for "all AAPL legs → Investments". collectFields can
+		// return empty for trade legs (which have no merchant text);
+		// don't reject them up-front.
+		if len(fields) == 0 {
+			if r.AssetID != nil && r.Pattern == "" {
+				return Decision{RuleID: r.ID, CategoryID: r.CategoryID}, true
+			}
+			continue
+		}
 		if matches(r, fields) {
 			return Decision{RuleID: r.ID, CategoryID: r.CategoryID}, true
 		}
@@ -97,7 +118,7 @@ func Apply(tx *model.Transaction, rules []CompiledRule) (Decision, bool) {
 	if tx == nil {
 		return Decision{}, false
 	}
-	d, ok := Categorize(rules, tx.DescriptionClean, tx.Description, tx.MerchantName)
+	d, ok := Categorize(rules, tx.AssetID, tx.DescriptionClean, tx.Description, tx.MerchantName)
 	if !ok {
 		return Decision{}, false
 	}

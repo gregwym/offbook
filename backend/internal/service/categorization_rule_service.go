@@ -34,17 +34,25 @@ type CreateRuleInput struct {
 	Pattern    string
 	MatchType  string
 	CategoryID int64
-	Priority   int
-	IsActive   *bool
+	// AssetID, when set, narrows the rule to transactions whose
+	// asset_id matches. Either Pattern OR AssetID must be supplied —
+	// a rule with neither has nothing to match on.
+	AssetID  *int64
+	Priority int
+	IsActive *bool
 }
 
 // UpdateRuleInput is a sparse patch. Nil pointer = leave alone.
+// ClearAssetID drops asset binding without losing the difference between
+// "leave alone" and "clear" the way a nil AssetID would.
 type UpdateRuleInput struct {
-	Pattern    *string
-	MatchType  *string
-	CategoryID *int64
-	Priority   *int
-	IsActive   *bool
+	Pattern      *string
+	MatchType    *string
+	CategoryID   *int64
+	AssetID      *int64
+	ClearAssetID bool
+	Priority     *int
+	IsActive     *bool
 }
 
 // CategorizationRuleService owns rule validation and CRUD. It depends on
@@ -85,6 +93,7 @@ func (s *CategorizationRuleService) Create(ctx context.Context, userID int64, in
 		Pattern:    strings.TrimSpace(in.Pattern),
 		MatchType:  strings.TrimSpace(in.MatchType),
 		CategoryID: in.CategoryID,
+		AssetID:    in.AssetID,
 		Priority:   in.Priority,
 		IsActive:   true,
 	}
@@ -131,6 +140,12 @@ func (s *CategorizationRuleService) Update(ctx context.Context, userID, id int64
 	}
 	if in.CategoryID != nil {
 		r.CategoryID = *in.CategoryID
+	}
+	switch {
+	case in.ClearAssetID:
+		r.AssetID = nil
+	case in.AssetID != nil:
+		r.AssetID = in.AssetID
 	}
 	if in.Priority != nil {
 		r.Priority = *in.Priority
@@ -227,7 +242,7 @@ func (s *CategorizationRuleService) Apply(ctx context.Context, userID int64, sco
 				if len(rules) == 0 {
 					continue
 				}
-				d, ok := categorization.Categorize(rules, row.DescriptionClean, row.Description, row.MerchantName)
+				d, ok := categorization.Categorize(rules, row.AssetID, row.DescriptionClean, row.Description, row.MerchantName)
 				if !ok {
 					continue
 				}
@@ -261,15 +276,22 @@ func (s *CategorizationRuleService) Apply(ctx context.Context, userID int64, sco
 }
 
 func (s *CategorizationRuleService) validate(ctx context.Context, r *model.CategorizationRule) error {
-	if r.Pattern == "" {
+	// A rule needs *something* to match on. Asset-only rules are valid
+	// (e.g. "every AAPL leg → Investments"); pattern-only rules are the
+	// original M4 shape. A rule with neither has nothing to match.
+	if r.Pattern == "" && r.AssetID == nil {
 		return ErrEmptyPattern
 	}
-	if _, ok := validMatchTypes[r.MatchType]; !ok {
-		return ErrInvalidMatchType
-	}
-	if r.MatchType == "regex" {
-		if _, err := regexp.Compile(r.Pattern); err != nil {
-			return ErrInvalidRegex
+	// MatchType is still required when there's a pattern; ignored when
+	// the rule is purely asset-bound.
+	if r.Pattern != "" {
+		if _, ok := validMatchTypes[r.MatchType]; !ok {
+			return ErrInvalidMatchType
+		}
+		if r.MatchType == "regex" {
+			if _, err := regexp.Compile(r.Pattern); err != nil {
+				return ErrInvalidRegex
+			}
 		}
 	}
 	if r.Priority < 0 {

@@ -64,6 +64,28 @@ type TransactionRepository interface {
 	// (live or soft-deleted) for the key. The caller is expected to pass a
 	// row produced by plaid.MergePlaidUpdate so user-edited fields survive.
 	ResurrectByPlaidTransactionID(ctx context.Context, userID int64, plaidTxnID string, merged model.Transaction) error
+	// CreateTradePair inserts two paired transaction rows in one DB
+	// transaction, generating a shared transfer_pair_id pointing at both
+	// rows' IDs. Used by manual trade entry and Plaid investment-
+	// transactions ingestion (#238). Both legs must already carry the
+	// same UserID; the repo does NOT enforce that the pair makes
+	// accounting sense (signs/quantities/assets) — that's the service's
+	// job. On success the supplied legs are populated with their assigned
+	// IDs and the shared TransferPairID.
+	//
+	// The pairing scheme stores legA.TransferPairID = legB.ID and
+	// legB.TransferPairID = legA.ID — symmetric, so either side can find
+	// its partner with one indexed lookup.
+	CreateTradePair(ctx context.Context, legA, legB *model.Transaction) error
+	// ListByTransferPairID returns the two (or rarely one — e.g. mid-
+	// migration) live transactions sharing a transfer_pair_id, scoped to
+	// the supplied user. Returns ErrNotFound when neither row exists.
+	ListByTransferPairID(ctx context.Context, userID, pairID int64) ([]model.Transaction, error)
+	// ListByAccountAndAsset returns every non-deleted transaction for the
+	// (account, asset) pair ordered by transaction_date ASC, id ASC. Used
+	// by the cost-basis recompute, which walks the entire trade history
+	// per (account, asset) and folds quantities + cash legs together.
+	ListByAccountAndAsset(ctx context.Context, userID, accountID, assetID int64) ([]model.Transaction, error)
 	// ListForCategorizationScope returns a chunk of non-deleted transactions
 	// for the user, ordered by id ASC for cursor-style pagination. Callers
 	// drive a loop by passing the last returned row's id as afterID on the
@@ -310,6 +332,65 @@ func (r *transactionRepo) ListForCategorizationScope(ctx context.Context, userID
 	}
 	var out []model.Transaction
 	if err := q.Order("id ASC").Limit(limit).Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *transactionRepo) CreateTradePair(ctx context.Context, legA, legB *model.Transaction) error {
+	if legA == nil || legB == nil {
+		return errors.New("trade pair requires two legs")
+	}
+	if legA.UserID == 0 || legB.UserID == 0 || legA.UserID != legB.UserID {
+		return errors.New("trade pair legs must share a user_id")
+	}
+	// Wrap both inserts in one DB transaction so a mid-flight failure
+	// rolls back the partner row. Use a tx-bound repo for both writes.
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(legA).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(legB).Error; err != nil {
+			return err
+		}
+		// Cross-link by ID: legA points at legB, legB points at legA.
+		legA.TransferPairID = &legB.ID
+		legB.TransferPairID = &legA.ID
+		if err := tx.Model(legA).Where("id = ?", legA.ID).
+			Update("transfer_pair_id", legB.ID).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(legB).Where("id = ?", legB.ID).
+			Update("transfer_pair_id", legA.ID).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (r *transactionRepo) ListByTransferPairID(ctx context.Context, userID, pairID int64) ([]model.Transaction, error) {
+	if pairID <= 0 {
+		return nil, ErrNotFound
+	}
+	var out []model.Transaction
+	if err := r.db.WithContext(ctx).
+		Where("user_id = ? AND (id = ? OR transfer_pair_id = ?)", userID, pairID, pairID).
+		Order("id ASC").
+		Find(&out).Error; err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, ErrNotFound
+	}
+	return out, nil
+}
+
+func (r *transactionRepo) ListByAccountAndAsset(ctx context.Context, userID, accountID, assetID int64) ([]model.Transaction, error) {
+	var out []model.Transaction
+	if err := r.db.WithContext(ctx).
+		Where("user_id = ? AND account_id = ? AND asset_id = ?", userID, accountID, assetID).
+		Order("transaction_date ASC, id ASC").
+		Find(&out).Error; err != nil {
 		return nil, err
 	}
 	return out, nil
