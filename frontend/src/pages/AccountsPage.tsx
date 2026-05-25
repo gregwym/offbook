@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { LineChart, Pencil, Plus, Trash2 } from 'lucide-react'
 import { AccountVisibilityChip } from '../components/AccountVisibilityChip'
 import { AmountDisplay } from '../components/AmountDisplay'
@@ -16,13 +17,12 @@ import {
 } from '../types/account'
 
 export function AccountsPage() {
-  const { accounts, loading, error, fetch, create, update, remove } = useAccountsStore()
+  const { accounts, loading, error, fetch, update, remove } = useAccountsStore()
   // householdId is null when the user belongs to no household — the
   // visibility column is omitted entirely in that case (private-only
   // mode), matching the rule in `.claude/rules/frontend.md`: don't
   // surface a column the user can't act on.
   const householdId = useScopeStore((s) => s.householdId)
-  const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<Account | null>(null)
   // Trade-entry surface — only available for brokerage-style accounts
   // (matches backend brokerageAccountTypes in service/trade_service.go).
@@ -39,13 +39,16 @@ export function AccountsPage() {
           <h1 className="text-2xl font-semibold text-gray-900">Accounts</h1>
           <p className="mt-1 text-sm text-gray-500">Manage your accounts and PII.</p>
         </div>
-        <button
-          type="button"
-          onClick={() => setAdding(true)}
+        {/* New accounts originate from /accounts/add per v6 §03 — keep the
+            inline edit modal for changing existing accounts, but route fresh
+            creation through the two-tile picker so Plaid + manual share an
+            entry point. */}
+        <Link
+          to="/accounts/add"
           className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
         >
           <Plus size={16} /> Add account
-        </button>
+        </Link>
       </div>
 
       {error && (
@@ -136,17 +139,6 @@ export function AccountsPage() {
           </tbody>
         </table>
       </div>
-
-      {adding && (
-        <AccountFormModal
-          mode="create"
-          onClose={() => setAdding(false)}
-          onSubmit={async (input) => {
-            await create(input as CreateAccountInput)
-            setAdding(false)
-          }}
-        />
-      )}
 
       {editing && (
         <AccountFormModal
