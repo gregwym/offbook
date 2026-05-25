@@ -7,11 +7,9 @@ const personalRoutes = [
   '/accounts',
   '/accounts/add',
   '/transactions',
-  '/rules',
   '/budgets',
   '/savings-goals',
   '/investments',
-  '/ai',
   '/settings',
 ]
 const householdRoutes = ['/h/insights', '/h/budgets', '/h/goals', '/h/members', '/h/ai', '/h/settings']
