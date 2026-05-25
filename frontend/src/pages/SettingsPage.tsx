@@ -248,7 +248,7 @@ function LinkedInstitutionsSection() {
           <h2 className="text-base font-medium text-gray-900">Linked Institutions</h2>
         </div>
         <Link
-          to="/connect"
+          to="/accounts/add"
           className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
         >
           Connect new

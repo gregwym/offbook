@@ -19,13 +19,12 @@ import { SignupPage } from './pages/SignupPage'
 // Suspense + chunk splits stay symmetric across pages.
 const InsightsPage = lazy(() => import('./pages/InsightsPage').then((m) => ({ default: m.InsightsPage })))
 const AccountsPage = lazy(() => import('./pages/AccountsPage').then((m) => ({ default: m.AccountsPage })))
-const PlaidConnectPage = lazy(() => import('./pages/PlaidConnectPage').then((m) => ({ default: m.PlaidConnectPage })))
+const AccountsAddPage = lazy(() => import('./pages/AccountsAddPage').then((m) => ({ default: m.AccountsAddPage })))
 const TransactionsPage = lazy(() => import('./pages/TransactionsPage').then((m) => ({ default: m.TransactionsPage })))
 const RulesPage = lazy(() => import('./pages/RulesPage').then((m) => ({ default: m.RulesPage })))
 const BudgetsPage = lazy(() => import('./pages/BudgetsPage').then((m) => ({ default: m.BudgetsPage })))
 const SavingsGoalsPage = lazy(() => import('./pages/SavingsGoalsPage').then((m) => ({ default: m.SavingsGoalsPage })))
 const InvestmentsPage = lazy(() => import('./pages/InvestmentsPage').then((m) => ({ default: m.InvestmentsPage })))
-const ImportPage = lazy(() => import('./pages/ImportPage').then((m) => ({ default: m.ImportPage })))
 const AIPage = lazy(() => import('./pages/AIPage').then((m) => ({ default: m.AIPage })))
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const HouseholdBudgetsPage = lazy(() => import('./pages/HouseholdBudgetsPage').then((m) => ({ default: m.HouseholdBudgetsPage })))
@@ -67,13 +66,17 @@ export default function App() {
           {/* Legacy dashboard path: keep redirecting so bookmarks survive. */}
           <Route path="/dashboard" element={<Navigate to="/insights" replace />} />
           <Route path="/accounts" element={<LazyRoute><AccountsPage /></LazyRoute>} />
-          <Route path="/connect" element={<LazyRoute><PlaidConnectPage /></LazyRoute>} />
+          <Route path="/accounts/add" element={<LazyRoute><AccountsAddPage /></LazyRoute>} />
+          {/* /connect and /import are absorbed by /accounts/add (v6 §03 + §07).
+              Keep the old paths around as redirects so bookmarks still land
+              somewhere useful — they'll be dropped entirely in a later cleanup. */}
+          <Route path="/connect" element={<Navigate to="/accounts/add" replace />} />
+          <Route path="/import" element={<Navigate to="/accounts/add" replace />} />
           <Route path="/transactions" element={<LazyRoute><TransactionsPage /></LazyRoute>} />
           <Route path="/rules" element={<LazyRoute><RulesPage /></LazyRoute>} />
           <Route path="/budgets" element={<LazyRoute><BudgetsPage /></LazyRoute>} />
           <Route path="/savings-goals" element={<LazyRoute><SavingsGoalsPage /></LazyRoute>} />
           <Route path="/investments" element={<LazyRoute><InvestmentsPage /></LazyRoute>} />
-          <Route path="/import" element={<LazyRoute><ImportPage /></LazyRoute>} />
           <Route path="/ai" element={<LazyRoute><AIPage /></LazyRoute>} />
           <Route path="/settings" element={<LazyRoute><SettingsPage /></LazyRoute>} />
 
