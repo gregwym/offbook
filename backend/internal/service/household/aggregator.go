@@ -138,6 +138,39 @@ type ThreadSummary struct {
 	UpdatedAt           time.Time `json:"updated_at"`
 }
 
+// AssetClassAllocation is one row of the household allocation rollup — the
+// total value of shared positions whose asset kind matches, expressed as
+// each owner's primary-currency value. Heterogeneous-currency households
+// surface their primary-currency rollup per position; the wire string keeps
+// NUMERIC precision intact.
+type AssetClassAllocation struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+}
+
+// NetWorthPoint is one (date, value) row of the household net-worth trend.
+// Date is the UTC calendar day; Value is the rolled-up net worth across
+// shared accounts owned by live members at that day.
+type NetWorthPoint struct {
+	Date  time.Time `json:"date"`
+	Value string    `json:"value"`
+}
+
+// AccountSummary is one row of the household account breakdown. Aggregator
+// output: lightweight projection (name, type, balance, owner, visibility)
+// — never a raw account row, never PII. The OwnerUserID is the household
+// peer's user_id (already known to other members in /h/members) and is not
+// treated as PII at this layer.
+type AccountSummary struct {
+	AccountID   int64  `json:"account_id"`
+	Name        string `json:"name"`
+	AccountType string `json:"account_type"`
+	Currency    string `json:"currency"`
+	Balance     string `json:"balance"`
+	OwnerUserID int64  `json:"owner_user_id"`
+	Visibility  string `json:"visibility"`
+}
+
 // --- core methods ---
 
 // Dashboard returns the household-level rollup for the period. Aggregates over
@@ -403,6 +436,127 @@ func (a *Aggregator) AIContext(ctx context.Context, householdID, requesterUserID
 		SharedThreads:   toThreadSummaries(shared),
 		PersonalThreads: toThreadSummaries(personal),
 	}, nil
+}
+
+// Allocation returns the household's positions rolled up by asset kind
+// (fiat / equity / fund / crypto / …) across shared accounts owned by
+// LIVE members. Visibility floor is balance_only — private accounts
+// have no share row to begin with, so they're excluded by construction.
+// In-grace members are excluded from this LIVE rollup.
+func (a *Aggregator) Allocation(ctx context.Context, householdID int64) ([]AssetClassAllocation, error) {
+	if err := a.requireHousehold(ctx, householdID); err != nil {
+		return nil, err
+	}
+	live, _, err := a.liveAndInGrace(ctx, householdID)
+	if err != nil {
+		return nil, err
+	}
+	liveUserIDs := userIDs(live)
+	shares, err := a.repo.ListAccountShares(ctx, householdID,
+		[]string{model.VisibilityBalanceOnly, model.VisibilityBalanceAndTxns})
+	if err != nil {
+		return nil, fmt.Errorf("list shares: %w", err)
+	}
+	accountIDs := filterAccountsByUsers(shares, liveUserIDs)
+	buckets, err := a.repo.AllocationByKind(ctx, accountIDs)
+	if err != nil {
+		return nil, fmt.Errorf("allocation by kind: %w", err)
+	}
+	out := make([]AssetClassAllocation, 0, len(buckets))
+	for _, b := range buckets {
+		out = append(out, AssetClassAllocation{Kind: b.Kind, Value: b.Value.String()})
+	}
+	return out, nil
+}
+
+// NetWorthTrend returns a daily net-worth series for the trailing `months`
+// calendar months ending at the aggregator's clock. Uses CURRENT positions
+// × historical prices — for a household that holds the same securities
+// today as it did 6 months ago, the curve traces price movement, not
+// rebalancing. (M10b's trade ingestion lays the foundation for a
+// quantity-history view; this one is the foundation.)
+//
+// Defaults: months ≤ 0 → 12. Excludes private accounts and in-grace members
+// — same lifecycle rules as Dashboard/Allocation.
+func (a *Aggregator) NetWorthTrend(ctx context.Context, householdID int64, months int) ([]NetWorthPoint, error) {
+	if err := a.requireHousehold(ctx, householdID); err != nil {
+		return nil, err
+	}
+	if months <= 0 {
+		months = 12
+	}
+	live, _, err := a.liveAndInGrace(ctx, householdID)
+	if err != nil {
+		return nil, err
+	}
+	liveUserIDs := userIDs(live)
+	shares, err := a.repo.ListAccountShares(ctx, householdID,
+		[]string{model.VisibilityBalanceOnly, model.VisibilityBalanceAndTxns})
+	if err != nil {
+		return nil, fmt.Errorf("list shares: %w", err)
+	}
+	accountIDs := filterAccountsByUsers(shares, liveUserIDs)
+	now := a.now().UTC()
+	from := now.AddDate(0, -months, 0)
+	points, err := a.repo.NetWorthSeries(ctx, accountIDs, from, now)
+	if err != nil {
+		return nil, fmt.Errorf("net worth series: %w", err)
+	}
+	out := make([]NetWorthPoint, 0, len(points))
+	for _, p := range points {
+		out = append(out, NetWorthPoint{Date: p.Date, Value: p.Value.String()})
+	}
+	return out, nil
+}
+
+// AccountSummaries returns one row per SHARED account, including
+// balance_only and balance_and_txns (private accounts have no share row).
+// Balance is computed in the OWNER's primary currency. Visibility comes
+// from the share row so the UI can render the chip without an extra
+// fetch. Owned by an in-grace member ⇒ excluded from live output.
+func (a *Aggregator) AccountSummaries(ctx context.Context, householdID int64) ([]AccountSummary, error) {
+	if err := a.requireHousehold(ctx, householdID); err != nil {
+		return nil, err
+	}
+	live, _, err := a.liveAndInGrace(ctx, householdID)
+	if err != nil {
+		return nil, err
+	}
+	liveUserIDs := userIDs(live)
+	shares, err := a.repo.ListAccountShares(ctx, householdID,
+		[]string{model.VisibilityBalanceOnly, model.VisibilityBalanceAndTxns})
+	if err != nil {
+		return nil, fmt.Errorf("list shares: %w", err)
+	}
+	type shareMeta struct {
+		visibility string
+	}
+	meta := make(map[int64]shareMeta, len(shares))
+	accountIDs := make([]int64, 0, len(shares))
+	for _, s := range shares {
+		if _, ok := liveUserIDs[s.UserID]; !ok {
+			continue
+		}
+		meta[s.AccountID] = shareMeta{visibility: s.Visibility}
+		accountIDs = append(accountIDs, s.AccountID)
+	}
+	balances, err := a.repo.AccountBalances(ctx, accountIDs)
+	if err != nil {
+		return nil, fmt.Errorf("account balances: %w", err)
+	}
+	out := make([]AccountSummary, 0, len(balances))
+	for _, b := range balances {
+		out = append(out, AccountSummary{
+			AccountID:   b.AccountID,
+			Name:        b.Name,
+			AccountType: b.AccountType,
+			Currency:    b.Currency,
+			Balance:     b.Balance.String(),
+			OwnerUserID: b.OwnerUserID,
+			Visibility:  meta[b.AccountID].visibility,
+		})
+	}
+	return out, nil
 }
 
 // --- internal helpers ---

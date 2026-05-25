@@ -365,6 +365,9 @@ func TestAggregator_NoRawTransactionRows(t *testing.T) {
 	check("GoalProgressItem", household.GoalProgressItem{})
 	check("HouseholdAIContext", household.HouseholdAIContext{})
 	check("ThreadSummary", household.ThreadSummary{})
+	check("AssetClassAllocation", household.AssetClassAllocation{})
+	check("NetWorthPoint", household.NetWorthPoint{})
+	check("AccountSummary", household.AccountSummary{})
 }
 
 func walkType(t *testing.T, path string, ty, forbid reflect.Type, seen map[reflect.Type]struct{}) {
