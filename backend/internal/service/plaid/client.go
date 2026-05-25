@@ -40,6 +40,82 @@ type Client interface {
 	// changed since that cursor. Callers paginate by re-calling with
 	// page.NextCursor while page.HasMore is true.
 	SyncTransactions(ctx context.Context, accessToken, cursor string) (SyncTransactionsPage, error)
+
+	// FetchInvestmentTransactions wraps /investments/transactions/get for
+	// the [from, to] date window. Plaid's API is not cursor-based here —
+	// it accepts a date range and returns the matching rows. Callers
+	// page by passing the response's TotalCount + Offset on subsequent
+	// calls; this client method fans out the pagination and returns the
+	// flattened result.
+	FetchInvestmentTransactions(ctx context.Context, accessToken string, from, to time.Time) (InvestmentTransactionsResult, error)
+
+	// FetchHoldings wraps /investments/holdings/get. The response is a
+	// point-in-time snapshot — the reconciliation layer compares it to
+	// our derived positions and adjusts on mismatch (never synthesizes
+	// transactions to bridge a gap; see ADR-0013 §3).
+	FetchHoldings(ctx context.Context, accessToken string) (HoldingsResult, error)
+}
+
+// InvestmentTransactionsResult is the flattened output of one
+// /investments/transactions/get drain. Securities and Accounts are
+// returned alongside transactions because each row references them by
+// plaid id; the service-side mapper resolves the joins.
+type InvestmentTransactionsResult struct {
+	Transactions []PlaidInvestmentTransaction
+	Securities   []PlaidSecurity
+}
+
+// HoldingsResult is one /investments/holdings/get snapshot. Securities
+// is the same shape as in InvestmentTransactionsResult so the same
+// resolver works for both surfaces.
+type HoldingsResult struct {
+	Holdings   []PlaidHolding
+	Securities []PlaidSecurity
+}
+
+// PlaidInvestmentTransaction is the slim view of one investment
+// transaction. Sign convention matches Plaid's: positive Amount =
+// money LEAVING the account (buy outflow); positive Quantity = shares
+// flowing IN (buy inflow). The mapper flips signs for project storage.
+type PlaidInvestmentTransaction struct {
+	PlaidTransactionID  string
+	CancelTransactionID *string // when Type == "cancel", names the row being cancelled
+	PlaidAccountID      string
+	PlaidSecurityID     *string // nil for cash-only legs (some dividends, fees)
+	Date                string  // "YYYY-MM-DD"
+	Name                string
+	Quantity            decimal.Decimal
+	Amount              decimal.Decimal // in IsoCurrencyCode
+	Price               decimal.Decimal
+	Fees                decimal.Decimal
+	Type                string // "buy" | "sell" | "cancel" | "cash" | "fee" | "transfer"
+	Subtype             string // "dividend", "interest", "buy", etc.
+	IsoCurrencyCode     string
+}
+
+// PlaidSecurity is the slim view of one security. Used to resolve a
+// transaction or holding's SecurityID to (symbol, kind) for the asset
+// table. TickerSymbol is preferred; we fall back to ISIN/CUSIP/name
+// when blank.
+type PlaidSecurity struct {
+	PlaidSecurityID  string
+	TickerSymbol     string
+	Name             string
+	Type             string // 'equity', 'mutual fund', 'etf', 'fixed income', 'cash', 'cryptocurrency', …
+	IsoCurrencyCode  string
+	IsCashEquivalent bool
+	ClosePrice       decimal.Decimal
+}
+
+// PlaidHolding is the slim view of one position snapshot.
+type PlaidHolding struct {
+	PlaidAccountID   string
+	PlaidSecurityID  string
+	Quantity         decimal.Decimal
+	InstitutionPrice decimal.Decimal
+	InstitutionValue decimal.Decimal
+	CostBasis        decimal.Decimal // 0 when Plaid returns null
+	IsoCurrencyCode  string
 }
 
 // SyncTransactionsPage is one page of /transactions/sync output. The cursor
@@ -300,6 +376,150 @@ func (c *SDKClient) SyncTransactions(ctx context.Context, accessToken, cursor st
 		}
 	}
 	return page, nil
+}
+
+// FetchInvestmentTransactions pulls /investments/transactions/get for
+// the date window and paginates until the response totals are
+// exhausted. Plaid limits one response to 500 rows; we use 250 to stay
+// well under and tolerate occasional slow pages. The transactions and
+// securities slices come back flattened across all pages.
+func (c *SDKClient) FetchInvestmentTransactions(ctx context.Context, accessToken string, from, to time.Time) (InvestmentTransactionsResult, error) {
+	const pageSize = int32(250)
+	startDate := from.UTC().Format("2006-01-02")
+	endDate := to.UTC().Format("2006-01-02")
+
+	var out InvestmentTransactionsResult
+	seenSecurities := map[string]struct{}{}
+	offset := int32(0)
+	for {
+		req := plaid.NewInvestmentsTransactionsGetRequest(accessToken, startDate, endDate)
+		opts := plaid.NewInvestmentsTransactionsGetRequestOptions()
+		opts.SetCount(pageSize)
+		opts.SetOffset(offset)
+		req.SetOptions(*opts)
+
+		resp, _, err := c.api.PlaidApi.InvestmentsTransactionsGet(ctx).
+			InvestmentsTransactionsGetRequest(*req).Execute()
+		if err != nil {
+			return InvestmentTransactionsResult{}, fmt.Errorf("plaid: investments/transactions/get: %w", err)
+		}
+		for _, it := range resp.GetInvestmentTransactions() {
+			out.Transactions = append(out.Transactions, convertPlaidInvestmentTransaction(it))
+		}
+		for _, s := range resp.GetSecurities() {
+			id := s.GetSecurityId()
+			if _, dup := seenSecurities[id]; dup {
+				continue
+			}
+			seenSecurities[id] = struct{}{}
+			out.Securities = append(out.Securities, convertPlaidSecurity(s))
+		}
+
+		total := int(resp.GetTotalInvestmentTransactions())
+		offset += pageSize
+		if int(offset) >= total {
+			break
+		}
+	}
+	return out, nil
+}
+
+// FetchHoldings wraps /investments/holdings/get. One call returns the
+// full snapshot — no pagination.
+func (c *SDKClient) FetchHoldings(ctx context.Context, accessToken string) (HoldingsResult, error) {
+	req := plaid.NewInvestmentsHoldingsGetRequest(accessToken)
+	resp, _, err := c.api.PlaidApi.InvestmentsHoldingsGet(ctx).
+		InvestmentsHoldingsGetRequest(*req).Execute()
+	if err != nil {
+		return HoldingsResult{}, fmt.Errorf("plaid: investments/holdings/get: %w", err)
+	}
+	out := HoldingsResult{
+		Holdings:   make([]PlaidHolding, 0, len(resp.GetHoldings())),
+		Securities: make([]PlaidSecurity, 0, len(resp.GetSecurities())),
+	}
+	for _, h := range resp.GetHoldings() {
+		costBasis := decimal.Zero
+		if cb, ok := h.GetCostBasisOk(); ok && cb != nil {
+			costBasis = decimal.NewFromFloat(*cb)
+		}
+		currency := ""
+		if iso, ok := h.GetIsoCurrencyCodeOk(); ok && iso != nil && *iso != "" {
+			currency = *iso
+		}
+		out.Holdings = append(out.Holdings, PlaidHolding{
+			PlaidAccountID:   h.GetAccountId(),
+			PlaidSecurityID:  h.GetSecurityId(),
+			Quantity:         decimal.NewFromFloat(h.GetQuantity()),
+			InstitutionPrice: decimal.NewFromFloat(h.GetInstitutionPrice()),
+			InstitutionValue: decimal.NewFromFloat(h.GetInstitutionValue()),
+			CostBasis:        costBasis,
+			IsoCurrencyCode:  currency,
+		})
+	}
+	for _, s := range resp.GetSecurities() {
+		out.Securities = append(out.Securities, convertPlaidSecurity(s))
+	}
+	return out, nil
+}
+
+func convertPlaidInvestmentTransaction(it plaid.InvestmentTransaction) PlaidInvestmentTransaction {
+	out := PlaidInvestmentTransaction{
+		PlaidTransactionID: it.GetInvestmentTransactionId(),
+		PlaidAccountID:     it.GetAccountId(),
+		Date:               it.GetDate(),
+		Name:               it.GetName(),
+		Quantity:           decimal.NewFromFloat(it.GetQuantity()),
+		Amount:             decimal.NewFromFloat(it.GetAmount()),
+		Price:              decimal.NewFromFloat(it.GetPrice()),
+		Type:               string(it.GetType()),
+		Subtype:            string(it.GetSubtype()),
+	}
+	if sid, ok := it.GetSecurityIdOk(); ok && sid != nil && *sid != "" {
+		v := *sid
+		out.PlaidSecurityID = &v
+	}
+	if c, ok := it.GetCancelTransactionIdOk(); ok && c != nil && *c != "" {
+		v := *c
+		out.CancelTransactionID = &v
+	}
+	if fees, ok := it.GetFeesOk(); ok && fees != nil {
+		out.Fees = decimal.NewFromFloat(*fees)
+	}
+	if iso, ok := it.GetIsoCurrencyCodeOk(); ok && iso != nil {
+		out.IsoCurrencyCode = *iso
+	}
+	if out.IsoCurrencyCode == "" {
+		out.IsoCurrencyCode = "USD"
+	}
+	return out
+}
+
+func convertPlaidSecurity(s plaid.Security) PlaidSecurity {
+	out := PlaidSecurity{
+		PlaidSecurityID: s.GetSecurityId(),
+	}
+	if v, ok := s.GetTickerSymbolOk(); ok && v != nil {
+		out.TickerSymbol = *v
+	}
+	if v, ok := s.GetNameOk(); ok && v != nil {
+		out.Name = *v
+	}
+	if v, ok := s.GetTypeOk(); ok && v != nil {
+		out.Type = *v
+	}
+	if v, ok := s.GetIsoCurrencyCodeOk(); ok && v != nil {
+		out.IsoCurrencyCode = *v
+	}
+	if out.IsoCurrencyCode == "" {
+		out.IsoCurrencyCode = "USD"
+	}
+	if v, ok := s.GetIsCashEquivalentOk(); ok && v != nil {
+		out.IsCashEquivalent = *v
+	}
+	if v, ok := s.GetClosePriceOk(); ok && v != nil {
+		out.ClosePrice = decimal.NewFromFloat(*v)
+	}
+	return out
 }
 
 // convertPlaidTransaction reshapes the SDK type into our slim struct.

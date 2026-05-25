@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -30,6 +31,8 @@ func (h *PlaidHandler) Register(g *gin.RouterGroup) {
 	g.DELETE("/plaid/items/:item_id", h.DisconnectItem)
 	g.POST("/plaid/items/:item_id/sync-accounts", h.SyncAccounts)
 	g.POST("/plaid/items/:item_id/sync-transactions", h.SyncTransactions)
+	g.POST("/plaid/items/:item_id/sync-investment-transactions", h.SyncInvestmentTransactions)
+	g.POST("/plaid/items/:item_id/sync-holdings", h.SyncHoldings)
 	g.GET("/plaid/items/:item_id/errors", h.ListSyncErrors)
 	g.POST("/plaid/errors/:error_id/retry", h.RetrySyncError)
 	g.POST("/plaid/errors/:error_id/dismiss", h.DismissSyncError)
@@ -127,6 +130,42 @@ func (h *PlaidHandler) SyncTransactions(c *gin.Context) {
 			"failed":   result.Failed,
 		},
 	})
+}
+
+// SyncInvestmentTransactions drains /investments/transactions/get for
+// the item, writing paired-row trades or single-leg cash rows (#238).
+// Response mirrors SyncTransactions: a narrow counts envelope.
+func (h *PlaidHandler) SyncInvestmentTransactions(c *gin.Context) {
+	plaidItemID := c.Param("item_id")
+	if plaidItemID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "item_id is required", "code": "INVALID_REQUEST"})
+		return
+	}
+	userID := auth.MustUserID(c.Request.Context())
+	// Empty from/to → service default (2-year lookback).
+	result, err := h.svc.SyncInvestmentTransactions(c.Request.Context(), userID, plaidItemID, time.Time{}, time.Time{})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+// SyncHoldings pulls a /investments/holdings/get snapshot and adjusts
+// positions on disagreement (ADR-0013 §3 — no synthetic transactions).
+func (h *PlaidHandler) SyncHoldings(c *gin.Context) {
+	plaidItemID := c.Param("item_id")
+	if plaidItemID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "item_id is required", "code": "INVALID_REQUEST"})
+		return
+	}
+	userID := auth.MustUserID(c.Request.Context())
+	result, err := h.svc.SyncHoldings(c.Request.Context(), userID, plaidItemID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
 }
 
 // ListItems returns the user's linked Plaid items for the Settings page,
