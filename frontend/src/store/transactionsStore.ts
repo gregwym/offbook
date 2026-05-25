@@ -85,10 +85,24 @@ export const useTransactionsStore = create<State>((set, get) => ({
 
   setCategory: async (id, categoryID) => {
     const before = get().transactions
-    // Optimistic update.
-    set({
-      transactions: before.map((t) => (t.id === id ? { ...t, category_id: categoryID } : t)),
-    })
+    const filterMethod = get().filter.categorization_method
+    // Picking a category server-side flips categorization_method to
+    // 'manual' (clearing it nulls the method out). Mirror that locally
+    // so a row immediately leaves the "Needs review" view per the v6 §04
+    // acceptance criterion — no full reload.
+    const newMethod: string | null = categoryID === null ? null : 'manual'
+    const next = before
+      .map((t) =>
+        t.id === id
+          ? { ...t, category_id: categoryID, categorization_method: newMethod ?? undefined }
+          : t,
+      )
+      // If the active filter restricts to a different method (e.g.
+      // 'plaid_default'), the updated row no longer belongs in this list.
+      // Filtering happens after the map so the user sees the change before
+      // the row vanishes.
+      .filter((t) => (filterMethod ? t.categorization_method === filterMethod : true))
+    set({ transactions: next })
     try {
       if (categoryID === null) {
         await apiUpdate(id, { clear_category: true })

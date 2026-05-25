@@ -77,6 +77,20 @@ func (h *TransactionHandler) List(c *gin.Context) {
 		}
 		f.To = &t
 	}
+	if v := c.Query("categorization_method"); v != "" {
+		// Only the values the model already constrains are allowed —
+		// kept narrow to avoid a surprise filter against arbitrary strings.
+		switch v {
+		case "plaid_default", "rule", "manual":
+			f.CategorizationMethod = v
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "categorization_method must be one of plaid_default, rule, manual",
+				"code":  "INVALID_REQUEST",
+			})
+			return
+		}
+	}
 	f.Search = c.Query("search")
 	if v := c.Query("limit"); v != "" {
 		n, err := strconv.Atoi(v)
