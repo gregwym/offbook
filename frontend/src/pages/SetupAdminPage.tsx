@@ -13,7 +13,7 @@ export function SetupAdminPage() {
 
   // Once setup-status reports bootstrapped, this page is no longer reachable.
   if (hydrated && setup?.bootstrapped) {
-    return <Navigate to={user ? '/dashboard' : '/signin'} replace />
+    return <Navigate to={user ? '/insights' : '/signin'} replace />
   }
 
   const submit = async (e: React.FormEvent) => {
@@ -22,7 +22,7 @@ export function SetupAdminPage() {
     setSubmitting(true)
     try {
       await setupAdmin(email, password, mode)
-      // hydrate-fired Navigate above will move us to /dashboard.
+      // hydrate-fired Navigate above will move us to /insights.
     } finally {
       setSubmitting(false)
     }

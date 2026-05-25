@@ -28,7 +28,7 @@ type NavItem = { to: string; label: string; icon: typeof LayoutDashboard }
 // Personal-scope routes — mutually exclusive with HOUSEHOLD_NAV per
 // .claude/rules/frontend.md (sidebar renders only the active scope's list).
 const PERSONAL_NAV: NavItem[] = [
-  { to: '/dashboard',     label: 'Dashboard',     icon: LayoutDashboard },
+  { to: '/insights',      label: 'Insights',      icon: LayoutDashboard },
   { to: '/accounts',      label: 'Accounts',      icon: Wallet },
   { to: '/connect',       label: 'Connect Bank',  icon: Landmark },
   { to: '/transactions',  label: 'Transactions',  icon: Receipt },
@@ -44,7 +44,7 @@ const PERSONAL_NAV: NavItem[] = [
 // Household-scope routes — all under /h/* (frontend rule). Only rendered when
 // the user has an active membership AND has picked household scope.
 const HOUSEHOLD_NAV: NavItem[] = [
-  { to: '/h/dashboard', label: 'Dashboard',    icon: LayoutDashboard },
+  { to: '/h/insights',  label: 'Insights',     icon: LayoutDashboard },
   { to: '/h/budgets',   label: 'Budgets',      icon: Target },
   { to: '/h/goals',     label: 'Goals',        icon: PiggyBank },
   { to: '/h/members',   label: 'Members',      icon: Users },

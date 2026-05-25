@@ -1,0 +1,372 @@
+// InsightsPage — the v6 review surface. Single page, five bands, served
+// from useScopedInsights so both /insights (personal) and /h/insights
+// (household) render the same component. Read-only by design; clickable
+// affordances are limited to category drill-down and "full page →" pills.
+//
+// The 5 bands map to docs/designs/App Hierarchy v6.html §06:
+//   1) Net worth headline + trend line
+//   2) Allocation (donut by asset kind)
+//   3) Spending by category (current period)
+//   4) Budgets + Goals at-a-glance
+//   5) Account list summary
+import { Link } from 'react-router-dom'
+import {
+  LineChart as LineChartIcon,
+  PieChart as PieChartIcon,
+  PiggyBank,
+  Target,
+  TrendingUp,
+  Wallet,
+} from 'lucide-react'
+import {
+  Cell,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import { AmountDisplay } from '../components/AmountDisplay'
+import { FALLBACK_PIE_COLORS } from '../components/chartColors'
+import { useScopedInsights, type InsightsData } from '../hooks/useScopedInsights'
+import { useScopeStore } from '../store/scopeStore'
+import { SCOPE_HOUSEHOLD } from '../types/scope'
+
+const num = (s: string): number => Number.parseFloat(s) || 0
+
+export function InsightsPage() {
+  const result = useScopedInsights()
+  const { active, householdId } = useScopeStore()
+
+  if (active === SCOPE_HOUSEHOLD && householdId == null) {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white p-8 text-center">
+        <Wallet size={28} className="mx-auto text-gray-300 mb-2" />
+        <h1 className="text-base font-medium text-gray-900">No household yet</h1>
+        <p className="text-sm text-gray-500 mt-1">
+          Use the scope switcher in the sidebar to create or join a household.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">Insights</h1>
+        <p className="mt-1 text-sm text-gray-500">
+          {active === SCOPE_HOUSEHOLD
+            ? 'Household aggregates over shared accounts. PII never leaves each member’s book.'
+            : 'Net worth · allocation · spending · budgets · goals — at a glance.'}
+        </p>
+      </div>
+
+      {result.state === 'loading' && (
+        <div className="rounded-lg border border-gray-200 bg-white px-5 py-8 text-center text-sm text-gray-400">
+          Loading…
+        </div>
+      )}
+
+      {result.state === 'error' && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {result.error}
+        </div>
+      )}
+
+      {result.state === 'ready' && <InsightsBody data={result.data} />}
+    </div>
+  )
+}
+
+function InsightsBody({ data }: { data: InsightsData }) {
+  return (
+    <>
+      <NetWorthBand data={data} />
+      <AllocationBand data={data} />
+      <SpendingBand data={data} />
+      <BudgetsGoalsBand data={data} />
+      <AccountsBand data={data} />
+      <p className="text-xs text-gray-400">
+        {data.period.from.slice(0, 10)} → {data.period.to.slice(0, 10)}
+      </p>
+    </>
+  )
+}
+
+// ───── Band 1: net worth headline + trend ─────
+function NetWorthBand({ data }: { data: InsightsData }) {
+  const trend = data.net_worth_trend
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white p-5">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div>
+          <div className="text-xs font-medium uppercase tracking-wider text-gray-500">
+            Net worth
+          </div>
+          <div className="mt-1 text-3xl font-semibold text-gray-900">
+            <AmountDisplay amount={data.net_worth} />
+          </div>
+          <div className="mt-1 text-xs text-gray-400">
+            Income (period): <AmountDisplay amount={data.income} /> · Spending:{' '}
+            <AmountDisplay amount={data.spending} />
+          </div>
+        </div>
+        <div className="md:col-span-2">
+          {trend.length === 0 ? (
+            <div className="flex h-full items-center justify-center py-6 text-sm text-gray-400">
+              No trend data yet — net worth will appear here as snapshots accumulate.
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={140}>
+              <LineChart data={trend.map((p) => ({ date: p.date.slice(0, 7), total: num(p.value) }))}>
+                <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                <YAxis hide />
+                <Tooltip formatter={(v) => (typeof v === 'number' ? v.toFixed(2) : String(v))} />
+                <Line type="monotone" dataKey="total" stroke="#6366F1" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ───── Band 2: allocation donut ─────
+function AllocationBand({ data }: { data: InsightsData }) {
+  const rows = data.allocation
+  const total = rows.reduce((acc, r) => acc + num(r.value), 0)
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white p-5">
+      <div className="flex items-center gap-2">
+        <PieChartIcon size={16} className="text-gray-500" />
+        <h2 className="text-sm font-medium uppercase tracking-wider text-gray-500">
+          Asset allocation
+        </h2>
+      </div>
+      {rows.length === 0 || total === 0 ? (
+        <div className="mt-3 py-6 text-center text-sm text-gray-400">
+          No investments yet — add a brokerage or crypto account to see allocation.
+        </div>
+      ) : (
+        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <ResponsiveContainer width="100%" height={220}>
+            <PieChart>
+              <Pie
+                data={rows.map((r, i) => ({
+                  name: r.kind,
+                  value: num(r.value),
+                  color: FALLBACK_PIE_COLORS[i % FALLBACK_PIE_COLORS.length],
+                }))}
+                dataKey="value"
+                nameKey="name"
+                cx="50%"
+                cy="50%"
+                innerRadius={50}
+                outerRadius={85}
+                label={(p: { name?: string }) => p.name ?? ''}
+              >
+                {rows.map((_, i) => (
+                  <Cell key={i} fill={FALLBACK_PIE_COLORS[i % FALLBACK_PIE_COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip formatter={(v) => (typeof v === 'number' ? v.toFixed(2) : String(v))} />
+            </PieChart>
+          </ResponsiveContainer>
+          <ul className="flex flex-col justify-center gap-1.5 text-sm">
+            {rows.map((r, i) => {
+              const pct = total > 0 ? (num(r.value) / total) * 100 : 0
+              return (
+                <li key={r.kind} className="flex items-center justify-between">
+                  <span className="flex items-center gap-2 text-gray-700">
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-full"
+                      style={{ background: FALLBACK_PIE_COLORS[i % FALLBACK_PIE_COLORS.length] }}
+                    />
+                    {r.kind}
+                  </span>
+                  <span className="text-gray-500">
+                    <AmountDisplay amount={r.value} /> · {pct.toFixed(1)}%
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+    </section>
+  )
+}
+
+// ───── Band 3: spending by category ─────
+function SpendingBand({ data }: { data: InsightsData }) {
+  const rows = data.by_category
+  const max = rows.reduce((acc, r) => Math.max(acc, num(r.amount)), 0)
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white p-5">
+      <div className="flex items-center gap-2">
+        <TrendingUp size={16} className="text-gray-500" />
+        <h2 className="text-sm font-medium uppercase tracking-wider text-gray-500">
+          Spending by category · this period
+        </h2>
+      </div>
+      {rows.length === 0 ? (
+        <div className="mt-3 py-6 text-center text-sm text-gray-400">
+          No spending in this period yet.
+        </div>
+      ) : (
+        <ul className="mt-3 space-y-1.5 text-sm">
+          {rows.map((r) => {
+            const v = num(r.amount)
+            const pct = max > 0 ? (v / max) * 100 : 0
+            return (
+              <li key={`${r.category_id ?? 'null'}-${r.name}`} className="flex items-center gap-3">
+                <span className="w-32 shrink-0 truncate text-gray-700">{r.name}</span>
+                <div className="relative h-2 flex-1 rounded bg-gray-100">
+                  <div
+                    className="absolute inset-y-0 left-0 rounded bg-indigo-400"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <span className="w-24 shrink-0 text-right text-gray-700">
+                  <AmountDisplay amount={r.amount} />
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+// ───── Band 4: budgets + goals at a glance ─────
+function BudgetsGoalsBand({ data }: { data: InsightsData }) {
+  const budgetsHref = data.scope === 'household' ? '/h/budgets' : '/budgets'
+  const goalsHref = data.scope === 'household' ? '/h/goals' : '/savings-goals'
+  return (
+    <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="rounded-lg border border-gray-200 bg-white p-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Target size={16} className="text-gray-500" />
+            <h2 className="text-sm font-medium uppercase tracking-wider text-gray-500">
+              Budgets · this period
+            </h2>
+          </div>
+          <Link to={budgetsHref} className="text-xs text-indigo-600 hover:text-indigo-800">
+            full page →
+          </Link>
+        </div>
+        {data.budgets.length === 0 ? (
+          <div className="mt-3 py-6 text-center text-sm text-gray-400">
+            No active budgets — create one to start tracking spend.
+          </div>
+        ) : (
+          <ul className="mt-3 space-y-2 text-sm">
+            {data.budgets.map((b) => {
+              const pct = Math.min(Math.max(b.pct, 0), 1.2) * 100
+              const over = b.pct > 1
+              const warn = b.pct > 0.8 && !over
+              const barColor = over ? 'bg-red-500' : warn ? 'bg-amber-500' : 'bg-indigo-400'
+              return (
+                <li key={b.id}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-700">{b.category_name}</span>
+                    <span className={over ? 'text-red-700' : 'text-gray-700'}>
+                      <AmountDisplay amount={b.spent} /> / <AmountDisplay amount={b.limit} />
+                    </span>
+                  </div>
+                  <div className="mt-1 h-2 rounded bg-gray-100">
+                    <div className={`${barColor} h-full rounded`} style={{ width: `${pct}%` }} />
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-gray-200 bg-white p-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <PiggyBank size={16} className="text-gray-500" />
+            <h2 className="text-sm font-medium uppercase tracking-wider text-gray-500">
+              Savings goals
+            </h2>
+          </div>
+          <Link to={goalsHref} className="text-xs text-indigo-600 hover:text-indigo-800">
+            full page →
+          </Link>
+        </div>
+        {data.goals.length === 0 ? (
+          <div className="mt-3 py-6 text-center text-sm text-gray-400">
+            No goals yet — set a target to start tracking progress.
+          </div>
+        ) : (
+          <ul className="mt-3 space-y-2 text-sm">
+            {data.goals.map((g) => {
+              const pct = Math.min(Math.max(g.progress_pct, 0), 1) * 100
+              return (
+                <li key={g.id}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-700">{g.name}</span>
+                    <span className="text-gray-500">
+                      <AmountDisplay amount={g.current} /> / <AmountDisplay amount={g.target} />
+                    </span>
+                  </div>
+                  <div className="mt-1 h-2 rounded bg-gray-100">
+                    <div className="h-full rounded bg-emerald-500" style={{ width: `${pct}%` }} />
+                  </div>
+                  {g.target_date && (
+                    <div className="mt-0.5 text-[11px] text-gray-400">target {g.target_date}</div>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+    </section>
+  )
+}
+
+// ───── Band 5: account list summary ─────
+function AccountsBand({ data }: { data: InsightsData }) {
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white">
+      <header className="flex items-center gap-2 border-b border-gray-200 px-5 py-3">
+        <LineChartIcon size={16} className="text-gray-500" />
+        <h2 className="text-sm font-medium uppercase tracking-wider text-gray-500">
+          Accounts feeding this
+        </h2>
+      </header>
+      {data.accounts.length === 0 ? (
+        <div className="px-5 py-6 text-center text-sm text-gray-400">
+          {data.scope === 'household'
+            ? 'No shared accounts — visit Accounts (personal) and set visibility to feed this household.'
+            : 'No accounts yet — add your first account to start.'}
+        </div>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {data.accounts.map((a) => (
+            <div
+              key={a.id}
+              className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-3 px-5 py-2 text-sm"
+            >
+              <span className="truncate text-gray-900">{a.name}</span>
+              <span className="text-xs text-gray-400">{a.account_type}</span>
+              <span className="text-xs text-gray-400 capitalize">{a.source}</span>
+              <span className="text-right">
+                <AmountDisplay amount={a.balance} currency={a.currency || 'USD'} />
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}

@@ -11,13 +11,13 @@ import { SignupPage } from './pages/SignupPage'
 
 // Authenticated routes lazy-load their page modules. This drops the
 // initial bundle below Vite's 500 kB warning threshold and means a user
-// who only ever visits /dashboard never downloads Recharts (Investments),
+// who only ever visits /insights never downloads Recharts (Investments),
 // the AI chat surface, or the Plaid SDK shim.
 //
 // React.lazy wants default exports; our pages are named exports, so we
 // adapt each module inline. Keep the adaption shape identical so the
 // Suspense + chunk splits stay symmetric across pages.
-const DashboardPage = lazy(() => import('./pages/DashboardPage').then((m) => ({ default: m.DashboardPage })))
+const InsightsPage = lazy(() => import('./pages/InsightsPage').then((m) => ({ default: m.InsightsPage })))
 const AccountsPage = lazy(() => import('./pages/AccountsPage').then((m) => ({ default: m.AccountsPage })))
 const PlaidConnectPage = lazy(() => import('./pages/PlaidConnectPage').then((m) => ({ default: m.PlaidConnectPage })))
 const TransactionsPage = lazy(() => import('./pages/TransactionsPage').then((m) => ({ default: m.TransactionsPage })))
@@ -28,7 +28,6 @@ const InvestmentsPage = lazy(() => import('./pages/InvestmentsPage').then((m) =>
 const ImportPage = lazy(() => import('./pages/ImportPage').then((m) => ({ default: m.ImportPage })))
 const AIPage = lazy(() => import('./pages/AIPage').then((m) => ({ default: m.AIPage })))
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
-const HouseholdDashboardPage = lazy(() => import('./pages/HouseholdDashboardPage').then((m) => ({ default: m.HouseholdDashboardPage })))
 const HouseholdBudgetsPage = lazy(() => import('./pages/HouseholdBudgetsPage').then((m) => ({ default: m.HouseholdBudgetsPage })))
 const HouseholdGoalsPage = lazy(() => import('./pages/HouseholdGoalsPage').then((m) => ({ default: m.HouseholdGoalsPage })))
 const HouseholdMembersPage = lazy(() => import('./pages/HouseholdMembersPage').then((m) => ({ default: m.HouseholdMembersPage })))
@@ -63,8 +62,10 @@ export default function App() {
       {/* Authenticated routes — RequireAuth wraps the AppShell. */}
       <Route element={<RequireAuth />}>
         <Route element={<AppShell />}>
-          <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<LazyRoute><DashboardPage /></LazyRoute>} />
+          <Route index element={<Navigate to="/insights" replace />} />
+          <Route path="/insights" element={<LazyRoute><InsightsPage /></LazyRoute>} />
+          {/* Legacy dashboard path: keep redirecting so bookmarks survive. */}
+          <Route path="/dashboard" element={<Navigate to="/insights" replace />} />
           <Route path="/accounts" element={<LazyRoute><AccountsPage /></LazyRoute>} />
           <Route path="/connect" element={<LazyRoute><PlaidConnectPage /></LazyRoute>} />
           <Route path="/transactions" element={<LazyRoute><TransactionsPage /></LazyRoute>} />
@@ -76,7 +77,8 @@ export default function App() {
           <Route path="/ai" element={<LazyRoute><AIPage /></LazyRoute>} />
           <Route path="/settings" element={<LazyRoute><SettingsPage /></LazyRoute>} />
 
-          <Route path="/h/dashboard" element={<LazyRoute><HouseholdDashboardPage /></LazyRoute>} />
+          <Route path="/h/insights"  element={<LazyRoute><InsightsPage /></LazyRoute>} />
+          <Route path="/h/dashboard" element={<Navigate to="/h/insights" replace />} />
           <Route path="/h/budgets"   element={<LazyRoute><HouseholdBudgetsPage /></LazyRoute>} />
           <Route path="/h/goals"     element={<LazyRoute><HouseholdGoalsPage /></LazyRoute>} />
           <Route path="/h/members"   element={<LazyRoute><HouseholdMembersPage /></LazyRoute>} />
