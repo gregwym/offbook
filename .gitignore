@@ -13,6 +13,8 @@ frontend/dist/
 # Environment
 .env
 .env.qa
+.env.dev
+.env.prod
 .env.local
 .env.*.local
 
