@@ -11,6 +11,10 @@ export type Account = {
   institution_slug: string
   account_type: AccountType
   currency: string
+  // primary_quote_asset_id is the cash sleeve's asset for this account
+  // (per ADR-0013). Derived server-side from the chosen currency on
+  // create — clients shouldn't try to mutate it.
+  primary_quote_asset_id: number
   balance: string
   last_four?: string | null
   plaid_account_id?: string | null

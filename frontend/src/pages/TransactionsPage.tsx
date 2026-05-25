@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Plus, Sparkles, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { DateDisplay } from '../components/DateDisplay'
 import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
 import { useAccountsStore } from '../store/accountsStore'
+import { useAssetsStore } from '../store/assetsStore'
 import { useCategoriesStore } from '../store/categoriesStore'
 import { useRulesStore } from '../store/rulesStore'
 import { useTransactionsStore } from '../store/transactionsStore'
 import { useDebounce } from '../hooks/useDebounce'
 import type { Account } from '../types/account'
+import type { Asset } from '../types/asset'
 import type { Category } from '../types/category'
 import type { CreateRuleInput } from '../types/categorizationRule'
 import type { CreateTransactionInput, Transaction, TransactionSource } from '../types/transaction'
@@ -22,6 +24,7 @@ export function TransactionsPage() {
     fetch, setFilter, setPage, create, setCategory, remove,
   } = useTransactionsStore()
   const { accounts, fetch: fetchAccounts } = useAccountsStore()
+  const { assets, fetch: fetchAssets } = useAssetsStore()
   const { categories, fetch: fetchCategories } = useCategoriesStore()
   const {
     rules,
@@ -48,10 +51,11 @@ export function TransactionsPage() {
 
   useEffect(() => {
     void fetchAccounts()
+    void fetchAssets()
     void fetchCategories()
     void fetchRules()
     void fetch()
-  }, [fetch, fetchAccounts, fetchCategories, fetchRules])
+  }, [fetch, fetchAccounts, fetchAssets, fetchCategories, fetchRules])
 
   // Same priority heuristic as RulesPage — new rules outrank existing ones
   // by default so the "create from this txn" shortcut wins immediately on
@@ -89,7 +93,28 @@ export function TransactionsPage() {
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const accountByID = useMemo(() => mapByID(accounts), [accounts])
+  const assetByID = useMemo(() => mapByID(assets), [assets])
   const categoryByID = useMemo(() => mapByID(categories), [categories])
+  const transactionByID = useMemo(() => mapByID(transactions), [transactions])
+  // partnerSkip: ids that render inside a paired-trade row (so we don't
+  // also render them as a stand-alone row). Pairing is detected when two
+  // visible legs reference each other via transfer_pair_id AND share an
+  // account_id — cross-account transfers stay as two separate rows.
+  // The lower id is treated as the primary leg.
+  const partnerSkip = useMemo(() => {
+    const skip = new Set<number>()
+    for (const t of transactions) {
+      const partnerID = t.transfer_pair_id ?? null
+      if (partnerID == null) continue
+      const partner = transactionByID.get(partnerID)
+      if (!partner) continue
+      if (partner.account_id !== t.account_id) continue
+      // Skip the higher-id leg; render the lower-id leg as primary.
+      const higher = t.id > partner.id ? t.id : partner.id
+      skip.add(higher)
+    }
+    return skip
+  }, [transactions, transactionByID])
 
   return (
     <div>
@@ -156,22 +181,51 @@ export function TransactionsPage() {
             {!loading && transactions.length === 0 && (
               <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">No transactions match these filters.</td></tr>
             )}
-            {transactions.map((t) => (
-              <TransactionRow
-                key={t.id}
-                tx={t}
-                account={t.account_id ? accountByID.get(t.account_id) : undefined}
-                categories={categories}
-                currentCategory={t.category_id ? categoryByID.get(t.category_id) : undefined}
-                onCategoryChange={(catID) => { void setCategory(t.id, catID) }}
-                onCreateRule={() => openRuleFromTxn(t)}
-                onDelete={async () => {
-                  if (window.confirm('Delete this transaction?')) {
-                    await remove(t.id)
-                  }
-                }}
-              />
-            ))}
+            {transactions.map((t) => {
+              if (partnerSkip.has(t.id)) return null
+              const partnerID = t.transfer_pair_id ?? null
+              const partner = partnerID != null ? transactionByID.get(partnerID) : undefined
+              const account = t.account_id ? accountByID.get(t.account_id) : undefined
+              if (partner && partner.account_id === t.account_id) {
+                // Both legs visible AND same account → collapse into a
+                // single trade row, expandable to show both legs.
+                return (
+                  <PairedTradeRow
+                    key={t.id}
+                    legA={t}
+                    legB={partner}
+                    account={account}
+                    assetByID={assetByID}
+                    categories={categories}
+                    categoryByID={categoryByID}
+                    onCategoryChange={(legID, catID) => { void setCategory(legID, catID) }}
+                    onCreateRule={openRuleFromTxn}
+                    onDelete={async (legID) => {
+                      if (window.confirm('Delete this trade leg?')) {
+                        await remove(legID)
+                      }
+                    }}
+                  />
+                )
+              }
+              return (
+                <TransactionRow
+                  key={t.id}
+                  tx={t}
+                  account={account}
+                  asset={assetByID.get(t.asset_id)}
+                  categories={categories}
+                  currentCategory={t.category_id ? categoryByID.get(t.category_id) : undefined}
+                  onCategoryChange={(catID) => { void setCategory(t.id, catID) }}
+                  onCreateRule={() => openRuleFromTxn(t)}
+                  onDelete={async () => {
+                    if (window.confirm('Delete this transaction?')) {
+                      await remove(t.id)
+                    }
+                  }}
+                />
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -271,21 +325,29 @@ export function TransactionsPage() {
 type RowProps = {
   tx: Transaction
   account?: Account
+  asset?: Asset
   categories: Category[]
   currentCategory?: Category
   onCategoryChange: (catID: number | null) => void
   onCreateRule: () => void
   onDelete: () => Promise<void>
+  // Optional indent for rows rendered as legs of an expanded paired
+  // trade. Keeps the visual hierarchy clear.
+  indented?: boolean
 }
 
-function TransactionRow({ tx, account, categories, currentCategory, onCategoryChange, onCreateRule, onDelete }: RowProps) {
+function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onDelete, indented }: RowProps) {
+  // Per ADR-0013, the unit on a transaction is asset_id. Display currency
+  // = asset.symbol when available; fall back to the parent account's
+  // currency for older rows that haven't been backfilled.
+  const currency = asset?.symbol ?? account?.currency ?? 'USD'
   return (
     <tr className="hover:bg-gray-50">
-      <td className="px-3 py-2 text-gray-700"><DateDisplay value={tx.transaction_date} /></td>
+      <td className={`px-3 py-2 text-gray-700 ${indented ? 'pl-8' : ''}`}><DateDisplay value={tx.transaction_date} /></td>
       <td className="px-3 py-2 text-gray-900">{tx.description ?? '—'}</td>
       <td className="px-3 py-2 text-gray-700">{tx.merchant_name ?? '—'}</td>
       <td className="px-3 py-2 text-right">
-        <AmountDisplay amount={tx.amount} currency={tx.currency} signed />
+        <AmountDisplay amount={tx.amount} currency={currency} signed />
       </td>
       <td className="px-3 py-2 text-gray-700">{account?.name ?? `#${tx.account_id}`}</td>
       <td className="px-3 py-2">
@@ -324,6 +386,124 @@ function TransactionRow({ tx, account, categories, currentCategory, onCategoryCh
   )
 }
 
+type PairedTradeRowProps = {
+  legA: Transaction
+  legB: Transaction
+  account?: Account
+  assetByID: Map<number, Asset>
+  categories: Category[]
+  categoryByID: Map<number, Category>
+  onCategoryChange: (legID: number, catID: number | null) => void
+  onCreateRule: (tx: Transaction) => void
+  onDelete: (legID: number) => Promise<void>
+}
+
+// PairedTradeRow renders two paired transaction rows (a trade) as a
+// single collapsed line: "Bought N AAPL @ $P · -$cash". Expanding shows
+// both legs as full standalone rows. The collapsed view is read-only
+// (no per-leg category edits) — for those, expand.
+function PairedTradeRow({
+  legA,
+  legB,
+  account,
+  assetByID,
+  categories,
+  categoryByID,
+  onCategoryChange,
+  onCreateRule,
+  onDelete,
+}: PairedTradeRowProps) {
+  const [expanded, setExpanded] = useState(false)
+
+  // Classify legs: the cash leg's asset matches the account's primary
+  // quote asset. If the account is missing (rare — partner from another
+  // page), fall back to "leg with the smaller asset_id wins as cash" —
+  // good enough since we still display both on expand.
+  const cashAssetID = account?.primary_quote_asset_id
+  let cashLeg: Transaction
+  let securityLeg: Transaction
+  if (cashAssetID != null && legA.asset_id === cashAssetID) {
+    cashLeg = legA
+    securityLeg = legB
+  } else if (cashAssetID != null && legB.asset_id === cashAssetID) {
+    cashLeg = legB
+    securityLeg = legA
+  } else {
+    // Fallback: the leg whose absolute amount value is "round" cash —
+    // we can't reliably guess, so just pick legA as security.
+    securityLeg = legA
+    cashLeg = legB
+  }
+
+  const securityAsset = assetByID.get(securityLeg.asset_id)
+  const cashAsset = assetByID.get(cashLeg.asset_id)
+  const securityCurrency = securityAsset?.symbol ?? '—'
+  const cashCurrency = cashAsset?.symbol ?? account?.currency ?? 'USD'
+
+  return (
+    <>
+      <tr className="hover:bg-gray-50">
+        <td className="px-3 py-2 text-gray-700">
+          <DateDisplay value={securityLeg.transaction_date} />
+        </td>
+        <td className="px-3 py-2 text-gray-900">
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="mr-1 inline-flex items-center text-gray-400 hover:text-gray-700"
+            aria-label={expanded ? 'Collapse trade' : 'Expand trade'}
+            title={expanded ? 'Collapse legs' : 'Show both legs'}
+          >
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
+          {securityLeg.description ?? '—'}
+          <span className="ml-2 inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-indigo-700">
+            trade
+          </span>
+        </td>
+        <td className="px-3 py-2 text-gray-400">—</td>
+        <td className="px-3 py-2 text-right">
+          <div className="tabular-nums">
+            <AmountDisplay amount={securityLeg.amount} currency={securityCurrency} signed />
+          </div>
+          <div className="tabular-nums text-xs text-gray-500">
+            <AmountDisplay amount={cashLeg.amount} currency={cashCurrency} signed />
+          </div>
+        </td>
+        <td className="px-3 py-2 text-gray-700">{account?.name ?? `#${securityLeg.account_id}`}</td>
+        <td className="px-3 py-2 text-gray-400 italic text-xs">expand to edit</td>
+        <td className="px-3 py-2"></td>
+      </tr>
+      {expanded && (
+        <>
+          <TransactionRow
+            tx={securityLeg}
+            account={account}
+            asset={securityAsset}
+            categories={categories}
+            currentCategory={securityLeg.category_id ? categoryByID.get(securityLeg.category_id) : undefined}
+            onCategoryChange={(catID) => onCategoryChange(securityLeg.id, catID)}
+            onCreateRule={() => onCreateRule(securityLeg)}
+            onDelete={() => onDelete(securityLeg.id)}
+            indented
+          />
+          <TransactionRow
+            tx={cashLeg}
+            account={account}
+            asset={cashAsset}
+            categories={categories}
+            currentCategory={cashLeg.category_id ? categoryByID.get(cashLeg.category_id) : undefined}
+            onCategoryChange={(catID) => onCategoryChange(cashLeg.id, catID)}
+            onCreateRule={() => onCreateRule(cashLeg)}
+            onDelete={() => onDelete(cashLeg.id)}
+            indented
+          />
+        </>
+      )}
+    </>
+  )
+}
+
 type AddProps = {
   accounts: Account[]
   categories: Category[]
@@ -335,7 +515,6 @@ function AddTransactionModal({ accounts, categories, onClose, onSubmit }: AddPro
   const [accountID, setAccountID] = useState<string>(accounts[0] ? String(accounts[0].id) : '')
   const [categoryID, setCategoryID] = useState<string>('')
   const [amount, setAmount] = useState('0.00')
-  const [currency, setCurrency] = useState(accounts[0]?.currency ?? 'USD')
   const [description, setDescription] = useState('')
   const [merchant, setMerchant] = useState('')
   const [date, setDate] = useState<string>(new Date().toISOString().slice(0, 10))
@@ -363,7 +542,6 @@ function AddTransactionModal({ accounts, categories, onClose, onSubmit }: AddPro
         account_id: Number(accountID),
         category_id: categoryID === '' ? null : Number(categoryID),
         amount,
-        currency: currency.toUpperCase(),
         description: description.trim() || null,
         merchant_name: merchant.trim() || null,
         transaction_date: date,
@@ -383,11 +561,7 @@ function AddTransactionModal({ accounts, categories, onClose, onSubmit }: AddPro
         <div className="space-y-3 px-5 py-4">
           {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
           <Field label="Account">
-            <select className={inputClass} value={accountID} onChange={(e) => {
-              setAccountID(e.target.value)
-              const acc = accounts.find((a) => String(a.id) === e.target.value)
-              if (acc) setCurrency(acc.currency)
-            }}>
+            <select className={inputClass} value={accountID} onChange={(e) => setAccountID(e.target.value)}>
               <option value="">(none)</option>
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
@@ -398,14 +572,9 @@ function AddTransactionModal({ accounts, categories, onClose, onSubmit }: AddPro
               {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Amount (negative = spending)">
-              <input className={inputClass} value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
-            </Field>
-            <Field label="Currency">
-              <input className={inputClass} value={currency} maxLength={3} onChange={(e) => setCurrency(e.target.value.toUpperCase())} />
-            </Field>
-          </div>
+          <Field label="Amount (negative = spending)">
+            <input className={inputClass} value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
+          </Field>
           <Field label="Description">
             <input className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} />
           </Field>

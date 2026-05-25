@@ -16,6 +16,9 @@ type AssetRepository interface {
 	GetByID(ctx context.Context, id int64) (*model.Asset, error)
 	GetBySymbolKind(ctx context.Context, symbol, kind string) (*model.Asset, error)
 	ListByKind(ctx context.Context, kind string) ([]model.Asset, error)
+	// List returns every asset ordered by symbol. Used by the trade-form
+	// asset picker; small reference table so no pagination yet.
+	List(ctx context.Context) ([]model.Asset, error)
 	// EnsureBySymbolKind returns the asset for (symbol, kind), creating it
 	// with the supplied displayName if absent. Used by Plaid sync and
 	// manual entry when a previously-unseen ticker shows up.
@@ -52,6 +55,16 @@ func (r *assetRepo) GetBySymbolKind(ctx context.Context, symbol, kind string) (*
 		return nil, err
 	}
 	return &a, nil
+}
+
+func (r *assetRepo) List(ctx context.Context) ([]model.Asset, error) {
+	var rows []model.Asset
+	if err := r.db.WithContext(ctx).
+		Order("kind, symbol").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func (r *assetRepo) ListByKind(ctx context.Context, kind string) ([]model.Asset, error) {

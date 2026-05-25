@@ -56,6 +56,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	priceRepo := repository.NewPriceRepository(gormDB)
 	tradeSvc := service.NewTradeService(gormDB, accountRepo, assetRepo, transactionRepo, positionRepo, priceRepo, userRepo)
 	tradeHandler := handler.NewTradeHandler(tradeSvc)
+	assetHandler := handler.NewAssetHandler(assetRepo)
 
 	categorySvc := service.NewCategoryService(categoryRepo)
 	categoryHandler := handler.NewCategoryHandler(categorySvc)
@@ -156,6 +157,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		piiHandler.RegisterAccountRoutes(secured)
 		transactionHandler.Register(secured)
 		tradeHandler.Register(secured)
+		assetHandler.Register(secured)
 		categoryHandler.Register(secured)
 		ruleHandler.Register(secured)
 		dashboardHandler.Register(secured)
