@@ -100,7 +100,6 @@ func seedTxn(t *testing.T, g *gorm.DB, userID, accountID int64, amount string, c
 		AccountID:       accountID,
 		CategoryID:      catID,
 		Amount:          amt,
-		Currency:        "USD",
 		Source:          "manual",
 		TransactionDate: when,
 	}
@@ -110,11 +109,20 @@ func seedTxn(t *testing.T, g *gorm.DB, userID, accountID int64, amount string, c
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Transaction{}, tx.ID) })
 }
 
+// setBalance upserts a single cash-currency position with `balance` as the
+// quantity, representing the account's value. Per ADR-0013 the legacy
+// accounts.balance column is gone; the equivalent under positions is one
+// row of (account_id, primary_quote_asset_id) with quantity = balance.
 func setBalance(t *testing.T, g *gorm.DB, acct *model.Account, balance string) {
 	t.Helper()
 	d, _ := decimal.NewFromString(balance)
-	if err := g.Model(acct).Update("balance", d).Error; err != nil {
-		t.Fatalf("update balance: %v", err)
+	if err := g.Exec(`
+		INSERT INTO positions (user_id, account_id, asset_id, quantity, updated_at)
+		VALUES (?, ?, ?, ?, NOW())
+		ON CONFLICT (account_id, asset_id) WHERE deleted_at IS NULL
+		DO UPDATE SET quantity = EXCLUDED.quantity, updated_at = NOW()
+	`, acct.UserID, acct.ID, acct.PrimaryQuoteAssetID, d).Error; err != nil {
+		t.Fatalf("upsert balance position: %v", err)
 	}
 }
 

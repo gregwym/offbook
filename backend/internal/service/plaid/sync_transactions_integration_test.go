@@ -135,7 +135,7 @@ func TestService_SyncTransactions_PaginatesAndPersistsCursor(t *testing.T) {
 	itemRepo := repository.NewPlaidItemRepository(g)
 	acctRepo := repository.NewAccountRepository(g)
 	txRepo := repository.NewTransactionRepository(g)
-	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(acctRepo))
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
 
 	enc, _ := box.Encrypt([]byte("access-sandbox-fake"))
 	item := &model.PlaidItem{
@@ -148,7 +148,7 @@ func TestService_SyncTransactions_PaginatesAndPersistsCursor(t *testing.T) {
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), piiSvc, nil, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g)
 
 	// First full pull
 	r, err := svc.SyncTransactions(context.Background(), userID, "item-sync-1")
@@ -231,7 +231,7 @@ func TestService_SyncTransactions_UnknownAccountGoesToDLQ(t *testing.T) {
 	acctRepo := repository.NewAccountRepository(g)
 	txRepo := repository.NewTransactionRepository(g)
 	syncErrRepo := repository.NewPlaidSyncErrorRepository(g)
-	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(acctRepo))
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
 
 	enc, _ := box.Encrypt([]byte("access-sandbox-fake"))
 	item := &model.PlaidItem{
@@ -247,7 +247,7 @@ func TestService_SyncTransactions_UnknownAccountGoesToDLQ(t *testing.T) {
 		g.Unscoped().Where("user_id = ?", userID).Delete(&model.PlaidSyncError{})
 	})
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, syncErrRepo, piiSvc, nil, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, syncErrRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g)
 	r, err := svc.SyncTransactions(context.Background(), userID, "item-orphan")
 	if err != nil {
 		t.Fatalf("SyncTransactions should not return error on per-row mapping failures: %v", err)
@@ -372,7 +372,7 @@ func TestService_SyncTransactions_PartialSuccess(t *testing.T) {
 	acctRepo := repository.NewAccountRepository(g)
 	txRepo := repository.NewTransactionRepository(g)
 	syncErrRepo := repository.NewPlaidSyncErrorRepository(g)
-	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(acctRepo))
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
 
 	enc, _ := box.Encrypt([]byte("access-sandbox-fake"))
 	item := &model.PlaidItem{
@@ -385,7 +385,7 @@ func TestService_SyncTransactions_PartialSuccess(t *testing.T) {
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, syncErrRepo, piiSvc, nil, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, syncErrRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g)
 	r, err := svc.SyncTransactions(context.Background(), userID, "item-mix")
 	if err != nil {
 		t.Fatalf("SyncTransactions: %v", err)

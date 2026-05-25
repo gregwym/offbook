@@ -7,13 +7,19 @@ import (
 	"gorm.io/gorm"
 )
 
+// Transaction is a movement of `Amount` units of `AssetID` in or out of
+// `AccountID`. Per ADR-0013, `Amount` is the quantity (positive = in,
+// negative = out) and `AssetID` is the unit. For cash transactions
+// `AssetID` equals the parent account's primary_quote_asset. For trades
+// (issue #238), the cash leg and security leg each carry their own
+// `AssetID` and a shared `TransferPairID`.
 type Transaction struct {
 	ID                   int64           `gorm:"primaryKey" json:"id"`
 	UserID               int64           `gorm:"not null" json:"user_id"`
 	AccountID            int64           `gorm:"not null" json:"account_id"`
+	AssetID              int64           `gorm:"not null" json:"asset_id"`
 	CategoryID           *int64          `json:"category_id,omitempty"`
 	Amount               decimal.Decimal `gorm:"type:numeric(30,18);not null" json:"amount"`
-	Currency             string          `gorm:"not null;default:USD" json:"currency"`
 	Description          *string         `json:"description,omitempty"`
 	DescriptionClean     *string         `json:"description_clean,omitempty"`
 	MerchantName         *string         `json:"merchant_name,omitempty"`
@@ -32,6 +38,7 @@ type Transaction struct {
 	DeletedAt            gorm.DeletedAt  `gorm:"index" json:"-"`
 
 	Account      *Account     `gorm:"foreignKey:AccountID" json:"-"`
+	Asset        *Asset       `gorm:"foreignKey:AssetID" json:"-"`
 	Category     *Category    `gorm:"foreignKey:CategoryID" json:"-"`
 	TransferPair *Transaction `gorm:"foreignKey:TransferPairID" json:"-"`
 }

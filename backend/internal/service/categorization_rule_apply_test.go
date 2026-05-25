@@ -29,7 +29,6 @@ func newRuleApplySvc(t *testing.T) (svc *service.CategorizationRuleService, user
 		Name:            "rule-apply-" + suffix,
 		InstitutionSlug: "fixture",
 		AccountType:     "checking",
-		Currency:        "USD",
 	}
 	if err := g.WithContext(ctx).Create(acc).Error; err != nil {
 		t.Fatalf("seed account: %v", err)
@@ -65,7 +64,6 @@ func mkTxn(t *testing.T, g *gorm.DB, userID, accountID int64, opts ...func(*mode
 		UserID:          userID,
 		AccountID:       accountID,
 		Amount:          decimal.NewFromInt(-10),
-		Currency:        "USD",
 		TransactionDate: time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC),
 		Source:          "manual",
 	}

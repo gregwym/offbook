@@ -201,7 +201,6 @@ func seedAcct(t *testing.T, g *gorm.DB, userID int64) *model.Account {
 		Name:            "purge-acct-" + time.Now().Format("150405.000000000"),
 		InstitutionSlug: "fixture",
 		AccountType:     "checking",
-		Currency:        "USD",
 	}
 	if err := g.Create(a).Error; err != nil {
 		t.Fatalf("seed account: %v", err)

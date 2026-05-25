@@ -90,7 +90,7 @@ func TestDecimalRoundTrip_18Places(t *testing.T) {
 				UserID:          userID,
 				AccountID:       acct.ID,
 				Amount:          want,
-				Currency:        "USD",
+				AssetID:         acct.PrimaryQuoteAssetID,
 				TransactionDate: time.Now().UTC().Truncate(24 * time.Hour),
 				Source:          "manual",
 				Description:     &desc,
@@ -126,7 +126,7 @@ func TestDecimalArithmetic_PreservesPrecision(t *testing.T) {
 			UserID:          userID,
 			AccountID:       acct.ID,
 			Amount:          amt,
-			Currency:        "USD",
+			AssetID:         acct.PrimaryQuoteAssetID,
 			TransactionDate: time.Now().UTC().Truncate(24 * time.Hour),
 			Source:          "manual",
 		}
@@ -160,7 +160,7 @@ func TestDecimalArithmetic_PreservesPrecision(t *testing.T) {
 		UserID:          userID,
 		AccountID:       acct.ID,
 		Amount:          product,
-		Currency:        "USD",
+		AssetID:         acct.PrimaryQuoteAssetID,
 		TransactionDate: time.Now().UTC().Truncate(24 * time.Hour),
 		Source:          "manual",
 	}
@@ -180,11 +180,13 @@ func TestDecimalArithmetic_PreservesPrecision(t *testing.T) {
 
 func newTestAccount(t *testing.T, g *gorm.DB) (int64, model.Account) {
 	t.Helper()
+	usdID := lookupUSDAssetID(t, g)
 	u := model.User{
-		Email:        "decimal-test-" + time.Now().UTC().Format("150405.000000000") + "@example.test",
-		PasswordHash: "x",
-		LastScope:    model.ScopePersonal,
-		DefaultScope: model.ScopePersonal,
+		Email:                  "decimal-test-" + time.Now().UTC().Format("150405.000000000") + "@example.test",
+		PasswordHash:           "x",
+		LastScope:              model.ScopePersonal,
+		DefaultScope:           model.ScopePersonal,
+		PrimaryCurrencyAssetID: usdID,
 	}
 	if err := g.Create(&u).Error; err != nil {
 		t.Fatalf("create user: %v", err)
@@ -192,17 +194,31 @@ func newTestAccount(t *testing.T, g *gorm.DB) (int64, model.Account) {
 	t.Cleanup(func() { g.Unscoped().Delete(&model.User{}, u.ID) })
 
 	acct := model.Account{
-		UserID:          u.ID,
-		Name:            "decimal-test-" + time.Now().UTC().Format("150405.000000000"),
-		InstitutionSlug: "test",
-		AccountType:     "checking",
-		Currency:        "USD",
-		Balance:         decimal.Zero,
-		IsActive:        true,
+		UserID:              u.ID,
+		Name:                "decimal-test-" + time.Now().UTC().Format("150405.000000000"),
+		InstitutionSlug:     "test",
+		AccountType:         "checking",
+		Currency:            "USD",
+		PrimaryQuoteAssetID: usdID,
+		IsActive:            true,
 	}
 	if err := g.Create(&acct).Error; err != nil {
 		t.Fatalf("create account: %v", err)
 	}
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Account{}, acct.ID) })
 	return u.ID, acct
+}
+
+// lookupUSDAssetID returns the seeded USD fiat asset's id. Migration 13
+// guarantees this row exists in any test DB.
+func lookupUSDAssetID(t *testing.T, g *gorm.DB) int64 {
+	t.Helper()
+	var id int64
+	if err := g.Raw(`SELECT id FROM assets WHERE symbol = 'USD' AND kind = 'fiat'`).Scan(&id).Error; err != nil {
+		t.Fatalf("lookup USD asset: %v", err)
+	}
+	if id == 0 {
+		t.Fatal("USD asset not seeded — migration 13 may not have run")
+	}
+	return id
 }

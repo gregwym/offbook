@@ -88,7 +88,7 @@ func TestPlaidSync_RuleWinsOverPlaidDefault(t *testing.T) {
 	itemRepo := repository.NewPlaidItemRepository(g)
 	acctRepo := repository.NewAccountRepository(g)
 	txRepo := repository.NewTransactionRepository(g)
-	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(acctRepo))
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
 	mapper, err := plaidsvc.NewCategoryMapper(context.Background(),
 		repository.NewPlaidCategoryMapRepository(g))
 	if err != nil {
@@ -102,7 +102,7 @@ func TestPlaidSync_RuleWinsOverPlaidDefault(t *testing.T) {
 	}
 
 	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo,
-		repository.NewPlaidSyncErrorRepository(g), piiSvc, mapper, g).
+		repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, mapper, g).
 		WithRuleRepo(repository.NewCategorizationRuleRepository(g))
 
 	if _, err := svc.SyncTransactions(context.Background(), userID, "item-rule"); err != nil {
@@ -194,7 +194,7 @@ func TestPlaidSync_OtherUsersRuleDoesNotApply(t *testing.T) {
 	itemRepo := repository.NewPlaidItemRepository(g)
 	acctRepo := repository.NewAccountRepository(g)
 	txRepo := repository.NewTransactionRepository(g)
-	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(acctRepo))
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
 	mapper, _ := plaidsvc.NewCategoryMapper(context.Background(), repository.NewPlaidCategoryMapRepository(g))
 
 	enc, _ := box.Encrypt([]byte("access-sandbox-fake"))
@@ -204,7 +204,7 @@ func TestPlaidSync_OtherUsersRuleDoesNotApply(t *testing.T) {
 	}
 
 	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo,
-		repository.NewPlaidSyncErrorRepository(g), piiSvc, mapper, g).
+		repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, mapper, g).
 		WithRuleRepo(repository.NewCategorizationRuleRepository(g))
 
 	if _, err := svc.SyncTransactions(context.Background(), userA, "item-iso"); err != nil {

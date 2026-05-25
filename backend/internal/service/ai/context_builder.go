@@ -91,12 +91,11 @@ type AssetClassWeight struct {
 // that kind" so a test focused on, say, budgets isn't forced to seed
 // investments).
 type ContextBuilder struct {
-	dashboard   *service.DashboardService
-	budgets     *service.BudgetService
-	goals       *service.SavingsGoalService
-	investments *service.InvestmentService
-	categories  *service.CategoryService
-	now         func() time.Time
+	dashboard  *service.DashboardService
+	budgets    *service.BudgetService
+	goals      *service.SavingsGoalService
+	categories *service.CategoryService
+	now        func() time.Time
 
 	// SpendMonths is the trailing window summed into SpendByCategory.
 	// Default 3 — enough to spot trend changes without overwhelming the
@@ -105,19 +104,21 @@ type ContextBuilder struct {
 }
 
 // NewContextBuilder wires the builder. Pass nil for any service you don't
-// have in a test; production callers pass all five.
+// have in a test; production callers pass all four.
+//
+// HoldingsSummary is left empty post-ADR-0013 until a positions-based
+// portfolio summary lands in #238 — the snapshot-based InvestmentService
+// no longer exists.
 func NewContextBuilder(
 	dashboard *service.DashboardService,
 	budgets *service.BudgetService,
 	goals *service.SavingsGoalService,
-	investments *service.InvestmentService,
 	categories *service.CategoryService,
 ) *ContextBuilder {
 	return &ContextBuilder{
 		dashboard:   dashboard,
 		budgets:     budgets,
 		goals:       goals,
-		investments: investments,
 		categories:  categories,
 		now:         time.Now,
 		SpendMonths: 3,
@@ -215,22 +216,9 @@ func (b *ContextBuilder) Build(ctx context.Context, userID int64) (*Context, err
 		}
 	}
 
-	if b.investments != nil {
-		pf, err := b.investments.PortfolioSummary(ctx, userID)
-		if err != nil {
-			return nil, fmt.Errorf("ai: portfolio summary: %w", err)
-		}
-		out.Holdings.TotalMarketValue = pf.TotalMarketValue.String()
-		out.Holdings.TotalCostBasis = pf.TotalCostBasis.String()
-		out.Holdings.HoldingsCount = pf.HoldingsCount
-		for _, ac := range pf.ByAssetClass {
-			out.Holdings.ByAssetClass = append(out.Holdings.ByAssetClass, AssetClassWeight{
-				AssetClass:  ac.AssetClass,
-				MarketValue: ac.MarketValue.String(),
-				WeightPct:   ac.WeightPct.String(),
-			})
-		}
-	}
+	// Holdings summary intentionally left empty post-ADR-0013. The
+	// snapshot-based PortfolioSummary is gone; the positions-based
+	// replacement lands in #238 alongside trade ingestion.
 
 	return out, nil
 }

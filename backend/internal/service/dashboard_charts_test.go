@@ -11,6 +11,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/testutil"
 )
 
 func newDashboardSvc(t *testing.T) (svc *service.DashboardService, userID, accountID int64, g *gorm.DB) {
@@ -20,7 +21,6 @@ func newDashboardSvc(t *testing.T) (svc *service.DashboardService, userID, accou
 	acc := &model.Account{
 		UserID: userID, Name: "DashAcct-" + time.Now().Format("150405.000000"),
 		InstitutionSlug: "fixture", AccountType: "checking", Currency: "USD",
-		Balance: decimal.NewFromInt(0),
 	}
 	if err := g.Create(acc).Error; err != nil {
 		t.Fatalf("seed account: %v", err)
@@ -38,7 +38,7 @@ func seedChartTxn(t *testing.T, g *gorm.DB, userID, accountID int64, categoryID 
 	t.Helper()
 	tx := &model.Transaction{
 		UserID: userID, AccountID: accountID, CategoryID: categoryID,
-		Amount: amt, Currency: "USD",
+		Amount:          amt,
 		TransactionDate: date, Source: "manual",
 		IsTransfer: isTransfer,
 	}
@@ -177,11 +177,16 @@ func TestDashboard_NetWorth_BackDerives(t *testing.T) {
 	svc, userID, accountID, g := newDashboardSvc(t)
 	ctx := context.Background()
 
-	// Update the seeded account balance to 1000 — newDashboardSvc creates
-	// it at 0.
-	if err := g.Model(&model.Account{}).Where("id = ?", accountID).
-		Update("balance", decimal.NewFromInt(1000)).Error; err != nil {
-		t.Fatalf("set balance: %v", err)
+	// Seed a position at 1000 USD — newDashboardSvc creates the account
+	// with no positions. Per ADR-0013, balance is derived from positions.
+	usdID := testutil.LookupUSDAssetID(t, g)
+	if err := g.Exec(
+		`INSERT INTO positions (user_id, account_id, asset_id, quantity, updated_at)
+		 VALUES (?, ?, ?, 1000, NOW())
+		 ON CONFLICT (account_id, asset_id) WHERE deleted_at IS NULL
+		 DO UPDATE SET quantity = EXCLUDED.quantity, updated_at = NOW()`,
+		userID, accountID, usdID).Error; err != nil {
+		t.Fatalf("seed position: %v", err)
 	}
 	seedChartTxn(t, g, userID, accountID, nil, time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-100), false)
 	seedChartTxn(t, g, userID, accountID, nil, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-100), false)
@@ -217,7 +222,6 @@ func TestDashboard_NetWorth_TenantIsolation(t *testing.T) {
 	accB := &model.Account{
 		UserID: userB, Name: "B-" + time.Now().Format("150405.000000"),
 		InstitutionSlug: "fixture", AccountType: "checking", Currency: "USD",
-		Balance: decimal.NewFromInt(9999),
 	}
 	if err := g.Create(accB).Error; err != nil {
 		t.Fatalf("seed B: %v", err)

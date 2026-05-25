@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
@@ -24,6 +25,8 @@ var (
 )
 
 // validAccountTypes mirrors the CHECK constraint in migration 000001.
+// Per ADR-0013, account_type is a display hint (which UI to render), not a
+// data-shape switch — schema treats every account as a bag of positions.
 var validAccountTypes = map[string]struct{}{
 	"checking":    {},
 	"savings":     {},
@@ -35,25 +38,28 @@ var validAccountTypes = map[string]struct{}{
 	"other":       {},
 }
 
-// CreateAccountInput is the validated, decoded request payload for account creation.
+// CreateAccountInput is the validated, decoded request payload for account
+// creation. OpeningBalance, when non-zero, seeds a position in the account's
+// primary quote asset.
 type CreateAccountInput struct {
 	Name            string
 	InstitutionSlug string
 	AccountType     string
 	Currency        string
-	Balance         decimal.Decimal
+	OpeningBalance  decimal.Decimal
 	LastFour        *string
 	IsActive        *bool
 }
 
 // UpdateAccountInput is a sparse patch. Pointer fields distinguish "not provided"
-// from "set to zero value".
+// from "set to zero value". Balance is intentionally absent — per ADR-0013
+// account balance is derived from positions × prices; to change it, write a
+// transaction or update the position directly.
 type UpdateAccountInput struct {
 	Name            *string
 	InstitutionSlug *string
 	AccountType     *string
 	Currency        *string
-	Balance         *decimal.Decimal
 	LastFour        *string
 	IsActive        *bool
 }
@@ -61,17 +67,21 @@ type UpdateAccountInput struct {
 // AccountService owns business rules for accounts. It deliberately does NOT
 // receive pii_repo or pii_service — PII is set via the separate pii endpoints.
 // All operations are scoped to a user_id derived from the session.
-//
-// plaidItemRepo is an optional dependency used solely to join sync status
-// into account response payloads (#65). Nil = no Plaid wiring on this
-// instance; the response fields will be nil for every account.
 type AccountService struct {
+	db            *gorm.DB
 	repo          repository.AccountRepository
+	assetRepo     repository.AssetRepository
+	positionRepo  repository.PositionRepository
 	plaidItemRepo repository.PlaidItemRepository
 }
 
-func NewAccountService(repo repository.AccountRepository) *AccountService {
-	return &AccountService{repo: repo}
+func NewAccountService(
+	db *gorm.DB,
+	repo repository.AccountRepository,
+	assetRepo repository.AssetRepository,
+	positionRepo repository.PositionRepository,
+) *AccountService {
+	return &AccountService{db: db, repo: repo, assetRepo: assetRepo, positionRepo: positionRepo}
 }
 
 // WithPlaidItemRepo lets the router inject the optional dependency without
@@ -86,15 +96,24 @@ func (s *AccountService) Create(ctx context.Context, userID int64, in CreateAcco
 	if in.Currency == "" {
 		in.Currency = "USD"
 	}
+	currency := strings.ToUpper(strings.TrimSpace(in.Currency))
+
+	// Resolve the fiat asset for the account's currency; create on first
+	// encounter so users with exotic currencies aren't blocked.
+	asset, err := s.assetRepo.EnsureBySymbolKind(ctx, currency, model.AssetKindFiat, currency)
+	if err != nil {
+		return nil, fmt.Errorf("resolve currency asset: %w", err)
+	}
+
 	a := &model.Account{
-		UserID:          userID,
-		Name:            strings.TrimSpace(in.Name),
-		InstitutionSlug: strings.TrimSpace(in.InstitutionSlug),
-		AccountType:     strings.TrimSpace(in.AccountType),
-		Currency:        strings.ToUpper(strings.TrimSpace(in.Currency)),
-		Balance:         in.Balance,
-		LastFour:        in.LastFour,
-		IsActive:        true,
+		UserID:              userID,
+		Name:                strings.TrimSpace(in.Name),
+		InstitutionSlug:     strings.TrimSpace(in.InstitutionSlug),
+		AccountType:         strings.TrimSpace(in.AccountType),
+		Currency:            currency,
+		PrimaryQuoteAssetID: asset.ID,
+		LastFour:            in.LastFour,
+		IsActive:            true,
 	}
 	if in.IsActive != nil {
 		a.IsActive = *in.IsActive
@@ -102,8 +121,30 @@ func (s *AccountService) Create(ctx context.Context, userID int64, in CreateAcco
 	if err := validate(a); err != nil {
 		return nil, err
 	}
-	if err := s.repo.Create(ctx, a); err != nil {
-		return nil, fmt.Errorf("create account: %w", err)
+
+	// Create the account row and (when there's an opening balance) seed an
+	// initial cash-position in the same DB transaction so a mid-flight
+	// failure rolls back both writes.
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		acctRepo := repository.NewAccountRepository(tx)
+		if err := acctRepo.Create(ctx, a); err != nil {
+			return fmt.Errorf("create account: %w", err)
+		}
+		if !in.OpeningBalance.IsZero() {
+			posRepo := repository.NewPositionRepository(tx)
+			pos := &model.Position{
+				UserID:    userID,
+				AccountID: a.ID,
+				AssetID:   asset.ID,
+				Quantity:  in.OpeningBalance,
+			}
+			if err := posRepo.Upsert(ctx, pos); err != nil {
+				return fmt.Errorf("seed opening position: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return a, nil
 }
@@ -142,10 +183,15 @@ func (s *AccountService) Update(ctx context.Context, userID, id int64, in Update
 		a.AccountType = strings.TrimSpace(*in.AccountType)
 	}
 	if in.Currency != nil {
-		a.Currency = strings.ToUpper(strings.TrimSpace(*in.Currency))
-	}
-	if in.Balance != nil {
-		a.Balance = *in.Balance
+		newCurrency := strings.ToUpper(strings.TrimSpace(*in.Currency))
+		if newCurrency != a.Currency {
+			asset, err := s.assetRepo.EnsureBySymbolKind(ctx, newCurrency, model.AssetKindFiat, newCurrency)
+			if err != nil {
+				return nil, fmt.Errorf("resolve currency asset: %w", err)
+			}
+			a.Currency = newCurrency
+			a.PrimaryQuoteAssetID = asset.ID
+		}
 	}
 	if in.LastFour != nil {
 		// Pointer to empty string means "clear it"; pass null pointer to leave alone.
@@ -233,8 +279,13 @@ func (s *AccountService) buildResponse(a *model.Account, items map[string]*model
 	}
 	status := item.LastSyncStatus
 	resp.LastSyncStatus = &status
-	resp.LastSyncedAt = item.LastSyncedAt
-	resp.LastSyncError = item.LastSyncError
+	if item.LastSyncedAt != nil {
+		t := *item.LastSyncedAt
+		resp.LastSyncedAt = &t
+	}
+	if item.LastSyncError != nil {
+		resp.LastSyncError = item.LastSyncError
+	}
 	return resp
 }
 
@@ -249,10 +300,10 @@ func (s *AccountService) SoftDelete(ctx context.Context, userID, id int64) error
 }
 
 func validate(a *model.Account) error {
-	if a.Name == "" {
+	if strings.TrimSpace(a.Name) == "" {
 		return ErrEmptyName
 	}
-	if a.InstitutionSlug == "" {
+	if strings.TrimSpace(a.InstitutionSlug) == "" {
 		return ErrEmptyInstitution
 	}
 	if _, ok := validAccountTypes[a.AccountType]; !ok {

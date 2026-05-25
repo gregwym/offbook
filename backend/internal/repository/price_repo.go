@@ -9,9 +9,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// PriceRepository is the read interface for the prices time series. Prices
-// are global (not user-scoped) — they describe market observations, not
-// holdings. Phase 2 of ADR-0013 adds the write methods.
+// PriceRepository is the data-access contract for the prices time series.
+// Prices are global (not user-scoped) — they describe market observations,
+// not holdings. Append-only: prices are never mutated, only inserted.
 type PriceRepository interface {
 	// LatestPriceAt returns the most recent price for (assetID quoted in
 	// quoteAssetID) at or before asOf. Returns ErrNotFound when no row
@@ -20,9 +20,14 @@ type PriceRepository interface {
 	LatestPriceAt(ctx context.Context, assetID, quoteAssetID int64, asOf time.Time) (*model.Price, error)
 
 	// ListHistory returns prices for (assetID, quoteAssetID) ordered by
-	// as_of ASC, within [from, to). For Phase 1 this is exercised by tests
-	// only; the trend chart in Phase 2 consumes it.
+	// as_of ASC, within [from, to). Used by the net-worth trend chart.
 	ListHistory(ctx context.Context, assetID, quoteAssetID int64, from, to time.Time) ([]model.Price, error)
+
+	// Insert appends one price observation. Callers de-dupe on
+	// (asset_id, quote_asset_id, as_of, source) at the application layer
+	// when needed — the index doesn't enforce uniqueness because the same
+	// (asset, quote, as_of) may come from multiple sources.
+	Insert(ctx context.Context, p *model.Price) error
 }
 
 type priceRepo struct {
@@ -56,4 +61,8 @@ func (r *priceRepo) ListHistory(ctx context.Context, assetID, quoteAssetID int64
 		return nil, err
 	}
 	return rows, nil
+}
+
+func (r *priceRepo) Insert(ctx context.Context, p *model.Price) error {
+	return r.db.WithContext(ctx).Create(p).Error
 }

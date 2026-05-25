@@ -22,8 +22,8 @@ func TestPIIScan_FlagsLeak(t *testing.T) {
 	tx := model.Transaction{
 		UserID:          userID,
 		AccountID:       acct.ID,
+		AssetID:         acct.PrimaryQuoteAssetID,
 		Amount:          decimal.RequireFromString("12.34"),
-		Currency:        "USD",
 		TransactionDate: time.Now().UTC().Truncate(24 * time.Hour),
 		Source:          "manual",
 		Description:     &desc,

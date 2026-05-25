@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 
 	"github.com/gregwym/offbook/backend/internal/db"
@@ -18,6 +17,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/household"
+	"github.com/gregwym/offbook/backend/internal/testutil"
 )
 
 const testSecret = "household-test-secret"
@@ -81,7 +81,7 @@ func newSvc(t *testing.T) (*household.Service, *service.AccountService, *gorm.DB
 		repository.NewUserRepository(g),
 		testSecret,
 	).WithDB(g)
-	return svc, service.NewAccountService(accRepo), g
+	return svc, service.NewAccountService(g, accRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)), g
 }
 
 // ensureBootstrapped writes a singleton instance_config row if missing so the
@@ -107,10 +107,11 @@ func ensureBootstrapped(t *testing.T, g *gorm.DB) {
 func seedUser(t *testing.T, g *gorm.DB, label string) int64 {
 	t.Helper()
 	u := &model.User{
-		Email:        fmt.Sprintf("hh-%s-%d@example.test", label, time.Now().UnixNano()),
-		PasswordHash: "x",
-		LastScope:    model.ScopePersonal,
-		DefaultScope: model.ScopePersonal,
+		Email:                  fmt.Sprintf("hh-%s-%d@example.test", label, time.Now().UnixNano()),
+		PasswordHash:           "x",
+		LastScope:              model.ScopePersonal,
+		DefaultScope:           model.ScopePersonal,
+		PrimaryCurrencyAssetID: testutil.LookupUSDAssetID(t, g),
 	}
 	if err := g.Create(u).Error; err != nil {
 		t.Fatalf("seed user: %v", err)
@@ -132,13 +133,12 @@ func seedUser(t *testing.T, g *gorm.DB, label string) int64 {
 func seedAccount(t *testing.T, g *gorm.DB, userID int64, label string) *model.Account {
 	t.Helper()
 	acc := &model.Account{
-		UserID:          userID,
-		Name:            "hh-acct-" + label + "-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-		InstitutionSlug: "fixture",
-		AccountType:     "checking",
-		Currency:        "USD",
-		Balance:         decimal.Zero,
-		IsActive:        true,
+		UserID:              userID,
+		Name:                "hh-acct-" + label + "-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+		InstitutionSlug:     "fixture",
+		AccountType:         "checking",
+		PrimaryQuoteAssetID: testutil.LookupUSDAssetID(t, g),
+		IsActive:            true,
 	}
 	if err := g.Create(acc).Error; err != nil {
 		t.Fatalf("seed account: %v", err)

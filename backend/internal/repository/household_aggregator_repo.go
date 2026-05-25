@@ -114,12 +114,29 @@ func (r *householdAggregatorRepo) SumBalances(ctx context.Context, accountIDs []
 	if len(accountIDs) == 0 {
 		return decimal.Zero, nil
 	}
+	// Per ADR-0013, balance is derived from positions × latest prices —
+	// the legacy accounts.balance column is gone. For positions denominated
+	// in the position owner's primary currency the price is implicit (1);
+	// for others we look up the most-recent price into that currency.
 	var s string
 	err := r.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(balance), 0)::text
-		FROM accounts
-		WHERE deleted_at IS NULL
-		  AND id IN ?
+		SELECT COALESCE(SUM(
+			CASE
+				WHEN p.asset_id = u.primary_currency_asset_id THEN p.quantity
+				ELSE COALESCE(
+					p.quantity * (
+						SELECT pr.price FROM prices pr
+						WHERE pr.asset_id = p.asset_id
+						  AND pr.quote_asset_id = u.primary_currency_asset_id
+						ORDER BY pr.as_of DESC
+						LIMIT 1
+					), 0)
+			END
+		), 0)::text
+		FROM positions p
+		JOIN accounts a ON a.id = p.account_id AND a.deleted_at IS NULL
+		JOIN users    u ON u.id = p.user_id
+		WHERE p.deleted_at IS NULL AND p.account_id IN ?
 	`, accountIDs).Scan(&s).Error
 	if err != nil {
 		return decimal.Zero, err

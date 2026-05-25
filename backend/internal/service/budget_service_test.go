@@ -177,7 +177,6 @@ func TestBudgetService_Spend_PeriodBoundary(t *testing.T) {
 			AccountID:       acc.ID,
 			CategoryID:      &cat,
 			Amount:          amt,
-			Currency:        "USD",
 			TransactionDate: date,
 			Source:          "manual",
 		}
@@ -246,7 +245,7 @@ func TestBudgetService_Spend_TransfersExcluded(t *testing.T) {
 	cat := categoryID
 	if err := g.Create(&model.Transaction{
 		UserID: userID, AccountID: acc.ID, CategoryID: &cat,
-		Amount: decimal.NewFromInt(-200), Currency: "USD",
+		Amount:          decimal.NewFromInt(-200),
 		TransactionDate: time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
 		Source:          "manual",
 		IsTransfer:      true,
@@ -255,7 +254,7 @@ func TestBudgetService_Spend_TransfersExcluded(t *testing.T) {
 	}
 	if err := g.Create(&model.Transaction{
 		UserID: userID, AccountID: acc.ID, CategoryID: &cat,
-		Amount: decimal.NewFromInt(-30), Currency: "USD",
+		Amount:          decimal.NewFromInt(-30),
 		TransactionDate: time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
 		Source:          "manual",
 	}).Error; err != nil {
@@ -300,7 +299,7 @@ func TestBudgetService_Spend_OnlyOwnUserCounted(t *testing.T) {
 	cat := categoryID
 	if err := g.Create(&model.Transaction{
 		UserID: userB, AccountID: accB.ID, CategoryID: &cat,
-		Amount: decimal.NewFromInt(-9999), Currency: "USD",
+		Amount:          decimal.NewFromInt(-9999),
 		TransactionDate: time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
 		Source:          "manual",
 	}).Error; err != nil {
@@ -347,7 +346,7 @@ func TestBudgetService_Spend_WeeklyMondayStart(t *testing.T) {
 	mk := func(d time.Time, amt decimal.Decimal) {
 		if err := g.Create(&model.Transaction{
 			UserID: userID, AccountID: acc.ID, CategoryID: &cat,
-			Amount: amt, Currency: "USD",
+			Amount:          amt,
 			TransactionDate: d, Source: "manual",
 		}).Error; err != nil {
 			t.Fatalf("seed: %v", err)

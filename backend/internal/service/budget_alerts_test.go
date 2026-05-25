@@ -20,7 +20,7 @@ func seedSpend(t *testing.T, g *gorm.DB, userID, accountID, categoryID int64, da
 	cat := categoryID
 	if err := g.Create(&model.Transaction{
 		UserID: userID, AccountID: accountID, CategoryID: &cat,
-		Amount: amt, Currency: "USD",
+		Amount:          amt,
 		TransactionDate: date, Source: "manual",
 	}).Error; err != nil {
 		t.Fatalf("seed txn: %v", err)
@@ -222,7 +222,6 @@ func TestBudgetService_Alerts_OnlyAtThreshold(t *testing.T) {
 	tx := &model.Transaction{
 		UserID: userID, AccountID: acctID, CategoryID: &cat.ID,
 		Amount:          decimal.RequireFromString("-79.99"),
-		Currency:        "USD",
 		TransactionDate: time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
 		Source:          "manual",
 	}
@@ -240,7 +239,7 @@ func TestBudgetService_Alerts_OnlyAtThreshold(t *testing.T) {
 	// Add 0.01 → exactly 80%, triggers warning
 	if err := g.Create(&model.Transaction{
 		UserID: userID, AccountID: acctID, CategoryID: &cat.ID,
-		Amount: decimal.RequireFromString("-0.01"), Currency: "USD",
+		Amount:          decimal.RequireFromString("-0.01"),
 		TransactionDate: time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC),
 		Source:          "manual",
 	}).Error; err != nil {

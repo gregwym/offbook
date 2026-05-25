@@ -32,12 +32,13 @@ var validSources = map[string]struct{}{
 }
 
 // CreateTransactionInput is the validated, decoded create payload.
-// Source defaults to "manual" if empty.
+// Source defaults to "manual" if empty. The transaction's asset is derived
+// from the parent account's primary_quote_asset — cash-transaction-only in
+// this PR; trade-pair entry (#238) will let callers override the asset.
 type CreateTransactionInput struct {
 	AccountID       int64
 	CategoryID      *int64
 	Amount          decimal.Decimal
-	Currency        string
 	Description     *string
 	MerchantName    *string
 	TransactionDate time.Time
@@ -46,12 +47,13 @@ type CreateTransactionInput struct {
 	Notes           *string
 }
 
-// UpdateTransactionInput is a sparse patch.
+// UpdateTransactionInput is a sparse patch. Per ADR-0013, asset_id on an
+// existing transaction is not user-mutable — to "change the currency" of a
+// transaction, delete it and re-enter under a different account.
 type UpdateTransactionInput struct {
 	CategoryID      *int64
 	ClearCategory   bool
 	Amount          *decimal.Decimal
-	Currency        *string
 	Description     *string
 	MerchantName    *string
 	TransactionDate *time.Time
@@ -100,9 +102,10 @@ func (s *TransactionService) Create(ctx context.Context, userID int64, in Create
 	if in.TransactionDate.IsZero() {
 		return nil, ErrMissingDate
 	}
-	// Existence-check the account against the session user — this also rejects
-	// transactions targeting someone else's account.
-	if err := s.assertAccountOwned(ctx, userID, in.AccountID); err != nil {
+	// Fetch the account against the session user — this rejects transactions
+	// targeting someone else's account and gives us the asset_id for the row.
+	account, err := s.fetchOwnedAccount(ctx, userID, in.AccountID)
+	if err != nil {
 		return nil, err
 	}
 	if in.CategoryID != nil {
@@ -111,17 +114,12 @@ func (s *TransactionService) Create(ctx context.Context, userID int64, in Create
 		}
 	}
 
-	currency := strings.ToUpper(strings.TrimSpace(in.Currency))
-	if currency == "" {
-		currency = "USD"
-	}
-
 	t := &model.Transaction{
 		UserID:          userID,
 		AccountID:       in.AccountID,
+		AssetID:         account.PrimaryQuoteAssetID,
 		CategoryID:      in.CategoryID,
 		Amount:          in.Amount,
-		Currency:        currency,
 		Description:     trimPtr(in.Description),
 		MerchantName:    trimPtr(in.MerchantName),
 		TransactionDate: in.TransactionDate,
@@ -193,13 +191,6 @@ func (s *TransactionService) Update(ctx context.Context, userID, id int64, in Up
 		}
 		t.Amount = *in.Amount
 	}
-	if in.Currency != nil {
-		c := strings.ToUpper(strings.TrimSpace(*in.Currency))
-		if len(c) != 3 {
-			return nil, ErrInvalidCurrency
-		}
-		t.Currency = c
-	}
 	if in.Description != nil {
 		t.Description = trimPtr(in.Description)
 	}
@@ -243,14 +234,15 @@ func (s *TransactionService) SoftDelete(ctx context.Context, userID, id int64) e
 	return nil
 }
 
-func (s *TransactionService) assertAccountOwned(ctx context.Context, userID, accountID int64) error {
-	if _, err := s.accountRepo.GetByID(ctx, userID, accountID); err != nil {
+func (s *TransactionService) fetchOwnedAccount(ctx context.Context, userID, accountID int64) (*model.Account, error) {
+	a, err := s.accountRepo.GetByID(ctx, userID, accountID)
+	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return ErrAccountNotFound
+			return nil, ErrAccountNotFound
 		}
-		return err
+		return nil, err
 	}
-	return nil
+	return a, nil
 }
 
 func (s *TransactionService) assertCategoryExists(ctx context.Context, id int64) error {

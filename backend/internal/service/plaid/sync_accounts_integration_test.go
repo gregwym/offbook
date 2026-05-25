@@ -81,6 +81,8 @@ func seedPlaidTestUser(t *testing.T, g *gorm.DB) int64 {
 	t.Cleanup(func() {
 		// Cascade-style cleanup: scrub child rows first since FKs don't
 		// have ON DELETE CASCADE.
+		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.Transaction{})
+		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.Position{})
 		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.Account{})
 		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.PlaidItem{})
 		g.Unscoped().Delete(&model.User{}, u.ID)
@@ -190,7 +192,7 @@ func TestService_SyncAccounts_PIIIsolationAndIdempotency(t *testing.T) {
 	}
 	itemRepo := repository.NewPlaidItemRepository(g)
 	acctRepo := repository.NewAccountRepository(g)
-	acctSvc := service.NewAccountService(acctRepo)
+	acctSvc := service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g))
 	piiRepo := repository.NewPIIRepository(g)
 	piiSvc := service.NewPIIService(piiRepo, acctSvc)
 
@@ -209,7 +211,7 @@ func TestService_SyncAccounts_PIIIsolationAndIdempotency(t *testing.T) {
 		t.Fatalf("seed item: %v", err)
 	}
 
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, repository.NewTransactionRepository(g), repository.NewPlaidSyncErrorRepository(g), piiSvc, nil, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, repository.NewTransactionRepository(g), repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g)
 
 	// First sync: 2 accounts created.
 	r1, err := svc.SyncAccounts(context.Background(), userID, "item-fake-sync-1")
@@ -303,9 +305,9 @@ func TestService_SyncAccounts_ItemNotFound(t *testing.T) {
 	box, _ := crypto.NewSecretBox(newTestKey())
 	itemRepo := repository.NewPlaidItemRepository(g)
 	acctRepo := repository.NewAccountRepository(g)
-	acctSvc := service.NewAccountService(acctRepo)
+	acctSvc := service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g))
 	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), acctSvc)
-	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, repository.NewTransactionRepository(g), repository.NewPlaidSyncErrorRepository(g), piiSvc, nil, g)
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, repository.NewTransactionRepository(g), repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g)
 
 	_, err := svc.SyncAccounts(context.Background(), userID, "nonexistent-item")
 	if err != plaidsvc.ErrItemNotFound {

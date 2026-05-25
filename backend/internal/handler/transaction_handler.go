@@ -108,7 +108,9 @@ func (h *TransactionHandler) List(c *gin.Context) {
 	})
 }
 
-// JSON shape for POST /transactions.
+// JSON shape for POST /transactions. Per ADR-0013, the transaction's
+// asset is derived server-side from the parent account; the wire payload
+// no longer carries a `currency` field.
 // transaction_date accepts either RFC3339 ("2026-05-16T00:00:00Z") or
 // a plain date ("2026-05-16"). We decode as string and parse explicitly so
 // we can reject ambiguous input early.
@@ -116,7 +118,6 @@ type createTransactionRequest struct {
 	AccountID       int64            `json:"account_id"`
 	CategoryID      *int64           `json:"category_id"`
 	Amount          *decimal.Decimal `json:"amount"`
-	Currency        string           `json:"currency"`
 	Description     *string          `json:"description"`
 	MerchantName    *string          `json:"merchant_name"`
 	TransactionDate string           `json:"transaction_date"`
@@ -143,7 +144,6 @@ func (h *TransactionHandler) Create(c *gin.Context) {
 		AccountID:       req.AccountID,
 		CategoryID:      req.CategoryID,
 		Amount:          *req.Amount,
-		Currency:        req.Currency,
 		Description:     req.Description,
 		MerchantName:    req.MerchantName,
 		TransactionDate: txDate,
@@ -181,11 +181,12 @@ func (h *TransactionHandler) Get(c *gin.Context) {
 // updateTransactionRequest mirrors the sparse-patch service input. A null
 // category_id with clear_category=true uncategorizes; sending a non-null
 // category_id sets it. clear_category=false (default) + null category_id = leave alone.
+// asset_id is intentionally absent — per ADR-0013, the asset on an existing
+// transaction is not user-mutable.
 type updateTransactionRequest struct {
 	CategoryID      *int64           `json:"category_id"`
 	ClearCategory   bool             `json:"clear_category"`
 	Amount          *decimal.Decimal `json:"amount"`
-	Currency        *string          `json:"currency"`
 	Description     *string          `json:"description"`
 	MerchantName    *string          `json:"merchant_name"`
 	TransactionDate *string          `json:"transaction_date"`
@@ -207,7 +208,6 @@ func (h *TransactionHandler) Update(c *gin.Context) {
 		CategoryID:    req.CategoryID,
 		ClearCategory: req.ClearCategory,
 		Amount:        req.Amount,
-		Currency:      req.Currency,
 		Description:   req.Description,
 		MerchantName:  req.MerchantName,
 		Notes:         req.Notes,

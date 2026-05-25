@@ -32,7 +32,6 @@ func newTxSvc(t *testing.T) (svc *service.TransactionService, userID, accountID,
 		Name:            "tx-svc-fixture-" + time.Now().Format("150405.000000"),
 		InstitutionSlug: "fixture",
 		AccountType:     "checking",
-		Currency:        "USD",
 	}
 	if err := g.WithContext(ctx).Create(acc).Error; err != nil {
 		t.Fatalf("seed account: %v", err)
@@ -56,7 +55,6 @@ func validTxInput(accountID int64) service.CreateTransactionInput {
 	return service.CreateTransactionInput{
 		AccountID:       accountID,
 		Amount:          decimal.NewFromFloat(-12.34),
-		Currency:        "USD",
 		TransactionDate: time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC),
 		Source:          "manual",
 	}
