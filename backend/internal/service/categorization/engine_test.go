@@ -36,7 +36,7 @@ func TestCategorize_FirstMatchWins(t *testing.T) {
 		{ID: 2, CategoryID: 20, MatchType: "contains", Pattern: "FOODS", IsActive: true}, // would also match
 	})
 
-	d, ok := categorization.Categorize(rules, nil, ptr("WHOLE FOODS MARKET #123"), nil)
+	d, ok := categorization.Categorize(rules, 0, nil, ptr("WHOLE FOODS MARKET #123"), nil)
 	if !ok {
 		t.Fatal("expected match")
 	}
@@ -78,7 +78,7 @@ func TestCategorize_MatchTypes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rs := categorization.Compile([]model.CategorizationRule{tc.rule})
-			_, ok := categorization.Categorize(rs, nil, tc.desc, tc.merchant)
+			_, ok := categorization.Categorize(rs, 0, nil, tc.desc, tc.merchant)
 			if ok != tc.wantMatch {
 				t.Errorf("Categorize matched=%v, want %v", ok, tc.wantMatch)
 			}
@@ -90,12 +90,38 @@ func TestCategorize_NoFieldsNoMatch(t *testing.T) {
 	rs := categorization.Compile([]model.CategorizationRule{
 		{ID: 1, CategoryID: 9, MatchType: "contains", Pattern: "X", IsActive: true},
 	})
-	if _, ok := categorization.Categorize(rs, nil, nil, nil); ok {
+	if _, ok := categorization.Categorize(rs, 0, nil, nil, nil); ok {
 		t.Error("expected no match with all-nil fields")
 	}
 	emptyStr := "   "
-	if _, ok := categorization.Categorize(rs, nil, &emptyStr, nil); ok {
+	if _, ok := categorization.Categorize(rs, 0, nil, &emptyStr, nil); ok {
 		t.Error("expected no match with whitespace-only field")
+	}
+}
+
+func TestCategorize_AssetIDFilter(t *testing.T) {
+	aapl := int64(101)
+	other := int64(202)
+	rs := categorization.Compile([]model.CategorizationRule{
+		// Asset-bound rule with no pattern — matches any AAPL leg.
+		{ID: 1, CategoryID: 11, MatchType: "contains", Pattern: "", AssetID: &aapl, IsActive: true},
+		// Asset-agnostic rule — matches anything with "DIVIDEND".
+		{ID: 2, CategoryID: 22, MatchType: "contains", Pattern: "DIVIDEND", IsActive: true},
+	})
+
+	// AAPL leg with no text → first rule fires on asset alone.
+	d, ok := categorization.Categorize(rs, aapl, nil, ptr("Bought 10 @ 150"), nil)
+	if !ok || d.RuleID != 1 {
+		t.Errorf("AAPL leg: got rule=%d match=%v, want rule=1 match=true", d.RuleID, ok)
+	}
+	// Non-AAPL leg with no matching text → no match (rule 1 filters on asset).
+	if _, ok := categorization.Categorize(rs, other, nil, ptr("Misc"), nil); ok {
+		t.Error("non-AAPL leg should NOT match an AAPL-bound rule")
+	}
+	// Non-AAPL leg with matching text → rule 2 (asset-agnostic) fires.
+	d, ok = categorization.Categorize(rs, other, nil, ptr("Quarterly DIVIDEND"), nil)
+	if !ok || d.RuleID != 2 {
+		t.Errorf("agnostic rule: got rule=%d match=%v, want 2/true", d.RuleID, ok)
 	}
 }
 

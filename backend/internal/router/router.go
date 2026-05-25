@@ -33,6 +33,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	)
 	authHandler := handler.NewAuthHandler(authSvc)
 
+	userRepo := repository.NewUserRepository(gormDB)
 	accountRepo := repository.NewAccountRepository(gormDB)
 	plaidItemRepo := repository.NewPlaidItemRepository(gormDB)
 	assetRepo := repository.NewAssetRepository(gormDB)
@@ -51,6 +52,10 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	ruleRepo := repository.NewCategorizationRuleRepository(gormDB)
 	transactionSvc := service.NewTransactionService(transactionRepo, accountRepo, categoryRepo).WithRuleRepo(ruleRepo)
 	transactionHandler := handler.NewTransactionHandler(transactionSvc)
+
+	priceRepo := repository.NewPriceRepository(gormDB)
+	tradeSvc := service.NewTradeService(gormDB, accountRepo, assetRepo, transactionRepo, positionRepo, priceRepo, userRepo)
+	tradeHandler := handler.NewTradeHandler(tradeSvc)
 
 	categorySvc := service.NewCategoryService(categoryRepo)
 	categoryHandler := handler.NewCategoryHandler(categorySvc)
@@ -76,7 +81,6 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 
 	householdRepo := repository.NewHouseholdRepository(gormDB)
 	memberRepo := repository.NewHouseholdMemberRepository(gormDB)
-	userRepo := repository.NewUserRepository(gormDB)
 	householdSvc := household.NewService(
 		householdRepo,
 		memberRepo,
@@ -151,6 +155,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		accountHandler.Register(secured)
 		piiHandler.RegisterAccountRoutes(secured)
 		transactionHandler.Register(secured)
+		tradeHandler.Register(secured)
 		categoryHandler.Register(secured)
 		ruleHandler.Register(secured)
 		dashboardHandler.Register(secured)

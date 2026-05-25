@@ -26,6 +26,23 @@ type Context struct {
 	Budgets         []BudgetSnapshot `json:"budgets"`
 	SavingsGoals    []GoalSnapshot   `json:"savings_goals"`
 	Holdings        HoldingsSummary  `json:"holdings"`
+	Trades          TradesSummary    `json:"trades"`
+}
+
+// TradesSummary is the LLM-facing view of trade activity over the
+// same trailing window used for SpendByCategory. Per ADR-0013 §4 the
+// LLM sees notional value in the user's primary currency only — no
+// per-trade quantities, no tickers, just counts and gross by asset
+// kind.
+type TradesSummary struct {
+	TotalLegs int64                 `json:"total_legs"`
+	ByKind    []TradeKindSummaryRow `json:"by_kind"`
+}
+
+type TradeKindSummaryRow struct {
+	Kind       string `json:"kind"`
+	LegCount   int64  `json:"leg_count"`
+	GrossValue string `json:"gross_value"`
 }
 
 // ContextPeriod is the [from, to) window summarized by SpendByCategory.
@@ -150,6 +167,7 @@ func (b *ContextBuilder) Build(ctx context.Context, userID int64) (*Context, err
 			TotalCostBasis:   "0",
 			ByAssetClass:     []AssetClassWeight{},
 		},
+		Trades: TradesSummary{ByKind: []TradeKindSummaryRow{}},
 	}
 
 	if b.dashboard != nil {
@@ -218,7 +236,24 @@ func (b *ContextBuilder) Build(ctx context.Context, userID int64) (*Context, err
 
 	// Holdings summary intentionally left empty post-ADR-0013. The
 	// snapshot-based PortfolioSummary is gone; the positions-based
-	// replacement lands in #238 alongside trade ingestion.
+	// replacement lands in a follow-up.
+
+	// Trade activity rollup — count + gross-in-primary by asset kind
+	// over the same window as SpendByCategory.
+	if b.dashboard != nil {
+		ts, err := b.dashboard.Trades(ctx, userID, from, to)
+		if err != nil {
+			return nil, fmt.Errorf("ai: trade summary: %w", err)
+		}
+		out.Trades.TotalLegs = ts.TotalLegs
+		for _, r := range ts.ByKind {
+			out.Trades.ByKind = append(out.Trades.ByKind, TradeKindSummaryRow{
+				Kind:       r.Kind,
+				LegCount:   r.LegCount,
+				GrossValue: r.GrossValue,
+			})
+		}
+	}
 
 	return out, nil
 }

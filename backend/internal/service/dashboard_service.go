@@ -184,6 +184,51 @@ func (s *DashboardService) NetWorth(ctx context.Context, userID int64, months in
 	return out, nil
 }
 
+// TradeSummary is the AI-context view of a user's trade activity over
+// a window. Per-asset detail intentionally rolls up to asset kind so
+// the LLM sees the shape of the portfolio's activity without per-row
+// quantities or tickers — keeps the prompt budget small and shields
+// fingerprintable precision from the provider.
+type TradeSummary struct {
+	From      time.Time           `json:"from"`
+	To        time.Time           `json:"to"`
+	TotalLegs int64               `json:"total_legs"`
+	ByKind    []TradeKindSnapshot `json:"by_kind"`
+}
+
+// TradeKindSnapshot is one row of TradeSummary.
+type TradeKindSnapshot struct {
+	Kind       string `json:"kind"`
+	LegCount   int64  `json:"leg_count"`
+	GrossValue string `json:"gross_value"`
+}
+
+// Trades returns the trade-activity rollup over [from, to). Used by
+// the AI context builder; produces aggregates only — no raw rows, no
+// tickers, no per-trade quantities.
+func (s *DashboardService) Trades(ctx context.Context, userID int64, from, to time.Time) (*TradeSummary, error) {
+	if from.IsZero() {
+		from = s.now().AddDate(0, -3, 0)
+	}
+	if to.IsZero() {
+		to = s.now().AddDate(0, 0, 1)
+	}
+	rows, err := s.repo.TradeSummaryByKind(ctx, userID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	out := &TradeSummary{From: from, To: to}
+	for _, r := range rows {
+		out.TotalLegs += r.LegCount
+		out.ByKind = append(out.ByKind, TradeKindSnapshot{
+			Kind:       r.Kind,
+			LegCount:   r.LegCount,
+			GrossValue: r.GrossValue.String(),
+		})
+	}
+	return out, nil
+}
+
 // resolvePeriod returns the [from, to) window for the named period.
 // All boundaries are computed in the local time zone of `now` — the dashboard
 // is a user-facing view, not an audit log, so DST handling tracks the user's

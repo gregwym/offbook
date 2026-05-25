@@ -53,6 +53,7 @@ type createRuleRequest struct {
 	Pattern    string `json:"pattern"`
 	MatchType  string `json:"match_type"`
 	CategoryID int64  `json:"category_id"`
+	AssetID    *int64 `json:"asset_id"`
 	Priority   int    `json:"priority"`
 	IsActive   *bool  `json:"is_active"`
 }
@@ -67,6 +68,7 @@ func (h *CategorizationRuleHandler) Create(c *gin.Context) {
 		Pattern:    req.Pattern,
 		MatchType:  req.MatchType,
 		CategoryID: req.CategoryID,
+		AssetID:    req.AssetID,
 		Priority:   req.Priority,
 		IsActive:   req.IsActive,
 	})
@@ -100,11 +102,13 @@ func (h *CategorizationRuleHandler) List(c *gin.Context) {
 }
 
 type updateRuleRequest struct {
-	Pattern    *string `json:"pattern"`
-	MatchType  *string `json:"match_type"`
-	CategoryID *int64  `json:"category_id"`
-	Priority   *int    `json:"priority"`
-	IsActive   *bool   `json:"is_active"`
+	Pattern      *string `json:"pattern"`
+	MatchType    *string `json:"match_type"`
+	CategoryID   *int64  `json:"category_id"`
+	AssetID      *int64  `json:"asset_id"`
+	ClearAssetID bool    `json:"clear_asset_id"`
+	Priority     *int    `json:"priority"`
+	IsActive     *bool   `json:"is_active"`
 }
 
 func (h *CategorizationRuleHandler) Update(c *gin.Context) {
@@ -117,7 +121,15 @@ func (h *CategorizationRuleHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
 		return
 	}
-	r, err := h.svc.Update(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, service.UpdateRuleInput(req))
+	r, err := h.svc.Update(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, service.UpdateRuleInput{
+		Pattern:      req.Pattern,
+		MatchType:    req.MatchType,
+		CategoryID:   req.CategoryID,
+		AssetID:      req.AssetID,
+		ClearAssetID: req.ClearAssetID,
+		Priority:     req.Priority,
+		IsActive:     req.IsActive,
+	})
 	if err != nil {
 		h.writeServiceError(c, err)
 		return

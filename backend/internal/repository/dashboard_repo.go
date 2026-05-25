@@ -98,6 +98,21 @@ type DashboardRepository interface {
 	// the current persisted balance; older months back-derive by undoing
 	// transactions between the row's month-end and now.
 	NetWorthByMonth(ctx context.Context, userID int64, now time.Time, months int) ([]NetWorthMonth, error)
+	// TradeSummaryByKind aggregates security-leg counts and gross
+	// notional (|security qty × latest_price_to_primary|) over [from, to),
+	// grouped by the asset's kind ('equity', 'crypto', …). Fiat legs are
+	// excluded by construction (a trade's security leg is never fiat).
+	// Returns rows ordered by gross DESC.
+	TradeSummaryByKind(ctx context.Context, userID int64, from, to time.Time) ([]TradeKindAggregate, error)
+}
+
+// TradeKindAggregate is one row of the trade rollup surfaced to the AI
+// context builder. Values are user-primary-currency strings to preserve
+// NUMERIC precision across the wire; the LLM sees stable decimal text.
+type TradeKindAggregate struct {
+	Kind       string
+	LegCount   int64
+	GrossValue decimal.Decimal
 }
 
 type dashboardRepo struct {
@@ -369,6 +384,55 @@ func (r *dashboardRepo) NetWorthByMonth(ctx context.Context, userID int64, now t
 			}
 		}
 		out[i].Total = curD.Sub(undo)
+	}
+	return out, nil
+}
+
+// TradeSummaryByKind walks paired trade rows (security legs only, fiat
+// excluded) in [from, to) and rolls them up by asset kind. Gross value
+// is |security qty × latest_price_to_primary| — i.e. the security
+// leg's notional expressed in the user's primary currency. Trades
+// without a fresh price land in the row but contribute 0 to gross
+// (same soft-fallback as net worth).
+func (r *dashboardRepo) TradeSummaryByKind(ctx context.Context, userID int64, from, to time.Time) ([]TradeKindAggregate, error) {
+	type row struct {
+		Kind     string
+		LegCount int64
+		Gross    string
+	}
+	var rows []row
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			a.kind AS kind,
+			COUNT(*) AS leg_count,
+			COALESCE(SUM(
+				ABS(t.amount) * COALESCE((
+					SELECT pr.price FROM prices pr
+					WHERE pr.asset_id = t.asset_id
+					  AND pr.quote_asset_id = u.primary_currency_asset_id
+					  AND pr.as_of <= NOW()
+					ORDER BY pr.as_of DESC
+					LIMIT 1
+				), 0)
+			), 0)::text AS gross
+		FROM transactions t
+		JOIN assets a ON a.id = t.asset_id
+		JOIN users  u ON u.id = t.user_id
+		WHERE t.deleted_at IS NULL
+		  AND t.user_id = ?
+		  AND t.transfer_pair_id IS NOT NULL
+		  AND a.kind <> 'fiat'
+		  AND t.transaction_date >= ?
+		  AND t.transaction_date <  ?
+		GROUP BY a.kind
+		ORDER BY gross DESC
+	`, userID, from, to).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]TradeKindAggregate, 0, len(rows))
+	for _, r := range rows {
+		gross, _ := decimal.NewFromString(r.Gross)
+		out = append(out, TradeKindAggregate{Kind: r.Kind, LegCount: r.LegCount, GrossValue: gross})
 	}
 	return out, nil
 }
