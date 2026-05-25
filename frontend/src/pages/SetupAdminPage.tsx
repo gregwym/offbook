@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { Navigate } from 'react-router-dom'
-import { Sparkles } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import type { SignupMode } from '../types/auth'
 
@@ -30,14 +29,7 @@ export function SetupAdminPage() {
 
   return (
     <AuthShell>
-      <h1 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-        <Sparkles size={18} className="text-indigo-600" />
-        Welcome to Offbook
-      </h1>
-      <p className="mt-2 text-sm text-gray-600">
-        This instance hasn't been set up yet. Create the admin account and pick how new users
-        can sign up. You can change the signup mode later.
-      </p>
+      <h1 className="text-xl font-semibold text-gray-900">Set up your admin account</h1>
 
       <form onSubmit={submit} className="mt-6 space-y-4">
         <Field label="Admin email">
@@ -88,7 +80,7 @@ export function SetupAdminPage() {
           disabled={submitting || !email || !password}
           className="w-full rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
         >
-          {submitting ? 'Creating admin…' : 'Create admin account'}
+          {submitting ? 'Creating admin…' : 'Create admin account →'}
         </button>
       </form>
     </AuthShell>
