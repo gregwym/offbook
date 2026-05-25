@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Pencil, Plus, Trash2 } from 'lucide-react'
+import { LineChart, Pencil, Plus, Trash2 } from 'lucide-react'
 import { AccountVisibilityChip } from '../components/AccountVisibilityChip'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { PIIPanel } from '../components/PIIPanel'
 import { SyncStatusPill } from '../components/SyncStatusPill'
+import { TradeFormModal } from '../components/TradeFormModal'
 import { useAccountsStore } from '../store/accountsStore'
 import { useScopeStore } from '../store/scopeStore'
 import {
@@ -23,6 +24,9 @@ export function AccountsPage() {
   const householdId = useScopeStore((s) => s.householdId)
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<Account | null>(null)
+  // Trade-entry surface — only available for brokerage-style accounts
+  // (matches backend brokerageAccountTypes in service/trade_service.go).
+  const [tradingOn, setTradingOn] = useState<Account | null>(null)
 
   useEffect(() => {
     void fetch()
@@ -95,6 +99,17 @@ export function AccountsPage() {
                   </td>
                 )}
                 <td className="px-4 py-2 text-right">
+                  {isBrokerage(a) && (
+                    <button
+                      type="button"
+                      onClick={() => setTradingOn(a)}
+                      className="mr-2 text-gray-500 hover:text-indigo-700"
+                      aria-label="Record trade"
+                      title="Record trade"
+                    >
+                      <LineChart size={16} />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setEditing(a)}
@@ -144,8 +159,26 @@ export function AccountsPage() {
           }}
         />
       )}
+
+      {tradingOn && (
+        <TradeFormModal
+          account={tradingOn}
+          onClose={() => setTradingOn(null)}
+          onRecorded={() => {
+            // Account balance is derived from positions × prices, so the
+            // accounts list refresh picks up the post-trade value.
+            void fetch()
+          }}
+        />
+      )}
     </div>
   )
+}
+
+// isBrokerage mirrors backend service.brokerageAccountTypes — only these
+// account shapes accept trades.
+function isBrokerage(a: Account): boolean {
+  return a.account_type === 'investment' || a.account_type === 'crypto'
 }
 
 type FormProps = {
