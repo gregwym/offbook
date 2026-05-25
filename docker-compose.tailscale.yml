@@ -21,7 +21,12 @@ services:
       TS_HOSTNAME: ${TS_HOSTNAME}
       TS_STATE_DIR: /var/lib/tailscale
       TS_USERSPACE: "true"
-      TS_EXTRA_ARGS: --advertise-tags=tag:offbook
+      # Optional. Pass extra `tailscaled` flags here, e.g. --advertise-tags=tag:X.
+      # Leave empty when your auth key already auto-applies a tag (common when
+      # using a reusable + ACL-restricted key) — explicit --advertise-tags
+      # *overrides* the key's tags and will fail registration if the key's
+      # identity doesn't have permission for the new tag.
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:-}
       # Serve config is rendered into a file the sidecar reads; the frontend
       # service in the merged compose graph must be reachable as `frontend:80`.
       TS_SERVE_CONFIG: /config/serve.json
