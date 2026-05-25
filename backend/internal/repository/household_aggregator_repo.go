@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -70,6 +71,53 @@ type HouseholdAggregatorRepository interface {
 	// ListPersonalThreadsForUser returns the user's own threads NOT shared
 	// with any household. Order: most recently updated first.
 	ListPersonalThreadsForUser(ctx context.Context, userID int64, limit int) ([]model.AIThread, error)
+
+	// AllocationByKind sums positions × latest prices across the given
+	// account IDs, grouped by assets.kind, in each position owner's
+	// primary currency. Empty accountIDs returns nil.
+	AllocationByKind(ctx context.Context, accountIDs []int64) ([]AllocationBucket, error)
+
+	// NetWorthSeries returns one daily net-worth point per day in
+	// [from, to] (inclusive), summing CURRENT positions × historical
+	// prices across accountIDs. Days with no fresh price for a position
+	// contribute 0 for that position — matches the soft-fallback behavior
+	// of the live dashboard query so the chart is renderable even when a
+	// pricing gap exists.
+	NetWorthSeries(ctx context.Context, accountIDs []int64, from, to time.Time) ([]NetWorthPoint, error)
+
+	// AccountBalances returns one row per account in accountIDs with the
+	// account's current balance in its owner's primary currency. Missing
+	// account IDs (e.g. soft-deleted) are silently omitted.
+	AccountBalances(ctx context.Context, accountIDs []int64) ([]AccountBalanceRow, error)
+}
+
+// AllocationBucket is one (asset_kind, value) row of the household
+// allocation rollup. Value is in each position owner's primary currency
+// — heterogeneous-currency households mix into the owner's preferred
+// quote per position.
+type AllocationBucket struct {
+	Kind  string
+	Value decimal.Decimal
+}
+
+// NetWorthPoint is one (date, value) point of the household net-worth
+// trend. Date is the calendar day (UTC midnight); Value is the sum of
+// current positions × historical prices for that day.
+type NetWorthPoint struct {
+	Date  time.Time
+	Value decimal.Decimal
+}
+
+// AccountBalanceRow is the per-account balance contribution from
+// AccountBalances — minimal projection so handlers can join with the
+// share view to add visibility and owner info.
+type AccountBalanceRow struct {
+	AccountID   int64
+	Name        string
+	AccountType string
+	Currency    string
+	OwnerUserID int64
+	Balance     decimal.Decimal
 }
 
 type householdAggregatorRepo struct{ db *gorm.DB }
@@ -283,6 +331,139 @@ func (r *householdAggregatorRepo) ListSharedThreads(ctx context.Context, househo
 		Limit(limit).
 		Find(&out).Error
 	return out, err
+}
+
+// positionValueExpr is the SQL fragment that prices one position into its
+// owner's primary currency. Shared between AllocationByKind, NetWorthSeries,
+// and AccountBalances so a future price-source change touches one spot.
+// References: positions p, users u, prices pr. For NetWorthSeries the
+// trailing as_of bound is replaced via the asOfBound parameter.
+const positionValueExpr = `
+		CASE
+			WHEN p.asset_id = u.primary_currency_asset_id THEN p.quantity
+			ELSE COALESCE(
+				p.quantity * (
+					SELECT pr.price FROM prices pr
+					WHERE pr.asset_id = p.asset_id
+					  AND pr.quote_asset_id = u.primary_currency_asset_id
+					  %s
+					ORDER BY pr.as_of DESC
+					LIMIT 1
+				), 0)
+		END`
+
+func (r *householdAggregatorRepo) AllocationByKind(ctx context.Context, accountIDs []int64) ([]AllocationBucket, error) {
+	if len(accountIDs) == 0 {
+		return nil, nil
+	}
+	type rawRow struct {
+		Kind  string
+		Value string
+	}
+	var rows []rawRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT ass.kind AS kind,
+		       COALESCE(SUM(`+fmt.Sprintf(positionValueExpr, "")+`), 0)::text AS value
+		FROM positions p
+		JOIN accounts a ON a.id = p.account_id AND a.deleted_at IS NULL
+		JOIN users    u ON u.id = p.user_id
+		JOIN assets   ass ON ass.id = p.asset_id
+		WHERE p.deleted_at IS NULL AND p.account_id IN ?
+		GROUP BY ass.kind
+		ORDER BY ass.kind
+	`, accountIDs).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AllocationBucket, 0, len(rows))
+	for _, row := range rows {
+		v, _ := decimal.NewFromString(row.Value)
+		out = append(out, AllocationBucket{Kind: row.Kind, Value: v})
+	}
+	return out, nil
+}
+
+func (r *householdAggregatorRepo) NetWorthSeries(ctx context.Context, accountIDs []int64, from, to time.Time) ([]NetWorthPoint, error) {
+	if len(accountIDs) == 0 || !to.After(from.Add(-time.Second)) {
+		return nil, nil
+	}
+	fromDay := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, time.UTC)
+	toDay := time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, time.UTC)
+	type rawRow struct {
+		Date  time.Time
+		Value string
+	}
+	var rows []rawRow
+	// Cross-join generate_series with positions; price lookup is bounded by
+	// `d + 1 day` so a day's entry uses the latest price posted ON OR BEFORE
+	// end-of-that-day. LEFT JOIN keeps days with no positions at 0.
+	err := r.db.WithContext(ctx).Raw(`
+		WITH days AS (
+			SELECT generate_series(?::date, ?::date, interval '1 day')::date AS d
+		)
+		SELECT days.d AS date,
+		       COALESCE(SUM(`+fmt.Sprintf(positionValueExpr, "AND pr.as_of <= days.d + interval '1 day'")+`), 0)::text AS value
+		FROM days
+		LEFT JOIN positions p ON p.deleted_at IS NULL AND p.account_id IN ?
+		LEFT JOIN accounts  a ON a.id = p.account_id AND a.deleted_at IS NULL
+		LEFT JOIN users     u ON u.id = p.user_id
+		GROUP BY days.d
+		ORDER BY days.d
+	`, fromDay, toDay, accountIDs).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NetWorthPoint, 0, len(rows))
+	for _, row := range rows {
+		v, _ := decimal.NewFromString(row.Value)
+		out = append(out, NetWorthPoint{Date: row.Date.UTC(), Value: v})
+	}
+	return out, nil
+}
+
+func (r *householdAggregatorRepo) AccountBalances(ctx context.Context, accountIDs []int64) ([]AccountBalanceRow, error) {
+	if len(accountIDs) == 0 {
+		return nil, nil
+	}
+	type rawRow struct {
+		AccountID   int64
+		Name        string
+		AccountType string
+		Currency    string
+		OwnerUserID int64
+		Balance     string
+	}
+	var rows []rawRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT a.id           AS account_id,
+		       a.name         AS name,
+		       a.account_type AS account_type,
+		       a.currency     AS currency,
+		       a.user_id      AS owner_user_id,
+		       COALESCE(SUM(`+fmt.Sprintf(positionValueExpr, "")+`), 0)::text AS balance
+		FROM accounts a
+		JOIN users     u ON u.id = a.user_id
+		LEFT JOIN positions p ON p.deleted_at IS NULL AND p.account_id = a.id
+		WHERE a.deleted_at IS NULL AND a.id IN ?
+		GROUP BY a.id, a.name, a.account_type, a.currency, a.user_id
+		ORDER BY a.id
+	`, accountIDs).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AccountBalanceRow, 0, len(rows))
+	for _, row := range rows {
+		b, _ := decimal.NewFromString(row.Balance)
+		out = append(out, AccountBalanceRow{
+			AccountID:   row.AccountID,
+			Name:        row.Name,
+			AccountType: row.AccountType,
+			Currency:    row.Currency,
+			OwnerUserID: row.OwnerUserID,
+			Balance:     b,
+		})
+	}
+	return out, nil
 }
 
 func (r *householdAggregatorRepo) ListPersonalThreadsForUser(ctx context.Context, userID int64, limit int) ([]model.AIThread, error) {
