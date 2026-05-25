@@ -1,15 +1,12 @@
 import {
-  ArrowDownToLine,
   Bot,
   Home,
-  Landmark,
   LayoutDashboard,
   LogOut,
   Menu,
   PiggyBank,
   Receipt,
   Settings,
-  Sparkles,
   Target,
   TrendingUp,
   Users,
@@ -27,17 +24,17 @@ type NavItem = { to: string; label: string; icon: typeof LayoutDashboard }
 
 // Personal-scope routes — mutually exclusive with HOUSEHOLD_NAV per
 // .claude/rules/frontend.md (sidebar renders only the active scope's list).
+// v6 §07 names exactly seven surfaces here. "Connect Bank" + "Import"
+// folded into /accounts/add; "Rules" lives within the Transactions flow
+// (create-from-row) rather than a top-level entry; "AI Advisor" deferred
+// — provider config lives in Settings.
 const PERSONAL_NAV: NavItem[] = [
   { to: '/insights',      label: 'Insights',      icon: LayoutDashboard },
   { to: '/accounts',      label: 'Accounts',      icon: Wallet },
-  { to: '/connect',       label: 'Connect Bank',  icon: Landmark },
   { to: '/transactions',  label: 'Transactions',  icon: Receipt },
-  { to: '/rules',         label: 'Rules',         icon: Sparkles },
   { to: '/budgets',       label: 'Budgets',       icon: Target },
-  { to: '/savings-goals', label: 'Savings Goals', icon: PiggyBank },
+  { to: '/savings-goals', label: 'Goals',         icon: PiggyBank },
   { to: '/investments',   label: 'Investments',   icon: TrendingUp },
-  { to: '/import',        label: 'Import',        icon: ArrowDownToLine },
-  { to: '/ai',            label: 'AI Advisor',    icon: Bot },
   { to: '/settings',      label: 'Settings',      icon: Settings },
 ]
 

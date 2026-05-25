@@ -25,7 +25,6 @@ const RulesPage = lazy(() => import('./pages/RulesPage').then((m) => ({ default:
 const BudgetsPage = lazy(() => import('./pages/BudgetsPage').then((m) => ({ default: m.BudgetsPage })))
 const SavingsGoalsPage = lazy(() => import('./pages/SavingsGoalsPage').then((m) => ({ default: m.SavingsGoalsPage })))
 const InvestmentsPage = lazy(() => import('./pages/InvestmentsPage').then((m) => ({ default: m.InvestmentsPage })))
-const AIPage = lazy(() => import('./pages/AIPage').then((m) => ({ default: m.AIPage })))
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const HouseholdBudgetsPage = lazy(() => import('./pages/HouseholdBudgetsPage').then((m) => ({ default: m.HouseholdBudgetsPage })))
 const HouseholdGoalsPage = lazy(() => import('./pages/HouseholdGoalsPage').then((m) => ({ default: m.HouseholdGoalsPage })))
@@ -77,7 +76,9 @@ export default function App() {
           <Route path="/budgets" element={<LazyRoute><BudgetsPage /></LazyRoute>} />
           <Route path="/savings-goals" element={<LazyRoute><SavingsGoalsPage /></LazyRoute>} />
           <Route path="/investments" element={<LazyRoute><InvestmentsPage /></LazyRoute>} />
-          <Route path="/ai" element={<LazyRoute><AIPage /></LazyRoute>} />
+          {/* /ai is deferred in v6 — AI provider config lives in Settings.
+              Redirect bookmarks to Settings rather than 404. */}
+          <Route path="/ai" element={<Navigate to="/settings" replace />} />
           <Route path="/settings" element={<LazyRoute><SettingsPage /></LazyRoute>} />
 
           <Route path="/h/insights"  element={<LazyRoute><InsightsPage /></LazyRoute>} />
