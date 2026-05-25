@@ -72,6 +72,11 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 - Settings → "Linked Institutions" lists each `plaid_items` row and exposes a per-item Disconnect (soft-delete; accounts and historical transactions remain).
 - All Plaid surfaces are personal-scope only — sharing into a household is per-account via `account_shares`, not per-item.
 
+## Tailscale Deployment
+- Multi-instance deployment on one host runs **one Compose project per instance, each with its own Tailscale sidecar** — see [ADR-0016](docs/ADR/0016-tailscale-per-instance-deployment.md).
+- Sidecar override is `docker-compose.tailscale.yml`. Instance-agnostic; composes with any base stack. Required env: `TS_AUTHKEY`, `TS_HOSTNAME`. Walkthrough in `infra/tailscale/README.md`.
+- Do not multiplex multiple instances behind a single Tailscale node (path-based or port-based). One node per instance = one MagicDNS hostname per instance, which is the only configuration the React app and cookie scoping don't have to know about.
+
 ## Backlog Discipline
 - Do NOT fix things outside the current issue
 - Instead: `gh issue create --title "..." --body "..." --label backlog`
