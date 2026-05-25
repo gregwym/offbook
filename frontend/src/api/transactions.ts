@@ -9,6 +9,10 @@ export type TransactionListFilter = {
   account_id?: number
   // Pass null for uncategorized-only (mapped to ?category_id=null on the wire).
   category_id?: number | null
+  // Restricts to rows with this categorization_method. Backed by the v6
+  // "Needs review" chip — passing 'plaid_default' shows rows the engine
+  // auto-assigned but the user hasn't confirmed.
+  categorization_method?: 'plaid_default' | 'rule' | 'manual'
   from?: string  // YYYY-MM-DD
   to?: string
   search?: string
@@ -24,6 +28,7 @@ export async function listTransactions(
   if (f.category_id !== undefined) {
     params.category_id = f.category_id === null ? 'null' : f.category_id
   }
+  if (f.categorization_method) params.categorization_method = f.categorization_method
   if (f.from) params.from = f.from
   if (f.to) params.to = f.to
   if (f.search) params.search = f.search

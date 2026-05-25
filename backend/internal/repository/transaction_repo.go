@@ -17,12 +17,17 @@ import (
 type TransactionFilter struct {
 	AccountID         *int64
 	CategoryID        *int64
-	UncategorizedOnly bool       // matches rows where category_id IS NULL
-	From              *time.Time // inclusive lower bound on transaction_date
-	To                *time.Time // inclusive upper bound on transaction_date
-	Search            string     // ILIKE %term% across description + merchant_name
-	Limit             int
-	Offset            int
+	UncategorizedOnly bool // matches rows where category_id IS NULL
+	// CategorizationMethod, when non-empty, restricts to rows where
+	// categorization_method matches exactly. Used by the v6 "Needs review"
+	// filter chip to surface rows auto-assigned via plaid_default that the
+	// user hasn't confirmed or rule-overridden.
+	CategorizationMethod string
+	From                 *time.Time // inclusive lower bound on transaction_date
+	To                   *time.Time // inclusive upper bound on transaction_date
+	Search               string     // ILIKE %term% across description + merchant_name
+	Limit                int
+	Offset               int
 }
 
 // TransactionRepository is the data-access contract for transactions.
@@ -147,6 +152,9 @@ func (r *transactionRepo) List(ctx context.Context, userID int64, f TransactionF
 		q = q.Where("category_id IS NULL")
 	case f.CategoryID != nil:
 		q = q.Where("category_id = ?", *f.CategoryID)
+	}
+	if m := f.CategorizationMethod; m != "" {
+		q = q.Where("categorization_method = ?", m)
 	}
 	if f.From != nil {
 		q = q.Where("transaction_date >= ?", *f.From)
