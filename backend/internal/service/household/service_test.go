@@ -553,3 +553,66 @@ func TestUpdate_OwnerOnly(t *testing.T) {
 		t.Errorf("owner Update err = %v, want nil", err)
 	}
 }
+
+// TestAcceptInvite_DefaultsInviteeScopeToHousehold guards the #201 fix: a user
+// who gains household membership (as owner-on-create or as an accepted
+// invitee) should default to household scope, and that default must survive a
+// fresh Get (i.e. the next login) without being re-elevated over a later
+// explicit switch back to personal.
+func TestAcceptInvite_DefaultsInviteeScopeToHousehold(t *testing.T) {
+	svc, _, g := newSvc(t)
+	ctx := context.Background()
+	scopes := service.NewScopeService(
+		repository.NewUserRepository(g),
+		repository.NewHouseholdMemberRepository(g),
+	)
+
+	ownerID := seedUser(t, g, "owner")
+	guestID := seedUser(t, g, "guest")
+
+	hh, err := svc.Create(ctx, ownerID, household.CreateInput{Name: "Scope House"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	cleanupHousehold(t, g, hh.ID)
+
+	// The creator becomes owner and should default to household scope.
+	if v, err := scopes.Get(ctx, ownerID); err != nil {
+		t.Fatalf("owner scope Get: %v", err)
+	} else if v.Active != model.ScopeHousehold {
+		t.Errorf("owner active scope = %q, want household", v.Active)
+	}
+
+	res, err := svc.CreateInvite(ctx, ownerID, hh.ID, household.CreateInviteInput{Role: model.RoleContributor})
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	if _, err := svc.AcceptInvite(ctx, guestID, res.Token); err != nil {
+		t.Fatalf("AcceptInvite: %v", err)
+	}
+
+	// The invitee defaults to household scope — the #201 bug landed them in
+	// personal. A fresh Get models the next login: the default is persisted,
+	// not resolved on the fly, so it survives.
+	v, err := scopes.Get(ctx, guestID)
+	if err != nil {
+		t.Fatalf("guest scope Get: %v", err)
+	}
+	if v.Active != model.ScopeHousehold {
+		t.Errorf("invitee active scope = %q, want household", v.Active)
+	}
+	if v.HouseholdID == nil || *v.HouseholdID != hh.ID {
+		t.Errorf("invitee household id = %v, want %d", v.HouseholdID, hh.ID)
+	}
+
+	// An explicit switch to personal must stick — the fix persists a default at
+	// join time rather than elevating on every read, so personal isn't clobbered.
+	if _, err := scopes.Set(ctx, guestID, model.ScopePersonal); err != nil {
+		t.Fatalf("Set personal: %v", err)
+	}
+	if v, err := scopes.Get(ctx, guestID); err != nil {
+		t.Fatalf("guest scope Get after switch: %v", err)
+	} else if v.Active != model.ScopePersonal {
+		t.Errorf("after explicit switch, active = %q, want personal", v.Active)
+	}
+}
