@@ -1,5 +1,4 @@
 import {
-  Bot,
   Home,
   LayoutDashboard,
   LogOut,
@@ -40,12 +39,13 @@ const PERSONAL_NAV: NavItem[] = [
 
 // Household-scope routes — all under /h/* (frontend rule). Only rendered when
 // the user has an active membership AND has picked household scope.
+// AI Advisor is deferred in v6 (mirrors personal scope — provider config
+// lives in Settings), so there's no household AI nav entry.
 const HOUSEHOLD_NAV: NavItem[] = [
   { to: '/h/insights',  label: 'Insights',     icon: LayoutDashboard },
   { to: '/h/budgets',   label: 'Budgets',      icon: Target },
   { to: '/h/goals',     label: 'Goals',        icon: PiggyBank },
   { to: '/h/members',   label: 'Members',      icon: Users },
-  { to: '/h/ai',        label: 'AI Advisor',   icon: Bot },
   { to: '/h/settings',  label: 'Settings',     icon: Settings },
 ]
 

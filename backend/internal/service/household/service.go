@@ -160,6 +160,9 @@ func (s *Service) Create(ctx context.Context, userID int64, in CreateInput) (*mo
 	if err := s.members.Create(ctx, m); err != nil {
 		return nil, fmt.Errorf("seed owner member: %w", err)
 	}
+	if err := s.defaultScopeToHousehold(ctx, userID); err != nil {
+		return nil, err
+	}
 	return h, nil
 }
 
@@ -312,6 +315,20 @@ func (s *Service) AcceptInviteForUser(ctx context.Context, userID int64, rawToke
 	return err
 }
 
+// defaultScopeToHousehold pins the user's persisted active scope to household
+// once they (re)join one. This is the "default to household when a member"
+// rule (ADR-0006 / #201): without it, an invited member's last_scope stays at
+// the "personal" DB default, so GET /me/scope reports personal even though
+// they belong to a household. It's only a stored default — the user can still
+// switch back to personal via PATCH /me/scope, and Get() degrades household →
+// personal automatically if they later leave.
+func (s *Service) defaultScopeToHousehold(ctx context.Context, userID int64) error {
+	if err := s.users.UpdateLastScope(ctx, userID, model.ScopeHousehold); err != nil {
+		return fmt.Errorf("default scope to household: %w", err)
+	}
+	return nil
+}
+
 // AcceptInvite consumes a raw invite token for the calling user.
 // Auto-resume per ADR-0007: if the user has a not-yet-purged left_at row in
 // the same household, we clear left_at and return resumed=true. Otherwise we
@@ -340,6 +357,9 @@ func (s *Service) AcceptInvite(ctx context.Context, userID int64, rawToken strin
 				if hErr != nil {
 					return nil, hErr
 				}
+				if err := s.defaultScopeToHousehold(ctx, userID); err != nil {
+					return nil, err
+				}
 				return &AcceptResult{Household: h, Member: resumed, Resumed: true}, nil
 			}
 		}
@@ -353,6 +373,9 @@ func (s *Service) AcceptInvite(ctx context.Context, userID int64, rawToken strin
 		}
 		h, err := s.households.GetByID(ctx, inv.HouseholdID)
 		if err != nil {
+			return nil, err
+		}
+		if err := s.defaultScopeToHousehold(ctx, userID); err != nil {
 			return nil, err
 		}
 		return &AcceptResult{Household: h, Member: resumed, Resumed: true}, nil
@@ -381,6 +404,9 @@ func (s *Service) AcceptInvite(ctx context.Context, userID int64, rawToken strin
 	}
 	h, err := s.households.GetByID(ctx, inv.HouseholdID)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.defaultScopeToHousehold(ctx, userID); err != nil {
 		return nil, err
 	}
 	return &AcceptResult{Household: h, Member: m, Resumed: false}, nil

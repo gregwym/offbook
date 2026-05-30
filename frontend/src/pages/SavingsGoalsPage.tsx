@@ -1,26 +1,45 @@
+// SavingsGoalsPage — scope-agnostic per v6 IA. Served at both `/savings-goals`
+// (personal) and `/h/goals` (household); the active scope swaps the data
+// source via useScopedGoals, not the component. Linked accounts and the
+// "remaining" figure are personal-only and are hidden in household scope.
+// Household mutation is gated on the member's role. See hooks/useScopedGoals.ts.
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Pencil, PiggyBank, Plus, Trash2 } from 'lucide-react'
+import { Coins, Pencil, PiggyBank, Plus, Trash2 } from 'lucide-react'
 import { AmountDisplay } from '../components/AmountDisplay'
+import {
+  useScopedGoals,
+  type ScopedGoalInput,
+  type ScopedGoalRow,
+} from '../hooks/useScopedGoals'
 import { useAccountsStore } from '../store/accountsStore'
-import { useSavingsGoalsStore } from '../store/savingsGoalsStore'
 import type { Account } from '../types/account'
-import type {
-  CreateGoalInput,
-  SavingsGoal,
-  UpdateGoalInput,
-} from '../types/savingsGoal'
 
 export function SavingsGoalsPage() {
-  const { goals, loading, error, fetch, create, update, remove, contribute, clearError } = useSavingsGoalsStore()
+  const {
+    scope,
+    rows,
+    loading,
+    error,
+    canMutate,
+    householdMissing,
+    create,
+    update,
+    remove,
+    contribute,
+    clearError,
+  } = useScopedGoals()
   const { accounts, fetch: fetchAccounts } = useAccountsStore()
   const [adding, setAdding] = useState(false)
-  const [editing, setEditing] = useState<SavingsGoal | null>(null)
-  const [contributing, setContributing] = useState<SavingsGoal | null>(null)
+  const [editing, setEditing] = useState<ScopedGoalRow | null>(null)
+  const [contributing, setContributing] = useState<ScopedGoalRow | null>(null)
+  const [rowError, setRowError] = useState<string | null>(null)
+
+  const isHousehold = scope === 'household'
 
   useEffect(() => {
-    void fetch()
-    void fetchAccounts()
-  }, [fetch, fetchAccounts])
+    // Linked accounts are a personal-scope affordance only.
+    if (!isHousehold) void fetchAccounts()
+  }, [isHousehold, fetchAccounts])
 
   const accountsById = useMemo(() => {
     const m = new Map<number, Account>()
@@ -28,47 +47,86 @@ export function SavingsGoalsPage() {
     return m
   }, [accounts])
 
+  if (householdMissing) {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white p-8 text-center">
+        <PiggyBank size={28} className="mx-auto text-gray-300 mb-2" />
+        <h1 className="text-base font-medium text-gray-900">No household yet</h1>
+        <p className="text-sm text-gray-500 mt-1">
+          Use the scope switcher in the sidebar to create or join a household.
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Savings goals</h1>
-          <p className="mt-1 text-sm text-gray-500">Track progress toward named targets. Contributions are atomic, so logging from multiple devices is safe.</p>
+          <h1 className="text-2xl font-semibold text-gray-900">
+            {isHousehold ? 'Shared goals' : 'Savings goals'}
+          </h1>
+          <p className="mt-1 text-sm text-gray-500">
+            {isHousehold
+              ? 'Household-wide savings targets. Contributions add to a single total.'
+              : 'Track progress toward named targets. Contributions are atomic, so logging from multiple devices is safe.'}
+          </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setAdding(true)}
-          className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-        >
-          <Plus size={16} /> New goal
-        </button>
+        {canMutate && (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            <Plus size={16} /> {isHousehold ? 'New shared goal' : 'New goal'}
+          </button>
+        )}
       </div>
 
-      {error && (
+      {(error || rowError) && (
         <div className="mt-4 flex items-start justify-between rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          <span>{error}</span>
-          <button type="button" onClick={clearError} className="ml-3 text-red-600 hover:text-red-800">×</button>
+          <span>{error ?? rowError}</span>
+          <button
+            type="button"
+            onClick={() => {
+              clearError()
+              setRowError(null)
+            }}
+            className="ml-3 text-red-600 hover:text-red-800"
+          >
+            ×
+          </button>
         </div>
       )}
 
       <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {loading && goals.length === 0 && (
+        {loading && rows.length === 0 && (
           <div className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-gray-400">Loading…</div>
         )}
-        {!loading && goals.length === 0 && (
+        {!loading && rows.length === 0 && (
           <div className="rounded-lg border border-dashed border-gray-300 bg-white px-4 py-6 text-center text-gray-500">
             <PiggyBank size={24} className="mx-auto mb-1 text-gray-300" />
-            No goals yet — create one to start tracking.
+            {isHousehold
+              ? canMutate
+                ? 'No shared goals yet — create one to start tracking household savings.'
+                : 'No shared goals yet. Ask an owner or contributor to create one.'
+              : 'No goals yet — create one to start tracking.'}
           </div>
         )}
-        {goals.map((g) => (
+        {rows.map((g) => (
           <GoalCard
             key={g.id}
             goal={g}
             linkedAccount={g.account_id ? accountsById.get(g.account_id) : undefined}
+            canMutate={canMutate}
             onEdit={() => setEditing(g)}
             onDelete={async () => {
-              if (window.confirm(`Delete goal "${g.name}"?`)) await remove(g.id)
+              if (!window.confirm(`Delete goal "${g.name}"?`)) return
+              try {
+                await remove(g.id)
+              } catch (e) {
+                setRowError(errMsg(e))
+              }
             }}
             onContribute={() => setContributing(g)}
           />
@@ -78,10 +136,11 @@ export function SavingsGoalsPage() {
       {adding && (
         <GoalFormModal
           mode="create"
+          isHousehold={isHousehold}
           accounts={accounts}
           onClose={() => setAdding(false)}
           onSubmit={async (input) => {
-            await create(input as CreateGoalInput)
+            await create(input)
             setAdding(false)
           }}
         />
@@ -89,11 +148,12 @@ export function SavingsGoalsPage() {
       {editing && (
         <GoalFormModal
           mode="edit"
+          isHousehold={isHousehold}
           goal={editing}
           accounts={accounts}
           onClose={() => setEditing(null)}
           onSubmit={async (input) => {
-            await update(editing.id, input as UpdateGoalInput)
+            await update(editing.id, input)
             setEditing(null)
           }}
         />
@@ -103,7 +163,7 @@ export function SavingsGoalsPage() {
           goal={contributing}
           onClose={() => setContributing(null)}
           onSubmit={async (amount) => {
-            await contribute(contributing.id, { amount })
+            await contribute(contributing.id, amount)
             setContributing(null)
           }}
         />
@@ -113,14 +173,15 @@ export function SavingsGoalsPage() {
 }
 
 type CardProps = {
-  goal: SavingsGoal
+  goal: ScopedGoalRow
   linkedAccount?: Account
+  canMutate: boolean
   onEdit: () => void
   onDelete: () => Promise<void>
   onContribute: () => void
 }
 
-function GoalCard({ goal, linkedAccount, onEdit, onDelete, onContribute }: CardProps) {
+function GoalCard({ goal, linkedAccount, canMutate, onEdit, onDelete, onContribute }: CardProps) {
   const pct = Math.round(goal.progress_pct * 100)
   const colorClass = pct >= 100 ? 'bg-emerald-500' : pct >= 80 ? 'bg-indigo-500' : 'bg-gray-400'
   return (
@@ -132,10 +193,12 @@ function GoalCard({ goal, linkedAccount, onEdit, onDelete, onContribute }: CardP
             <p className="mt-0.5 text-xs text-gray-500">linked to {linkedAccount.name}</p>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-1 text-gray-400">
-          <button type="button" onClick={onEdit} aria-label="Edit" className="rounded p-1 hover:bg-gray-100 hover:text-gray-700"><Pencil size={14} /></button>
-          <button type="button" onClick={onDelete} aria-label="Delete" className="rounded p-1 hover:bg-gray-100 hover:text-red-700"><Trash2 size={14} /></button>
-        </div>
+        {canMutate && (
+          <div className="flex shrink-0 items-center gap-1 text-gray-400">
+            <button type="button" onClick={onEdit} aria-label="Edit" className="rounded p-1 hover:bg-gray-100 hover:text-gray-700"><Pencil size={14} /></button>
+            <button type="button" onClick={onDelete} aria-label="Delete" className="rounded p-1 hover:bg-gray-100 hover:text-red-700"><Trash2 size={14} /></button>
+          </div>
+        )}
       </div>
       <div className="mt-3 flex items-baseline justify-between text-sm">
         <AmountDisplay amount={goal.current_amount} currency="USD" />
@@ -146,31 +209,36 @@ function GoalCard({ goal, linkedAccount, onEdit, onDelete, onContribute }: CardP
       </div>
       <div className="mt-1 flex justify-between text-xs text-gray-500">
         <span>{pct}%</span>
-        <span><AmountDisplay amount={goal.remaining} currency="USD" /> remaining</span>
+        {goal.remaining != null && (
+          <span><AmountDisplay amount={goal.remaining} currency="USD" /> remaining</span>
+        )}
       </div>
       {goal.target_date && (
         <p className="mt-2 text-xs text-gray-500">Target: {goal.target_date}</p>
       )}
-      <button
-        type="button"
-        onClick={onContribute}
-        className="mt-3 w-full rounded-md border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-100"
-      >
-        + Log contribution
-      </button>
+      {canMutate && (
+        <button
+          type="button"
+          onClick={onContribute}
+          className="mt-3 flex w-full items-center justify-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-100"
+        >
+          <Coins size={14} /> Log contribution
+        </button>
+      )}
     </div>
   )
 }
 
 type FormProps = {
   mode: 'create' | 'edit'
-  goal?: SavingsGoal
+  isHousehold: boolean
+  goal?: ScopedGoalRow
   accounts: Account[]
   onClose: () => void
-  onSubmit: (input: CreateGoalInput | UpdateGoalInput) => Promise<void>
+  onSubmit: (input: ScopedGoalInput) => Promise<void>
 }
 
-function GoalFormModal({ mode, goal, accounts, onClose, onSubmit }: FormProps) {
+function GoalFormModal({ mode, isHousehold, goal, accounts, onClose, onSubmit }: FormProps) {
   const [name, setName] = useState(goal?.name ?? '')
   const [target, setTarget] = useState<string>(goal?.target_amount ?? '0')
   const [targetDate, setTargetDate] = useState<string>(goal?.target_date ?? '')
@@ -190,40 +258,23 @@ function GoalFormModal({ mode, goal, accounts, onClose, onSubmit }: FormProps) {
     }
     setSubmitting(true)
     try {
-      if (mode === 'create') {
-        await onSubmit({
-          name: name.trim(),
-          target_amount: target,
-          target_date: targetDate || null,
-          account_id: accountID === '' ? null : Number(accountID),
-        })
-      } else {
-        // Edit: send sparse patch. Use clear_* flags to null fields.
-        const patch: UpdateGoalInput = {
-          name: name.trim(),
-          target_amount: target,
-        }
-        if (targetDate === '') {
-          patch.clear_target_date = true
-        } else {
-          patch.target_date = targetDate
-        }
-        if (accountID === '') {
-          patch.clear_account_id = true
-        } else {
-          patch.account_id = Number(accountID)
-        }
-        await onSubmit(patch)
-      }
+      await onSubmit({
+        name: name.trim(),
+        target_amount: target,
+        target_date: targetDate === '' ? null : targetDate,
+        account_id: accountID === '' ? null : Number(accountID),
+      })
     } catch (err) {
-      setError(extractErr(err))
+      setError(errMsg(err))
     } finally {
       setSubmitting(false)
     }
   }
 
+  const noun = isHousehold ? 'shared goal' : 'goal'
+
   return (
-    <Modal title={mode === 'create' ? 'New goal' : `Edit "${goal?.name}"`} onClose={onClose}>
+    <Modal title={mode === 'create' ? `New ${noun}` : `Edit "${goal?.name}"`} onClose={onClose}>
       <div className="space-y-3">
         {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
         <Field label="Name">
@@ -235,12 +286,14 @@ function GoalFormModal({ mode, goal, accounts, onClose, onSubmit }: FormProps) {
         <Field label="Target date (optional)">
           <input type="date" className={inputClass} value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
         </Field>
-        <Field label="Linked account (optional)">
-          <select className={inputClass} value={accountID} onChange={(e) => setAccountID(e.target.value)}>
-            <option value="">(none)</option>
-            {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-        </Field>
+        {!isHousehold && (
+          <Field label="Linked account (optional)">
+            <select className={inputClass} value={accountID} onChange={(e) => setAccountID(e.target.value)}>
+              <option value="">(none)</option>
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </Field>
+        )}
       </div>
       <ModalFooter
         submitting={submitting}
@@ -253,7 +306,7 @@ function GoalFormModal({ mode, goal, accounts, onClose, onSubmit }: FormProps) {
 }
 
 type ContribProps = {
-  goal: SavingsGoal
+  goal: ScopedGoalRow
   onClose: () => void
   onSubmit: (amount: string) => Promise<void>
 }
@@ -273,7 +326,7 @@ function ContributionModal({ goal, onClose, onSubmit }: ContribProps) {
     try {
       await onSubmit(amount)
     } catch (err) {
-      setError(extractErr(err))
+      setError(errMsg(err))
     } finally {
       setSubmitting(false)
     }
@@ -334,7 +387,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-function extractErr(err: unknown): string {
+function errMsg(err: unknown): string {
   if (err && typeof err === 'object' && 'response' in err) {
     const r = (err as { response?: { data?: { error?: string } } }).response
     if (r?.data?.error) return r.data.error

@@ -1,28 +1,41 @@
+// BudgetsPage — scope-agnostic per v6 IA. Served at both `/budgets`
+// (personal) and `/h/budgets` (household); the active scope swaps the data
+// source via useScopedBudgets, not the component. Personal scope always
+// allows mutation; household scope gates create/edit/delete on the member's
+// role (owner/contributor). See hooks/useScopedBudgets.ts for the branch.
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Pencil, Plus, Target, Trash2 } from 'lucide-react'
 import { AmountDisplay } from '../components/AmountDisplay'
-import { useBudgetsStore } from '../store/budgetsStore'
+import {
+  useScopedBudgets,
+  type ScopedBudgetInput,
+  type ScopedBudgetRow,
+} from '../hooks/useScopedBudgets'
 import { useCategoriesStore } from '../store/categoriesStore'
 import type { Category } from '../types/category'
-import {
-  BUDGET_PERIODS,
-  type Budget,
-  type BudgetPeriod,
-  type BudgetSpend,
-  type CreateBudgetInput,
-  type UpdateBudgetInput,
-} from '../types/budget'
+import { BUDGET_PERIODS, type BudgetPeriod } from '../types/budget'
 
 export function BudgetsPage() {
-  const { budgets, spendByBudgetID, loading, error, fetch, create, update, remove, clearError } = useBudgetsStore()
+  const {
+    scope,
+    rows,
+    loading,
+    error,
+    canMutate,
+    householdMissing,
+    create,
+    update,
+    remove,
+    clearError,
+  } = useScopedBudgets()
   const { categories, fetch: fetchCategories } = useCategoriesStore()
   const [adding, setAdding] = useState(false)
-  const [editing, setEditing] = useState<Budget | null>(null)
+  const [editing, setEditing] = useState<ScopedBudgetRow | null>(null)
+  const [rowError, setRowError] = useState<string | null>(null)
 
   useEffect(() => {
-    void fetch()
     void fetchCategories()
-  }, [fetch, fetchCategories])
+  }, [fetchCategories])
 
   const categoriesById = useMemo(() => {
     const m = new Map<number, Category>()
@@ -30,48 +43,88 @@ export function BudgetsPage() {
     return m
   }, [categories])
 
+  if (householdMissing) {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white p-8 text-center">
+        <Target size={28} className="mx-auto text-gray-300 mb-2" />
+        <h1 className="text-base font-medium text-gray-900">No household yet</h1>
+        <p className="text-sm text-gray-500 mt-1">
+          Use the scope switcher in the sidebar to create or join a household.
+        </p>
+      </div>
+    )
+  }
+
+  const isHousehold = scope === 'household'
+
   return (
     <div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Budgets</h1>
-          <p className="mt-1 text-sm text-gray-500">Per-category spend limits per period. Spending in this period is computed from your transactions.</p>
+          <h1 className="text-2xl font-semibold text-gray-900">
+            {isHousehold ? 'Shared budgets' : 'Budgets'}
+          </h1>
+          <p className="mt-1 text-sm text-gray-500">
+            {isHousehold
+              ? 'Household-wide spending envelopes. Pace shown for the current month.'
+              : 'Per-category spend limits per period. Spending in this period is computed from your transactions.'}
+          </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setAdding(true)}
-          className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-        >
-          <Plus size={16} /> New budget
-        </button>
+        {canMutate && (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            <Plus size={16} /> {isHousehold ? 'New shared budget' : 'New budget'}
+          </button>
+        )}
       </div>
 
-      {error && (
+      {(error || rowError) && (
         <div className="mt-4 flex items-start justify-between rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          <span>{error}</span>
-          <button type="button" onClick={clearError} className="ml-3 text-red-600 hover:text-red-800">×</button>
+          <span>{error ?? rowError}</span>
+          <button
+            type="button"
+            onClick={() => {
+              clearError()
+              setRowError(null)
+            }}
+            className="ml-3 text-red-600 hover:text-red-800"
+          >
+            ×
+          </button>
         </div>
       )}
 
       <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {loading && budgets.length === 0 && (
+        {loading && rows.length === 0 && (
           <div className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-gray-400">Loading…</div>
         )}
-        {!loading && budgets.length === 0 && (
+        {!loading && rows.length === 0 && (
           <div className="rounded-lg border border-dashed border-gray-300 bg-white px-4 py-6 text-center text-gray-500">
             <Target size={24} className="mx-auto mb-1 text-gray-300" />
-            No budgets yet — create one to start tracking spend.
+            {isHousehold
+              ? canMutate
+                ? 'No shared budgets yet — create one to start tracking household spending.'
+                : 'No shared budgets yet. Ask an owner or contributor to create one.'
+              : 'No budgets yet — create one to start tracking spend.'}
           </div>
         )}
-        {budgets.map((b) => (
+        {rows.map((b) => (
           <BudgetCard
             key={b.id}
-            budget={b}
-            spend={spendByBudgetID[b.id]}
+            row={b}
             category={categoriesById.get(b.category_id)}
+            canMutate={canMutate}
             onEdit={() => setEditing(b)}
             onDelete={async () => {
-              if (window.confirm('Delete this budget?')) await remove(b.id)
+              if (!window.confirm('Delete this budget?')) return
+              try {
+                await remove(b.id)
+              } catch (e) {
+                setRowError(errMsg(e))
+              }
             }}
           />
         ))}
@@ -80,10 +133,11 @@ export function BudgetsPage() {
       {adding && (
         <BudgetFormModal
           mode="create"
+          isHousehold={isHousehold}
           categories={categories}
           onClose={() => setAdding(false)}
           onSubmit={async (input) => {
-            await create(input as CreateBudgetInput)
+            await create(input)
             setAdding(false)
           }}
         />
@@ -91,11 +145,12 @@ export function BudgetsPage() {
       {editing && (
         <BudgetFormModal
           mode="edit"
+          isHousehold={isHousehold}
           categories={categories}
           budget={editing}
           onClose={() => setEditing(null)}
           onSubmit={async (input) => {
-            await update(editing.id, input as UpdateBudgetInput)
+            await update(editing.id, input)
             setEditing(null)
           }}
         />
@@ -105,51 +160,53 @@ export function BudgetsPage() {
 }
 
 type CardProps = {
-  budget: Budget
-  spend?: BudgetSpend
+  row: ScopedBudgetRow
   category?: Category
+  canMutate: boolean
   onEdit: () => void
   onDelete: () => Promise<void>
 }
 
-function BudgetCard({ budget, spend, category, onEdit, onDelete }: CardProps) {
-  const pct = spend ? Math.min(100, Math.round(spend.pct * 100)) : 0
-  const over = !!spend && spend.pct >= 1
-  const warning = !!spend && spend.pct >= 0.8 && !over
+function BudgetCard({ row, category, canMutate, onEdit, onDelete }: CardProps) {
+  const pct = row.pct != null ? Math.min(100, Math.round(row.pct * 100)) : 0
+  const over = row.pct != null && row.pct >= 1
+  const warning = row.pct != null && row.pct >= 0.8 && !over
   const barClass = over ? 'bg-red-500' : warning ? 'bg-amber-500' : 'bg-indigo-500'
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h2 className="truncate text-base font-semibold text-gray-900">{category?.name ?? `#${budget.category_id}`}</h2>
+          <h2 className="truncate text-base font-semibold text-gray-900">{category?.name ?? `#${row.category_id}`}</h2>
           <p className="mt-0.5 text-xs text-gray-500">
-            {budget.period}{budget.rollover ? ' · rollover' : ''}{!budget.is_active ? ' · inactive' : ''}
+            {row.period}{row.rollover ? ' · rollover' : ''}{!row.is_active ? ' · paused' : ''}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-1 text-gray-400">
-          <button type="button" onClick={onEdit} aria-label="Edit" className="rounded p-1 hover:bg-gray-100 hover:text-gray-700"><Pencil size={14} /></button>
-          <button type="button" onClick={onDelete} aria-label="Delete" className="rounded p-1 hover:bg-gray-100 hover:text-red-700"><Trash2 size={14} /></button>
-        </div>
+        {canMutate && (
+          <div className="flex shrink-0 items-center gap-1 text-gray-400">
+            <button type="button" onClick={onEdit} aria-label="Edit" className="rounded p-1 hover:bg-gray-100 hover:text-gray-700"><Pencil size={14} /></button>
+            <button type="button" onClick={onDelete} aria-label="Delete" className="rounded p-1 hover:bg-gray-100 hover:text-red-700"><Trash2 size={14} /></button>
+          </div>
+        )}
       </div>
       <div className="mt-3 flex items-baseline justify-between text-sm">
-        {spend ? <AmountDisplay amount={spend.spent} currency="USD" /> : <span className="text-gray-400">—</span>}
-        <span className="text-xs text-gray-500">of <AmountDisplay amount={budget.amount} currency="USD" /></span>
+        {row.spent != null ? <AmountDisplay amount={row.spent} currency="USD" /> : <span className="text-gray-400">—</span>}
+        <span className="text-xs text-gray-500">of <AmountDisplay amount={row.amount} currency="USD" /></span>
       </div>
       <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100">
         <div className={['h-full', barClass].join(' ')} style={{ width: `${pct}%` }} />
       </div>
       <div className="mt-1 flex justify-between text-xs">
         <span className={over ? 'text-red-700' : warning ? 'text-amber-700' : 'text-gray-500'}>
-          {spend ? `${Math.round(spend.pct * 100)}%` : '—'}
+          {row.pct != null ? `${Math.round(row.pct * 100)}%` : '—'}
           {over ? ' over' : ''}
         </span>
         <span className="text-gray-500">
-          {spend ? <><AmountDisplay amount={spend.remaining} currency="USD" /> remaining</> : ''}
+          {row.remaining != null ? <><AmountDisplay amount={row.remaining} currency="USD" /> remaining</> : ''}
         </span>
       </div>
-      {spend && (
+      {row.period_start && row.period_end && (
         <p className="mt-2 text-xs text-gray-400">
-          {spend.period_start.slice(0, 10)} → {spend.period_end.slice(0, 10)}
+          {row.period_start.slice(0, 10)} → {row.period_end.slice(0, 10)}
         </p>
       )}
     </div>
@@ -158,13 +215,14 @@ function BudgetCard({ budget, spend, category, onEdit, onDelete }: CardProps) {
 
 type FormProps = {
   mode: 'create' | 'edit'
+  isHousehold: boolean
   categories: Category[]
-  budget?: Budget
+  budget?: ScopedBudgetRow
   onClose: () => void
-  onSubmit: (input: CreateBudgetInput | UpdateBudgetInput) => Promise<void>
+  onSubmit: (input: ScopedBudgetInput) => Promise<void>
 }
 
-function BudgetFormModal({ mode, categories, budget, onClose, onSubmit }: FormProps) {
+function BudgetFormModal({ mode, isHousehold, categories, budget, onClose, onSubmit }: FormProps) {
   const [categoryID, setCategoryID] = useState<number | ''>(budget?.category_id ?? '')
   const [period, setPeriod] = useState<BudgetPeriod>(budget?.period ?? 'monthly')
   const [amount, setAmount] = useState<string>(budget?.amount ?? '0')
@@ -210,11 +268,13 @@ function BudgetFormModal({ mode, categories, budget, onClose, onSubmit }: FormPr
     }
   }
 
+  const noun = isHousehold ? 'shared budget' : 'budget'
+
   return (
     <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
         <div className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
-          {mode === 'create' ? 'New budget' : `Edit budget`}
+          {mode === 'create' ? `New ${noun}` : `Edit ${noun}`}
         </div>
         <div className="space-y-3 px-5 py-4">
           {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
@@ -282,4 +342,8 @@ function extractErr(err: unknown): { code: string | null; message: string } {
   }
   if (err instanceof Error) return { code: null, message: err.message }
   return { code: null, message: 'request failed' }
+}
+
+function errMsg(err: unknown): string {
+  return extractErr(err).message
 }
