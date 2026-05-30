@@ -180,7 +180,7 @@ goal through the UI, not just that the endpoint exists.
 
 **Backlog landed post-M8:** signup-with-invite endpoint (#145), owner-side member moderation (#147), per-member dashboard tiles (#149), owner-transfer endpoint (#152).
 
-### M9 — Frontend Hi-Fi: v6 Personal Scope
+### M9 — Frontend Hi-Fi: v6 Personal Scope [DONE]
 
 **Goal:** Restructure personal-scope IA to match `docs/designs/App Hierarchy v6.html`. Five durable surfaces, no wrapper: Sign up · Add account · Transactions · Insights · Settings. Household pages collapse onto the same components — scope swaps the data source, not the page.
 
@@ -192,28 +192,30 @@ Locked v6 decisions (see design doc for full rationale):
 5. **AI chat** — deferred. Provider config lives once in Settings; no sidebar route in personal scope.
 
 Issues:
-- [ ] #224 — Scope-agnostic page foundation; consolidate Budgets + Goals pairs
-- [ ] #225 — Insights page (5 bands, replaces Dashboard for both scopes)
-- [ ] #226 — Sidebar + route restructure (drop `/import`, drop personal `/ai`, AI provider → Settings)
-- [ ] #227 — Add Account two-tile picker (absorbs `/import` and `/connect`)
-- [ ] #228 — Transactions: silent auto-categorize + "Needs review" banner & filter
-- [ ] #229 — Sign up strip-down (3 fields; kill vault/recovery/AI language)
+- [x] #224 — Scope-agnostic page foundation; consolidate Budgets + Goals pairs
+- [x] #225 — Insights page (5 bands, replaces Dashboard for both scopes)
+- [x] #226 — Sidebar + route restructure (drop `/import`, drop personal `/ai`, AI provider → Settings)
+- [x] #227 — Add Account two-tile picker (absorbs `/import` and `/connect`)
+- [x] #228 — Transactions: silent auto-categorize + "Needs review" banner & filter
+- [x] #229 — Sign up strip-down (3 fields; kill vault/recovery/AI language)
 
 **Done criteria:** Fresh `docker compose up` → sign up (3 fields) → land on empty `/insights` → click "Add your first account" → two-tile picker → Plaid sandbox flow OR manual fallback → transactions appear with silent auto-categorize → "Needs review" banner surfaces low-confidence rows → Insights page shows all 5 bands populated. Household scope routes (`/h/insights`, `/h/budgets`, `/h/goals`) render via the same components as personal, with aggregator-sourced data. No `Household*Page.tsx` duplicates remain for surfaces shared between scopes.
 
-**Open question:** household AI surface (`/h/ai`) — personal AI chat is deferred entirely in v6; household AI was not explicitly addressed. Decide before closing M9 whether the household AI route stays, follows personal in being deferred, or moves under household Settings.
+**Resolved open question:** household AI surface (`/h/ai`) **follows personal in being deferred** — the sidebar entry and route are removed (route redirects to `/h/settings`, mirroring personal `/ai` → `/settings`), and `HouseholdAIPage.tsx` is dropped. Provider config lives once in Settings. AI infra (`AIChatSurface`, `aiStore`, `api/ai`) is preserved unrouted for when AI is un-deferred.
+
+**Consolidation note (#224):** the Budgets + Goals scope-agnostic consolidation was finished after the issue was first closed — `BudgetsPage`/`SavingsGoalsPage` now serve both personal and `/h/*` routes via `useScopedBudgets()`/`useScopedGoals()`, and the `HouseholdBudgetsPage`/`HouseholdGoalsPage` duplicates are deleted. No `Household*Page.tsx` remains for a surface shared between scopes.
 
 ---
 
-## M10 — Unified Position Model
+## M10 — Unified Position Model [DONE]
 
 **Goal:** Refactor account valuation to a position-based model. Every account is a bag of positions; **quantities are facts**, **valuations derive from positions × prices** (never stored). Closes the multi-currency, brokerage-cash-sleeve, trade-visibility, and household-allocation gaps the current two-shape schema (`accounts.balance` scalar + separate `investments` snapshots) leaves open.
 
 See [ADR-0013](ADR/0013-position-based-account-model.md) for the full rationale. Pre-prod — we wipe dev DBs and rebuild rather than migrating data. Two integrated PRs land the refactor:
 
-- [ ] #231 — Foundation tables (`assets`, `positions`, `prices`) + read-only repositories. **PR open at #236.** Triggers + backfill in this PR are scaffolding the next step deletes.
-- [ ] #237 — M10a: drop legacy columns + drop `investments` table + add `transactions.asset_id` + rewrite all service reads + Plaid sync writes positions/prices + household aggregator gains `Allocation`/`NetWorthTrend`/`AccountSummaries` (closes M9 #225 gap).
-- [ ] #238 — M10b: trade ingestion — Plaid investment-transactions → paired-row trades; manual trade form; cost-basis recompute (average cost).
+- [x] #231 — Foundation tables (`assets`, `positions`, `prices`) + read-only repositories. Landed via PR #236. Triggers + backfill in this PR are scaffolding the next step deletes.
+- [x] #237 — M10a: drop legacy columns + drop `investments` table + add `transactions.asset_id` + rewrite all service reads + Plaid sync writes positions/prices + household aggregator gains `Allocation`/`NetWorthTrend`/`AccountSummaries` (closes M9 #225 gap).
+- [x] #238 — M10b: trade ingestion — Plaid investment-transactions → paired-row trades; manual trade form; cost-basis recompute (average cost).
 
 **Invariant carried throughout:** the app never invents transactions. Trade rows come from real import sources (Plaid, statement CSV) or explicit user input — never synthesized to reconcile a holdings-snapshot delta.
 

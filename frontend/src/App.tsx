@@ -26,10 +26,7 @@ const BudgetsPage = lazy(() => import('./pages/BudgetsPage').then((m) => ({ defa
 const SavingsGoalsPage = lazy(() => import('./pages/SavingsGoalsPage').then((m) => ({ default: m.SavingsGoalsPage })))
 const InvestmentsPage = lazy(() => import('./pages/InvestmentsPage').then((m) => ({ default: m.InvestmentsPage })))
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
-const HouseholdBudgetsPage = lazy(() => import('./pages/HouseholdBudgetsPage').then((m) => ({ default: m.HouseholdBudgetsPage })))
-const HouseholdGoalsPage = lazy(() => import('./pages/HouseholdGoalsPage').then((m) => ({ default: m.HouseholdGoalsPage })))
 const HouseholdMembersPage = lazy(() => import('./pages/HouseholdMembersPage').then((m) => ({ default: m.HouseholdMembersPage })))
-const HouseholdAIPage = lazy(() => import('./pages/HouseholdAIPage').then((m) => ({ default: m.HouseholdAIPage })))
 const HouseholdSettingsPage = lazy(() => import('./pages/HouseholdSettingsPage').then((m) => ({ default: m.HouseholdSettingsPage })))
 
 export default function App() {
@@ -81,12 +78,16 @@ export default function App() {
           <Route path="/ai" element={<Navigate to="/settings" replace />} />
           <Route path="/settings" element={<LazyRoute><SettingsPage /></LazyRoute>} />
 
+          {/* Household surfaces reuse the scope-agnostic pages — the active
+              scope swaps the data source, not the component (v6 IA). */}
           <Route path="/h/insights"  element={<LazyRoute><InsightsPage /></LazyRoute>} />
           <Route path="/h/dashboard" element={<Navigate to="/h/insights" replace />} />
-          <Route path="/h/budgets"   element={<LazyRoute><HouseholdBudgetsPage /></LazyRoute>} />
-          <Route path="/h/goals"     element={<LazyRoute><HouseholdGoalsPage /></LazyRoute>} />
+          <Route path="/h/budgets"   element={<LazyRoute><BudgetsPage /></LazyRoute>} />
+          <Route path="/h/goals"     element={<LazyRoute><SavingsGoalsPage /></LazyRoute>} />
           <Route path="/h/members"   element={<LazyRoute><HouseholdMembersPage /></LazyRoute>} />
-          <Route path="/h/ai"        element={<LazyRoute><HouseholdAIPage /></LazyRoute>} />
+          {/* Household AI is deferred in v6, mirroring personal /ai. Redirect
+              bookmarks to household Settings rather than 404. */}
+          <Route path="/h/ai"        element={<Navigate to="/h/settings" replace />} />
           <Route path="/h/settings"  element={<LazyRoute><HouseholdSettingsPage /></LazyRoute>} />
         </Route>
       </Route>

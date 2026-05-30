@@ -43,10 +43,12 @@ export type AIChatSurfaceProps = {
   assistantLabel?: string
 }
 
-// AIChatSurface is the shared three-column AI chat layout. AIPage and
-// HouseholdAIPage are thin wrappers; the only thing that differs is the
-// backing store + the labels in the chrome. Keeping one component means
-// the personal + household chats stay in lockstep when we polish them.
+// AIChatSurface is the shared three-column AI chat layout. The AI surfaces
+// (personal /ai and household /h/ai) are deferred in v6 — their routes and
+// page wrappers were removed and provider config now lives in Settings. This
+// component plus the `aiStore`/`api/ai` infra are preserved unrouted so the
+// chat can be re-mounted in one place when AI is un-deferred; the only thing
+// that differs per scope is the backing store + the labels in the chrome.
 export function AIChatSurface({
   useStore,
   title,
