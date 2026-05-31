@@ -15,10 +15,32 @@ const personalRoutes = [
 const householdRoutes = ['/h/insights', '/h/budgets', '/h/goals', '/h/members', '/h/ai', '/h/settings']
 
 test.describe('baseline route smoke', () => {
-  test('unexpected auth failures are reported', () => {
-    expect(isUnexpectedAuthFailure(401, 'http://localhost:18000/api/v1/dashboard/summary')).toBe(true)
-    expect(isUnexpectedAuthFailure(403, 'http://localhost:18000/api/v1/h/dashboard/summary')).toBe(true)
-    expect(isUnexpectedAuthFailure(401, 'http://localhost:18000/api/v1/me')).toBe(false)
+  test('response classifier accepts known unauthenticated probes', () => {
+    // Bootstrap probes that legitimately 401 before sign-in.
+    expect(isAPIFailure(401, 'http://localhost:18000/api/v1/me')).toBe(false)
+    expect(isAPIFailure(401, 'http://localhost:18000/api/v1/setup/status')).toBe(false)
+    // Routes that should not return auth failures once we've signed in.
+    expect(isAPIFailure(401, 'http://localhost:18000/api/v1/dashboard/summary')).toBe(true)
+    expect(isAPIFailure(403, 'http://localhost:18000/api/v1/h/dashboard')).toBe(true)
+  })
+
+  test('response classifier flags 4xx on API routes', () => {
+    // The exact regressions #266 (Insights 404) and #268 (Investments 404)
+    // would have been caught here if this test ran in CI back then.
+    expect(isAPIFailure(404, 'http://localhost:18000/api/v1/investments/portfolio')).toBe(true)
+    expect(isAPIFailure(404, 'http://localhost:18000/api/v1/investments')).toBe(true)
+    expect(isAPIFailure(400, 'http://localhost:18000/api/v1/budgets')).toBe(true)
+    // 5xx on any URL is always a failure.
+    expect(isAPIFailure(500, 'http://localhost:18000/api/v1/anything')).toBe(true)
+    expect(isAPIFailure(503, 'http://localhost:5173/anything')).toBe(true)
+  })
+
+  test('response classifier ignores non-API 4xx', () => {
+    // Failed asset / favicon / third-party fetches are someone else's
+    // problem. The smoke is about API contract failures.
+    expect(isAPIFailure(404, 'http://localhost:18000/favicon.ico')).toBe(false)
+    expect(isAPIFailure(404, 'http://localhost:5173/some-asset.png')).toBe(false)
+    expect(isAPIFailure(200, 'http://localhost:18000/api/v1/anything')).toBe(false)
   })
 
   for (const route of publicRoutes) {
@@ -27,7 +49,7 @@ test.describe('baseline route smoke', () => {
       await page.goto(route)
       await expect(page.locator('body')).not.toBeEmpty()
       await expectNoHorizontalOverflow(page)
-      expect(errors, 'console errors, uncaught exceptions, or 5xx responses').toEqual([])
+      expect(errors, 'console errors, uncaught exceptions, or API 4xx/5xx').toEqual([])
     })
   }
 
@@ -38,7 +60,7 @@ test.describe('baseline route smoke', () => {
       await page.goto(route)
       await expect(page.locator('body')).not.toBeEmpty()
       await expectNoHorizontalOverflow(page)
-      expect(errors, 'console errors, uncaught exceptions, or 5xx responses').toEqual([])
+      expect(errors, 'console errors, uncaught exceptions, or API 4xx/5xx').toEqual([])
     })
   }
 })
@@ -50,7 +72,7 @@ function collectRuntimeErrors(page: Page) {
   })
   page.on('pageerror', (err) => errors.push(err.message))
   page.on('response', (response) => {
-    if (response.status() >= 500 || isUnexpectedAuthFailure(response.status(), response.url())) {
+    if (isAPIFailure(response.status(), response.url())) {
       errors.push(`${response.status()} ${response.url()}`)
     }
   })
@@ -63,11 +85,31 @@ function isExpectedBrowserNoise(message: string) {
   return message.includes('Failed to load resource: the server responded with a status of 401 (Unauthorized)')
 }
 
-function isUnexpectedAuthFailure(status: number, url: string) {
-  if (status !== 401 && status !== 403) return false
+// isAPIFailure decides whether a single HTTP response should fail the smoke.
+//
+// Policy (epic #270, L1 / #271):
+//   - 5xx anywhere → always fail. The server crashed.
+//   - 4xx on /api/v1/* → fail UNLESS it's a known unauthenticated probe.
+//     This is the layer that catches contract drift like #266 / #268 — a
+//     frontend call to a route the backend doesn't expose.
+//   - 4xx on non-/api URLs → ignore. Failed favicons, missing optional
+//     assets, and third-party fetches aren't this suite's contract.
+//   - 1xx/2xx/3xx → always fine.
+//
+// "Known unauthenticated probes" cover the auth-bootstrap hits that fire
+// before sign-in (and legitimately 401 if no session cookie exists). Add
+// new entries here when a new bootstrap call is added to the frontend.
+function isAPIFailure(status: number, url: string): boolean {
+  if (status >= 500) return true
+  if (status < 400) return false
+  // 4xx territory.
+  if (!url.includes('/api/v1/')) return false
+  if ((status === 401 || status === 403) && isExpectedUnauthenticatedProbe(url)) return false
+  return true
+}
 
-  const expectedUnauthenticatedProbe = url.includes('/api/v1/me')
-  return !expectedUnauthenticatedProbe
+function isExpectedUnauthenticatedProbe(url: string): boolean {
+  return url.includes('/api/v1/me') || url.includes('/api/v1/setup/status')
 }
 
 async function login(page: Page) {
