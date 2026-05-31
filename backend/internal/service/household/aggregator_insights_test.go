@@ -123,6 +123,43 @@ func TestAggregator_Allocation(t *testing.T) {
 	}
 }
 
+// TestAggregator_Allocation_UnpricedAssetIncomplete covers the #282 contract on
+// allocation: an asset with no available price marks its kind bucket incomplete
+// (value not silently inflated by a $0), while priced kinds stay complete.
+func TestAggregator_Allocation_UnpricedAssetIncomplete(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	usd := testutil.LookupUSDAssetID(t, g)
+	btc := testutil.LookupAssetID(t, g, "BTC", "crypto")
+	ownerID := seedUser(t, g, "alloc-incomplete")
+	hh := seedHouseholdRow(t, g, ownerID, "AllocIncomplete", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+
+	acct := seedAccount(t, g, ownerID, "mixed")
+	upsertPosition(t, g, ownerID, acct.ID, usd, "1000")
+	upsertPosition(t, g, ownerID, acct.ID, btc, "0.5") // no BTC price → unpriced
+	setShare(t, g, acct.ID, hh.ID, model.VisibilityBalanceAndTxns)
+
+	out, err := agg.Allocation(ctx, hh.ID)
+	if err != nil {
+		t.Fatalf("Allocation: %v", err)
+	}
+	got := map[string]household.AssetClassAllocation{}
+	for _, b := range out {
+		got[b.Kind] = b
+	}
+	if fiat := got[model.AssetKindFiat]; fiat.Value != "1000" || !fiat.Complete {
+		t.Errorf("fiat bucket = %+v, want {1000 complete}", fiat)
+	}
+	crypto, ok := got[model.AssetKindCrypto]
+	if !ok {
+		t.Fatalf("crypto bucket missing — an unpriced asset must still surface as its kind")
+	}
+	if crypto.Value != "0" || crypto.Complete {
+		t.Errorf("crypto bucket = %+v, want {0 incomplete} (BTC unpriced, not silently valued)", crypto)
+	}
+}
+
 // TestAggregator_Allocation_InGraceExcluded ensures a leaver's shared
 // account stops contributing to allocation during grace.
 func TestAggregator_Allocation_InGraceExcluded(t *testing.T) {

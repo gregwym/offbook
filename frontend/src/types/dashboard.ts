@@ -46,4 +46,7 @@ export type CashFlowMonth = {
 export type NetWorthPoint = {
   date: string // YYYY-MM-DD (month-end)
   total: string
+  // false when an asset held at this month-end had no available price, so
+  // `total` is a partial sum (#282).
+  complete: boolean
 }

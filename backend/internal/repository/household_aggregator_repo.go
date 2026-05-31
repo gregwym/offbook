@@ -72,10 +72,12 @@ type HouseholdAggregatorRepository interface {
 	// with any household. Order: most recently updated first.
 	ListPersonalThreadsForUser(ctx context.Context, userID int64, limit int) ([]model.AIThread, error)
 
-	// AllocationByKind sums positions × latest prices across the given
-	// account IDs, grouped by assets.kind, in each position owner's
-	// primary currency. Empty accountIDs returns nil.
-	AllocationByKind(ctx context.Context, accountIDs []int64) ([]AllocationBucket, error)
+	// ListPositionsForAllocation returns every live position across the given
+	// account set with its asset kind, for the household allocation rollup.
+	// Pricing is NOT done in SQL — the caller values each position through the
+	// shared valuation derivation so an unpriced asset is surfaced as
+	// incomplete rather than silently $0 (#282). Empty accountIDs returns nil.
+	ListPositionsForAllocation(ctx context.Context, accountIDs []int64) ([]AllocationPosition, error)
 
 	// FoldByAccountSetAsOf returns one synthetic position per asset across the
 	// given account set: quantity = Σ non-deleted transactions.amount with
@@ -99,13 +101,13 @@ type HouseholdAggregatorRepository interface {
 	AccountBalances(ctx context.Context, accountIDs []int64) ([]AccountBalanceRow, error)
 }
 
-// AllocationBucket is one (asset_kind, value) row of the household
-// allocation rollup. Value is in each position owner's primary currency
-// — heterogeneous-currency households mix into the owner's preferred
-// quote per position.
-type AllocationBucket struct {
-	Kind  string
-	Value decimal.Decimal
+// AllocationPosition is one live position plus its asset kind, fed to the
+// valuation derivation for the household allocation rollup. AssetID + Quantity
+// are what valuation.Value needs; Kind buckets the result.
+type AllocationPosition struct {
+	AssetID  int64
+	Quantity decimal.Decimal
+	Kind     string
 }
 
 // AccountBalanceRow is the per-account balance contribution from
@@ -337,10 +339,11 @@ func (r *householdAggregatorRepo) ListSharedThreads(ctx context.Context, househo
 }
 
 // positionValueExpr is the SQL fragment that prices one position into its
-// owner's primary currency. Shared between AllocationByKind, NetWorthSeries,
-// and AccountBalances so a future price-source change touches one spot.
-// References: positions p, users u, prices pr. For NetWorthSeries the
-// trailing as_of bound is replaced via the asOfBound parameter.
+// owner's primary currency. Used by AccountBalances (the per-account
+// breakdown still values in each owner's currency). The net-worth trend and
+// allocation rollups now value through the shared valuation derivation (#282)
+// instead, so an unpriced asset surfaces as incomplete rather than $0.
+// References: positions p, users u, prices pr.
 const positionValueExpr = `
 		CASE
 			WHEN p.asset_id = u.primary_currency_asset_id THEN p.quantity
@@ -355,33 +358,36 @@ const positionValueExpr = `
 				), 0)
 		END`
 
-func (r *householdAggregatorRepo) AllocationByKind(ctx context.Context, accountIDs []int64) ([]AllocationBucket, error) {
+func (r *householdAggregatorRepo) ListPositionsForAllocation(ctx context.Context, accountIDs []int64) ([]AllocationPosition, error) {
 	if len(accountIDs) == 0 {
 		return nil, nil
 	}
 	type rawRow struct {
-		Kind  string
-		Value string
+		AssetID  int64
+		Quantity string
+		Kind     string
 	}
 	var rows []rawRow
 	err := r.db.WithContext(ctx).Raw(`
-		SELECT ass.kind AS kind,
-		       COALESCE(SUM(`+fmt.Sprintf(positionValueExpr, "")+`), 0)::text AS value
+		SELECT p.asset_id  AS asset_id,
+		       p.quantity::text AS quantity,
+		       ass.kind    AS kind
 		FROM positions p
 		JOIN accounts a ON a.id = p.account_id AND a.deleted_at IS NULL
-		JOIN users    u ON u.id = p.user_id
 		JOIN assets   ass ON ass.id = p.asset_id
 		WHERE p.deleted_at IS NULL AND p.account_id IN ?
-		GROUP BY ass.kind
-		ORDER BY ass.kind
+		ORDER BY ass.kind, p.asset_id
 	`, accountIDs).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
-	out := make([]AllocationBucket, 0, len(rows))
+	out := make([]AllocationPosition, 0, len(rows))
 	for _, row := range rows {
-		v, _ := decimal.NewFromString(row.Value)
-		out = append(out, AllocationBucket{Kind: row.Kind, Value: v})
+		q, err := decimal.NewFromString(row.Quantity)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, AllocationPosition{AssetID: row.AssetID, Quantity: q, Kind: row.Kind})
 	}
 	return out, nil
 }
