@@ -128,16 +128,27 @@ export function useScopedInsights(): Result {
 }
 
 async function loadPersonal(): Promise<InsightsData> {
-  const [summary, trend, portfolio, budgets, goals, accountsResp, categories] =
-    await Promise.all([
-      getDashboardSummary('current_month'),
-      getNetWorth(12),
-      getPortfolioSummary(),
-      listBudgets(),
-      listGoals(),
-      listAccounts({}),
-      listCategories(),
-    ])
+  // Portfolio summary is fetched alongside the required calls but tolerated
+  // via allSettled. The personal portfolio endpoint was removed per
+  // ADR-0013 — its position-based replacement lands in #238. Until then a
+  // missing Allocation band must not break the rest of Insights.
+  const [
+    summary,
+    trend,
+    budgets,
+    goals,
+    accountsResp,
+    categories,
+    portfolioResult,
+  ] = await Promise.all([
+    getDashboardSummary('current_month'),
+    getNetWorth(12),
+    listBudgets(),
+    listGoals(),
+    listAccounts({}),
+    listCategories(),
+    getPortfolioSummary().catch(() => null),
+  ])
 
   // Per-budget spend — fan out, drop silently on row failures so one
   // missing spend doesn't blank the band.
@@ -172,11 +183,13 @@ async function loadPersonal(): Promise<InsightsData> {
     spending: summary.spending,
     by_category: summary.by_category,
     net_worth_trend: trend.map((p) => ({ date: p.date.slice(0, 10), value: p.total })),
-    allocation: portfolio.by_asset_class.map((a) => ({
-      kind: a.asset_class,
-      value: a.market_value,
-      weight_pct: a.weight_pct,
-    })),
+    allocation: portfolioResult
+      ? portfolioResult.by_asset_class.map((a) => ({
+          kind: a.asset_class,
+          value: a.market_value,
+          weight_pct: a.weight_pct,
+        }))
+      : [],
     budgets: budgetRows,
     goals: goals.map((g) => ({
       id: g.id,
