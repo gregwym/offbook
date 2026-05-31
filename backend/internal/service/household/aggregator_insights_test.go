@@ -60,6 +60,23 @@ func insertPrice(t *testing.T, g *gorm.DB, assetID, quoteAssetID int64, price st
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Price{}, p.ID) })
 }
 
+// seedHoldingTxn seeds a ledger transaction (asset + kind) so the household
+// net-worth trend can fold quantity per asset over time (#282).
+func seedHoldingTxn(t *testing.T, g *gorm.DB, userID, accountID, assetID int64, kind string, date time.Time, amount string) {
+	t.Helper()
+	tx := &model.Transaction{
+		UserID: userID, AccountID: accountID, AssetID: assetID,
+		Kind:            kind,
+		Amount:          decimal.RequireFromString(amount),
+		TransactionDate: date,
+		Source:          "manual",
+	}
+	if err := g.Create(tx).Error; err != nil {
+		t.Fatalf("seed holding txn: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Transaction{}, tx.ID) })
+}
+
 // TestAggregator_Allocation rolls cash + equity into kind buckets and
 // verifies private accounts are excluded.
 func TestAggregator_Allocation(t *testing.T) {
@@ -230,47 +247,37 @@ func TestAggregator_NetWorthTrend(t *testing.T) {
 	hh := seedHouseholdRow(t, g, ownerID, "NWT", 30)
 	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
 
-	// Account holds 100 USD + 50 EUR. EUR price history shifts mid-window.
+	// Account holds 100 USD + 50 EUR from the start of the year (ledger fold,
+	// constant quantity). EUR price appears mid-window and rises.
 	acct := seedAccount(t, g, ownerID, "mixed")
-	upsertPosition(t, g, ownerID, acct.ID, usd, "100")
-	upsertPosition(t, g, ownerID, acct.ID, eur, "50")
+	seedHoldingTxn(t, g, ownerID, acct.ID, usd, model.KindOpeningBalance, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), "100")
+	seedHoldingTxn(t, g, ownerID, acct.ID, eur, model.KindOpeningBalance, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), "50")
 	setShare(t, g, acct.ID, hh.ID, model.VisibilityBalanceAndTxns)
 
-	// 60 days ago: EUR 1.0 → net worth 150.
-	// 10 days ago: EUR 2.0 → net worth 200.
-	insertPrice(t, g, eur, usd, "1.0", time.Now().Add(-60*24*time.Hour))
-	insertPrice(t, g, eur, usd, "2.0", time.Now().Add(-10*24*time.Hour))
+	// No EUR price in March; 1.0 in April, 2.0 in May.
+	insertPrice(t, g, eur, usd, "1.0", time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC))
+	insertPrice(t, g, eur, usd, "2.0", time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC))
 
-	// Freeze the clock so the window is deterministic.
-	now := time.Now().UTC()
-	agg.SetClock(func() time.Time { return now })
+	// Freeze the clock so the month-end grid is deterministic.
+	agg.SetClock(func() time.Time { return time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) })
 
-	out, err := agg.NetWorthTrend(ctx, hh.ID, 3) // 3 months
+	out, err := agg.NetWorthTrend(ctx, hh.ID, 3) // Mar, Apr, May
 	if err != nil {
 		t.Fatalf("NetWorthTrend: %v", err)
 	}
-	if len(out) < 30 {
-		t.Fatalf("len(out) = %d, want at least 30 points", len(out))
+	if len(out) != 3 {
+		t.Fatalf("len(out) = %d, want 3 month-end points", len(out))
 	}
-	// First point: prior to any price → 100 (USD only).
-	if out[0].Value != "100" {
-		t.Errorf("first point = %q, want 100 (EUR has no price yet → contributes 0)", out[0].Value)
+	// March: EUR unpriced → incomplete, USD-only 100.
+	if out[0].Value != "100" || out[0].Complete {
+		t.Errorf("March point = {%s complete:%v}, want {100 false} (EUR unpriced)", out[0].Value, out[0].Complete)
 	}
-	// Some middle point after the 1.0 price → 150.
-	var saw150, saw200 bool
-	for _, p := range out {
-		if p.Value == "150" {
-			saw150 = true
-		}
-		if p.Value == "200" {
-			saw200 = true
-		}
+	// April: 100 + 50×1.0 = 150. May: 100 + 50×2.0 = 200.
+	if out[1].Value != "150" || !out[1].Complete {
+		t.Errorf("April point = {%s complete:%v}, want {150 true}", out[1].Value, out[1].Complete)
 	}
-	if !saw150 {
-		t.Errorf("trend never reaches 150 (EUR=1.0 era)")
-	}
-	if !saw200 {
-		t.Errorf("trend never reaches 200 (EUR=2.0 era)")
+	if out[2].Value != "200" || !out[2].Complete {
+		t.Errorf("May point = {%s complete:%v}, want {200 true}", out[2].Value, out[2].Complete)
 	}
 }
 
@@ -288,13 +295,12 @@ func TestAggregator_NetWorthTrend_InGraceExcluded(t *testing.T) {
 
 	ownerAcct := seedAccount(t, g, ownerID, "owner")
 	leaverAcct := seedAccount(t, g, leaverID, "leaver")
-	upsertPosition(t, g, ownerID, ownerAcct.ID, usd, "100")
-	upsertPosition(t, g, leaverID, leaverAcct.ID, usd, "9999")
+	seedHoldingTxn(t, g, ownerID, ownerAcct.ID, usd, model.KindOpeningBalance, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), "100")
+	seedHoldingTxn(t, g, leaverID, leaverAcct.ID, usd, model.KindOpeningBalance, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), "9999")
 	setShare(t, g, ownerAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
 	setShare(t, g, leaverAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
 
-	now := time.Now().UTC()
-	agg.SetClock(func() time.Time { return now })
+	agg.SetClock(func() time.Time { return time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) })
 	out, err := agg.NetWorthTrend(ctx, hh.ID, 1)
 	if err != nil {
 		t.Fatalf("NetWorthTrend: %v", err)

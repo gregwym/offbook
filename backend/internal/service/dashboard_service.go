@@ -193,7 +193,7 @@ func (s *DashboardService) NetWorth(ctx context.Context, userID int64, months in
 		return nil, err
 	}
 
-	asOfs := monthEndGrid(s.now().UTC(), months)
+	asOfs := valuation.MonthEndGrid(s.now(), months)
 	// Any-age prices are acceptable for a historical trend; the freshness
 	// gate exists to flag a stale *current* price, not to blank out history.
 	series, err := s.val.WithStaleWindow(0).Series(ctx, asOfs, user.PrimaryCurrencyAssetID,
@@ -213,21 +213,6 @@ func (s *DashboardService) NetWorth(ctx context.Context, userID int64, months in
 		})
 	}
 	return out, nil
-}
-
-// monthEndGrid returns the last-instant-of-month for the trailing `months`
-// months ending in now's month, oldest first. Each boundary is 23:59:59.999…
-// UTC of the month's last day so a price/transaction dated anywhere that day
-// is included.
-func monthEndGrid(now time.Time, months int) []time.Time {
-	startMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -months+1, 0)
-	out := make([]time.Time, 0, months)
-	for i := 0; i < months; i++ {
-		firstOfNext := startMonth.AddDate(0, i+1, 0)
-		monthEnd := firstOfNext.Add(-time.Nanosecond)
-		out = append(out, monthEnd)
-	}
-	return out
 }
 
 // TradeSummary is the AI-context view of a user's trade activity over

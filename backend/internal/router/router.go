@@ -111,6 +111,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	aggregator := household.NewAggregator(
 		repository.NewHouseholdAggregatorRepository(gormDB),
 		householdRepo,
+		valuationSvc,
 	)
 	aggregatorHandler := handler.NewHouseholdAggregatorHandler(aggregator, memberRepo)
 

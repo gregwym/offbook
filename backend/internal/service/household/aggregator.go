@@ -10,6 +10,7 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
+	"github.com/gregwym/offbook/backend/internal/service/valuation"
 )
 
 // Aggregator is the SINGLE cross-user reader for household surfaces. Per
@@ -28,16 +29,19 @@ import (
 type Aggregator struct {
 	repo       repository.HouseholdAggregatorRepository
 	households repository.HouseholdRepository
+	val        *valuation.Service
 	now        func() time.Time
 }
 
 func NewAggregator(
 	repo repository.HouseholdAggregatorRepository,
 	households repository.HouseholdRepository,
+	val *valuation.Service,
 ) *Aggregator {
 	return &Aggregator{
 		repo:       repo,
 		households: households,
+		val:        val,
 		now:        time.Now,
 	}
 }
@@ -149,11 +153,14 @@ type AssetClassAllocation struct {
 }
 
 // NetWorthPoint is one (date, value) row of the household net-worth trend.
-// Date is the UTC calendar day; Value is the rolled-up net worth across
-// shared accounts owned by live members at that day.
+// Date is the month-end instant; Value is the rolled-up net worth across
+// shared accounts owned by live members at that point, in the household quote
+// currency. Complete is false when an asset held at that month-end had no
+// available price — Value is then a partial sum (#282), not a silent $0.
 type NetWorthPoint struct {
-	Date  time.Time `json:"date"`
-	Value string    `json:"value"`
+	Date     time.Time `json:"date"`
+	Value    string    `json:"value"`
+	Complete bool      `json:"complete"`
 }
 
 // AccountSummary is one row of the household account breakdown. Aggregator
@@ -469,12 +476,13 @@ func (a *Aggregator) Allocation(ctx context.Context, householdID int64) ([]Asset
 	return out, nil
 }
 
-// NetWorthTrend returns a daily net-worth series for the trailing `months`
-// calendar months ending at the aggregator's clock. Uses CURRENT positions
-// × historical prices — for a household that holds the same securities
-// today as it did 6 months ago, the curve traces price movement, not
-// rebalancing. (M10b's trade ingestion lays the foundation for a
-// quantity-history view; this one is the foundation.)
+// NetWorthTrend returns a month-end net-worth series for the trailing `months`
+// calendar months ending at the aggregator's clock, via the unified valuation
+// derivation (#282) — identical to the personal trend for the same account set
+// + quote currency. At each month-end, quantity per asset is the transaction
+// fold across the shared account set up to that date (ADR-0017), priced at
+// that date in the household quote currency. A month-end with an unpriced asset
+// is reported incomplete rather than silently understated.
 //
 // Defaults: months ≤ 0 → 12. Excludes private accounts and in-grace members
 // — same lifecycle rules as Dashboard/Allocation.
@@ -496,15 +504,32 @@ func (a *Aggregator) NetWorthTrend(ctx context.Context, householdID int64, month
 		return nil, fmt.Errorf("list shares: %w", err)
 	}
 	accountIDs := filterAccountsByUsers(shares, liveUserIDs)
-	now := a.now().UTC()
-	from := now.AddDate(0, -months, 0)
-	points, err := a.repo.NetWorthSeries(ctx, accountIDs, from, now)
+
+	quoteAssetID, err := a.repo.HouseholdQuoteAssetID(ctx, householdID)
+	if err != nil {
+		return nil, fmt.Errorf("household quote currency: %w", err)
+	}
+
+	// Same derivation + grid as the personal trend (valuation.Series over a
+	// month-end grid), differing only in the account set (shared accounts of
+	// live members) and quote currency (#282). positionsAt folds transactions
+	// across the shared set up to each month-end — historical quantity from
+	// the ledger, not today's positions.
+	asOfs := valuation.MonthEndGrid(a.now(), months)
+	series, err := a.val.WithStaleWindow(0).Series(ctx, asOfs, quoteAssetID,
+		func(ctx context.Context, asOf time.Time) ([]model.Position, error) {
+			return a.repo.FoldByAccountSetAsOf(ctx, accountIDs, asOf)
+		})
 	if err != nil {
 		return nil, fmt.Errorf("net worth series: %w", err)
 	}
-	out := make([]NetWorthPoint, 0, len(points))
-	for _, p := range points {
-		out = append(out, NetWorthPoint{Date: p.Date, Value: p.Value.String()})
+	out := make([]NetWorthPoint, 0, len(series))
+	for _, p := range series {
+		out = append(out, NetWorthPoint{
+			Date:     p.AsOf,
+			Value:    p.Value.String(),
+			Complete: p.Complete(),
+		})
 	}
 	return out, nil
 }
