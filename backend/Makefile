@@ -19,7 +19,7 @@ HEALTH_URL  = http://localhost:$(PORT)/api/v1/health
 # DATABASE_URL on either if you need to point at a non-local Postgres.
 TEST_DATABASE_URL ?= postgres://offbook:offbook@localhost:5432/offbook_test?sslmode=disable
 
-.PHONY: help dev stop restart smoke test test-v test-fast lint vet build verify clean routes logs
+.PHONY: help dev stop restart smoke test test-v test-fast lint vet build verify contract-check clean routes logs
 
 help:
 	@echo "make dev        - start backend (stops any previous instance first)"
@@ -32,7 +32,8 @@ help:
 	@echo "make lint       - golangci-lint via Docker"
 	@echo "make vet        - go vet ./..."
 	@echo "make build      - go build ./..."
-	@echo "make verify     - full CI mirror: backend vet+test, frontend lint+build"
+	@echo "make verify     - full CI mirror: contract-check, backend vet+test, frontend lint+build"
+	@echo "make contract-check - assert every frontend apiClient URL maps to a registered backend route (#273)"
 	@echo "make routes     - print routes from the last server log"
 	@echo "make logs       - tail $(LOGFILE)"
 
@@ -94,6 +95,8 @@ build:
 # Full CI mirror. Run before opening a PR if you want to catch CI failures
 # locally. Skips frontend if ../frontend doesn't exist (early-milestone safety).
 verify:
+	@echo "== contract check =="
+	@$(MAKE) contract-check
 	@echo "== backend vet =="
 	@go vet ./...
 	@echo "== backend lint =="
@@ -112,6 +115,12 @@ verify:
 
 routes:
 	@grep "GIN-debug" $(LOGFILE) || echo "no routes logged yet (try: make smoke)"
+
+# Asserts every apiClient.<method>('<path>') in frontend/src/api/*.ts maps
+# to a registered backend route. Sub-second, no DB, no compose stack.
+# Catches the bug class behind #266 / #268 — see epic #270.
+contract-check:
+	@go run ./cmd/contract-check
 
 logs:
 	@tail -f $(LOGFILE)

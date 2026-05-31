@@ -12,6 +12,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Sub-second static check (#273) — every apiClient.<method>('<path>')
+  # in frontend/src/api/*.ts must map to a registered backend handler
+  # route. Catches the bug class behind #266 / #268: backend route
+  # removed without migrating frontend callers. No DB or stack needed.
+  contract-check:
+    name: Contract check (frontend↔backend routes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Run contract-check
+        working-directory: backend
+        run: go run ./cmd/contract-check
+
   backend-lint:
     name: Backend lint (golangci-lint)
     runs-on: ubuntu-latest
