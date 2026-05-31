@@ -157,11 +157,46 @@ func (s *AccountService) Get(ctx context.Context, userID, id int64) (*model.Acco
 		}
 		return nil, err
 	}
+	if err := s.hydrateCurrency(ctx, a); err != nil {
+		return nil, err
+	}
 	return a, nil
 }
 
 func (s *AccountService) List(ctx context.Context, userID int64, f repository.AccountFilter) ([]model.Account, int64, error) {
-	return s.repo.List(ctx, userID, f)
+	accounts, total, err := s.repo.List(ctx, userID, f)
+	if err != nil {
+		return nil, 0, err
+	}
+	ptrs := make([]*model.Account, len(accounts))
+	for i := range accounts {
+		ptrs[i] = &accounts[i]
+	}
+	if err := s.hydrateCurrency(ctx, ptrs...); err != nil {
+		return nil, 0, err
+	}
+	return accounts, total, nil
+}
+
+// hydrateCurrency fills each account's derived Currency from its primary
+// quote asset's symbol (#284 — currency is no longer a stored column). One
+// asset-table read serves any number of accounts, so List stays O(1) queries.
+func (s *AccountService) hydrateCurrency(ctx context.Context, accts ...*model.Account) error {
+	if len(accts) == 0 {
+		return nil
+	}
+	assets, err := s.assetRepo.List(ctx)
+	if err != nil {
+		return fmt.Errorf("load assets for currency: %w", err)
+	}
+	symbolByID := make(map[int64]string, len(assets))
+	for _, a := range assets {
+		symbolByID[a.ID] = a.Symbol
+	}
+	for _, a := range accts {
+		a.Currency = symbolByID[a.PrimaryQuoteAssetID]
+	}
+	return nil
 }
 
 func (s *AccountService) Update(ctx context.Context, userID, id int64, in UpdateAccountInput) (*model.Account, error) {
@@ -170,6 +205,11 @@ func (s *AccountService) Update(ctx context.Context, userID, id int64, in Update
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrAccountNotFound
 		}
+		return nil, err
+	}
+	// Populate the derived Currency from the asset so the "currency changed?"
+	// check below and the response reflect the existing value (#284).
+	if err := s.hydrateCurrency(ctx, a); err != nil {
 		return nil, err
 	}
 
