@@ -114,6 +114,7 @@ func (r *budgetRepo) SpendByCategoryInRange(ctx context.Context, userID int64, c
 		  AND user_id = ?
 		  AND category_id IN ?
 		  AND is_transfer = FALSE
+		  AND kind NOT IN ('opening_balance', 'adjustment')
 		  AND transaction_date >= ?
 		  AND transaction_date <  ?
 		GROUP BY category_id
@@ -145,6 +146,7 @@ func (r *budgetRepo) CurrentPeriodSpend(ctx context.Context, userID, categoryID 
 		  AND user_id = ?
 		  AND category_id = ?
 		  AND is_transfer = FALSE
+		  AND kind NOT IN ('opening_balance', 'adjustment')
 		  AND transaction_date >= ?
 		  AND transaction_date <  ?
 	`, userID, categoryID, from, to).Scan(&s).Error
