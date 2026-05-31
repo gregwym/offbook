@@ -32,6 +32,11 @@ type AccountRepository interface {
 	// account_id, scoped to userID. Returns ErrNotFound when no row exists.
 	// Used by the Plaid discovery flow to make sync re-runs idempotent.
 	FindByPlaidAccountID(ctx context.Context, userID int64, plaidAccountID string) (*model.Account, error)
+	// ListByPlaidItemID returns every non-deleted account belonging to a
+	// Plaid item, scoped to userID. Used by the sync path to reconcile each
+	// account's cash position after a transactions drain — including
+	// accounts that had no transactions in the current window.
+	ListByPlaidItemID(ctx context.Context, userID int64, plaidItemID string) ([]model.Account, error)
 }
 
 // ErrNotFound is returned by repository methods when no matching row exists.
@@ -122,6 +127,17 @@ func (r *accountRepo) FindByPlaidAccountID(ctx context.Context, userID int64, pl
 		return nil, err
 	}
 	return &a, nil
+}
+
+func (r *accountRepo) ListByPlaidItemID(ctx context.Context, userID int64, plaidItemID string) ([]model.Account, error) {
+	var out []model.Account
+	if err := r.db.WithContext(ctx).
+		Where("user_id = ? AND plaid_item_id = ?", userID, plaidItemID).
+		Order("id").
+		Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *accountRepo) SoftDelete(ctx context.Context, userID, id int64) error {

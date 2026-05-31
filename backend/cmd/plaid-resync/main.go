@@ -87,6 +87,16 @@ func main() {
 		piiSvc, mapper, gormDB,
 	).WithRuleRepo(repository.NewCategorizationRuleRepository(gormDB))
 
+	// Refresh accounts first so each cash position carries Plaid's current
+	// balance before SyncTransactions reconciles the fold against it
+	// (ADR-0017). Skipping this would reconcile against a stale balance and
+	// emit a spurious adjustment that cancels the freshly-synced flows.
+	ar, err := svc.SyncAccounts(context.Background(), userID, plaidItemID)
+	if err != nil {
+		log.Fatalf("sync-accounts: %v", err)
+	}
+	fmt.Printf("accounts: created=%d updated=%d\n", ar.Created, ar.Updated)
+
 	r, err := svc.SyncTransactions(context.Background(), userID, plaidItemID)
 	if err != nil {
 		log.Fatalf("sync: %v", err)
