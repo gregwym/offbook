@@ -37,5 +37,17 @@ services:
       - frontend
     restart: unless-stopped
 
+  # Restart-policy overlays on the app services. The base docker-compose.yml
+  # leaves these unset (`no`) so the hot-reload dev workflow can bring
+  # containers up/down deliberately. When you're composing with this file
+  # you're running a long-lived deployment — surviving a Colima/Docker
+  # restart should not require manual intervention.
+  postgres:
+    restart: unless-stopped
+  backend:
+    restart: unless-stopped
+  frontend:
+    restart: unless-stopped
+
 volumes:
   tailscale_state:
