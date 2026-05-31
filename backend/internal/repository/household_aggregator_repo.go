@@ -438,14 +438,15 @@ func (r *householdAggregatorRepo) AccountBalances(ctx context.Context, accountID
 		SELECT a.id           AS account_id,
 		       a.name         AS name,
 		       a.account_type AS account_type,
-		       a.currency     AS currency,
+		       qa.symbol      AS currency,
 		       a.user_id      AS owner_user_id,
 		       COALESCE(SUM(`+fmt.Sprintf(positionValueExpr, "")+`), 0)::text AS balance
 		FROM accounts a
-		JOIN users     u ON u.id = a.user_id
+		JOIN users     u  ON u.id = a.user_id
+		JOIN assets    qa ON qa.id = a.primary_quote_asset_id
 		LEFT JOIN positions p ON p.deleted_at IS NULL AND p.account_id = a.id
 		WHERE a.deleted_at IS NULL AND a.id IN ?
-		GROUP BY a.id, a.name, a.account_type, a.currency, a.user_id
+		GROUP BY a.id, a.name, a.account_type, qa.symbol, a.user_id
 		ORDER BY a.id
 	`, accountIDs).Scan(&rows).Error
 	if err != nil {

@@ -11,12 +11,16 @@ import (
 // currency — never read from a stored balance column. AccountType is a
 // display hint (which UI to render), not a data-shape switch.
 type Account struct {
-	ID                  int64          `gorm:"primaryKey" json:"id"`
-	UserID              int64          `gorm:"not null" json:"user_id"`
-	Name                string         `gorm:"not null" json:"name"`
-	InstitutionSlug     string         `gorm:"not null" json:"institution_slug"`
-	AccountType         string         `gorm:"not null" json:"account_type"`
-	Currency            string         `gorm:"not null;default:USD" json:"currency"`
+	ID              int64  `gorm:"primaryKey" json:"id"`
+	UserID          int64  `gorm:"not null" json:"user_id"`
+	Name            string `gorm:"not null" json:"name"`
+	InstitutionSlug string `gorm:"not null" json:"institution_slug"`
+	AccountType     string `gorm:"not null" json:"account_type"`
+	// Currency is derived, not stored (#284). The single source of truth is
+	// PrimaryQuoteAssetID; for a fiat asset assets.symbol IS the currency
+	// code. gorm:"-" keeps it out of reads/writes; the service hydrates it
+	// from the asset on read, and Create/Update set it from the request.
+	Currency            string         `gorm:"-" json:"currency"`
 	PrimaryQuoteAssetID int64          `gorm:"column:primary_quote_asset_id;not null" json:"primary_quote_asset_id"`
 	LastFour            *string        `json:"last_four,omitempty"`
 	PlaidAccountID      *string        `gorm:"column:plaid_account_id" json:"plaid_account_id,omitempty"`

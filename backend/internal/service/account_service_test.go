@@ -253,3 +253,34 @@ func tcSuffix(i int) string {
 	const letters = "abcdefghijklmnopqrstuvwxyz"
 	return string(letters[i%len(letters)]) + time.Now().Format("150405.000000")
 }
+
+// TestAccountService_CurrencyDerivedFromAsset proves currency is no longer a
+// stored column (#284): after Create, Get/List resolve it from the account's
+// primary quote asset symbol, not a persisted accounts.currency value.
+func TestAccountService_CurrencyDerivedFromAsset(t *testing.T) {
+	svc, userID, _ := newAccountSvc(t)
+	ctx := context.Background()
+
+	in := validInput(tcSuffix(0))
+	in.Currency = "EUR"
+	created, err := svc.Create(ctx, userID, in)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if created.Currency != "EUR" {
+		t.Errorf("create response currency = %q, want EUR", created.Currency)
+	}
+
+	// Read back via the service — currency must be hydrated from the asset,
+	// since the accounts.currency column no longer exists.
+	got, err := svc.Get(ctx, userID, created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Currency != "EUR" {
+		t.Errorf("get currency = %q, want EUR (derived from primary_quote_asset)", got.Currency)
+	}
+	if got.PrimaryQuoteAssetID == 0 {
+		t.Error("primary_quote_asset_id not set")
+	}
+}
