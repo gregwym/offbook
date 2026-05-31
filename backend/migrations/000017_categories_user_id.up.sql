@@ -6,8 +6,15 @@ BEGIN;
 --
 -- NULL user_id = system category (the seeded taxonomy); non-null = owned by
 -- that user. is_system is retained and stays equivalent to (user_id IS NULL).
+--
+-- No FK to users(id) yet, deliberately: a categories→users FK makes the test
+-- suite's `TRUNCATE users ... CASCADE` also wipe the seeded system categories
+-- (and plaid_category_map, which FKs to categories), breaking unrelated
+-- packages. The FK is added with category CRUD (the real trigger), when the
+-- reset harness can be hardened to re-seed reference data. Until then user_id
+-- is a plain nullable column.
 ALTER TABLE categories
-    ADD COLUMN user_id BIGINT REFERENCES users(id);
+    ADD COLUMN user_id BIGINT;
 
 -- Slug uniqueness becomes per-owner. COALESCE(user_id, 0) buckets all system
 -- categories under owner "0" (real user ids start at 1), so system slugs stay
