@@ -100,6 +100,11 @@ type TransactionRepository interface {
 	// already exists for the (account, asset) pair. The first reconciling
 	// write is an opening_balance anchor; later ones are adjustments.
 	HasReconcilingTxn(ctx context.Context, userID, accountID, assetID int64) (bool, error)
+	// DistinctAccountAssetPairs returns every (account_id, asset_id) pair that
+	// has at least one non-deleted transaction for the user. Used by the
+	// positions rebuild to materialize positions.quantity = Σ amount per pair
+	// (ADR-0017) — proving positions is a pure fold of the ledger.
+	DistinctAccountAssetPairs(ctx context.Context, userID int64) ([]AccountAssetPair, error)
 	// ListForCategorizationScope returns a chunk of non-deleted transactions
 	// for the user, ordered by id ASC for cursor-style pagination. Callers
 	// drive a loop by passing the last returned row's id as afterID on the
@@ -428,6 +433,26 @@ func (r *transactionRepo) FoldQuantity(ctx context.Context, userID, accountID, a
 		return decimal.Zero, err
 	}
 	return d, nil
+}
+
+// AccountAssetPair identifies one (account, asset) position key. Returned by
+// DistinctAccountAssetPairs for the positions rebuild.
+type AccountAssetPair struct {
+	AccountID int64
+	AssetID   int64
+}
+
+func (r *transactionRepo) DistinctAccountAssetPairs(ctx context.Context, userID int64) ([]AccountAssetPair, error) {
+	var out []AccountAssetPair
+	if err := r.db.WithContext(ctx).
+		Model(&model.Transaction{}).
+		Distinct("account_id", "asset_id").
+		Where("user_id = ? AND deleted_at IS NULL", userID).
+		Order("account_id, asset_id").
+		Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *transactionRepo) HasReconcilingTxn(ctx context.Context, userID, accountID, assetID int64) (bool, error) {
