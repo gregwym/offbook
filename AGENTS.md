@@ -12,6 +12,7 @@
 - Full stack: `docker compose up`
 - Migrations: `cd backend && go run ./cmd/migrate {up|down|down-all|version|force <ver>}` (uses `.env`)
 - Migration files: name as `migrations/{NNNNNN}_{slug}.{up|down}.sql`, 6-digit zero-padded sequence
+- **After adding/changing a migration, run `cd backend && command make schema`** to regenerate [`docs/db/schema.md`](docs/db/schema.md) (a deterministic catalog report — the readable view of the current schema) and commit it in the same PR. The `Schema report up-to-date` CI job (and `make schema-check`, which runs inside `make verify`) fails if it drifts. Never hand-edit `schema.md`.
 
 When running via Claude's Bash tool, prefix `make` with `command` (`command make dev`) — a zsh autoload stub in the shell snapshot shadows the binary. Interactive shells are unaffected.
 
