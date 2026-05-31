@@ -16,11 +16,11 @@ import (
 	"log"
 	"time"
 
-	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
+	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/valuation"
 )
 
@@ -363,10 +363,13 @@ func (s *Service) SyncHoldings(ctx context.Context, userID int64, plaidItemID st
 	result := HoldingsReconcileResult{Holdings: len(snapshot.Holdings)}
 	accountIDCache := map[string]accountRef{}
 
+	now := time.Now().UTC()
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		acctRepo := repository.NewAccountRepository(tx)
 		posRepo := repository.NewPositionRepository(tx)
 		priceRepo := repository.NewPriceRepository(tx)
+		txRepo := repository.NewTransactionRepository(tx)
+		obsRepo := repository.NewBalanceObservationRepository(tx)
 
 		for _, h := range snapshot.Holdings {
 			ref, err := resolveAccount(ctx, acctRepo, userID, h.PlaidAccountID, accountIDCache)
@@ -379,20 +382,25 @@ func (s *Service) SyncHoldings(ctx context.Context, userID int64, plaidItemID st
 				continue
 			}
 
-			// Compare with what's there now. Re-derive via Recompute
-			// only on disagreement; if Plaid agrees with our position
-			// row we skip the recompute.
+			// Reconcile the holding quantity into the ledger (ADR-0017):
+			// Plaid's snapshot is the reported truth, and ReconcilePosition
+			// writes an opening_balance anchor (first encounter / no trade
+			// legs) or a typed adjustment (drift from trade-derived fold) for
+			// the delta — never a synthetic *trade*. After it returns the fold
+			// equals h.Quantity, so the position upsert below keeps
+			// positions.quantity == Σ transactions.amount for this asset.
 			existing, err := findLivePosition(ctx, tx, userID, ref.ID, assetID)
 			if err != nil {
 				return err
 			}
-			derivedQty := decimal.Zero
-			if existing != nil {
-				derivedQty = existing.Quantity
+			rec, err := service.ReconcilePosition(ctx, txRepo, obsRepo,
+				userID, ref.ID, assetID, h.Quantity, now, "plaid")
+			if err != nil {
+				return fmt.Errorf("plaid: reconcile holding (acct=%d asset=%d): %w", ref.ID, assetID, err)
 			}
-			if !derivedQty.Equal(h.Quantity) {
-				log.Printf("plaid: holdings reconcile drift (acct=%d asset=%d derived=%s plaid=%s) — adopting Plaid; no synthetic txns",
-					ref.ID, assetID, derivedQty.String(), h.Quantity.String())
+			if rec != nil {
+				log.Printf("plaid: holdings reconcile drift (acct=%d asset=%d plaid=%s) — wrote %s of %s",
+					ref.ID, assetID, h.Quantity.String(), rec.Kind, rec.Amount.String())
 				result.PositionsAdjusted++
 			}
 			pos := &model.Position{

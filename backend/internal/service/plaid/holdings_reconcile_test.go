@@ -149,14 +149,19 @@ func seedHoldingsFixture(t *testing.T, g *gorm.DB, snapshotQty decimal.Decimal) 
 	return svc, userID, accountID, aaplID, item
 }
 
-// TestSyncHoldings_AdjustsPositionWithoutSyntheticTxns covers the
-// ADR-0013 §3 invariant: when Plaid's snapshot disagrees with our
-// derived position, we update the position to match Plaid but
-// DO NOT insert any synthetic trade rows to bridge the gap.
-func TestSyncHoldings_AdjustsPositionWithoutSyntheticTxns(t *testing.T) {
+// TestSyncHoldings_ReconcilesViaLedgerNotSyntheticTrades covers the ADR-0017
+// refinement of ADR-0013 §3: when Plaid's snapshot disagrees with our derived
+// fold, we make Σ transactions == the snapshot by writing an explicit, typed
+// reconciling row (opening_balance here — the fold starts at 0) and adopt the
+// snapshot as the position quantity. The invariant is "never invent a *trade*":
+// no flow / trade_leg row may be fabricated to bridge the gap.
+func TestSyncHoldings_ReconcilesViaLedgerNotSyntheticTrades(t *testing.T) {
 	g := openPlaidTestDB(t)
 	svc, userID, accountID, aaplID, item := seedHoldingsFixture(t, g, decimal.NewFromInt(8))
 	ctx := context.Background()
+	t.Cleanup(func() {
+		g.Unscoped().Where("user_id = ?", userID).Delete(&model.AccountBalanceObservation{})
+	})
 
 	// Before: 0 transactions for this user on this account.
 	var beforeCount int64
@@ -173,7 +178,7 @@ func TestSyncHoldings_AdjustsPositionWithoutSyntheticTxns(t *testing.T) {
 		t.Errorf("Holdings = %d, want 1", res.Holdings)
 	}
 	if res.PositionsAdjusted != 1 {
-		t.Errorf("PositionsAdjusted = %d, want 1 (10 → 8)", res.PositionsAdjusted)
+		t.Errorf("PositionsAdjusted = %d, want 1 (fold 0 → 8)", res.PositionsAdjusted)
 	}
 	if res.PricesObserved != 1 {
 		t.Errorf("PricesObserved = %d, want 1", res.PricesObserved)
@@ -189,11 +194,36 @@ func TestSyncHoldings_AdjustsPositionWithoutSyntheticTxns(t *testing.T) {
 		t.Errorf("quantity = %s, want 8 (Plaid snapshot wins)", pos.Quantity)
 	}
 
-	// Critical invariant: NO synthetic transactions inserted.
-	var afterCount int64
-	g.Model(&model.Transaction{}).Where("user_id = ?", userID).Count(&afterCount)
-	if afterCount != 0 {
-		t.Errorf("synthesized %d transactions during reconciliation — invariant violation", afterCount)
+	// The reconciling row is an opening_balance of 8, source=system — and the
+	// fold now equals the position. NO trade leg was invented.
+	txRepo := repository.NewTransactionRepository(g)
+	fold, err := txRepo.FoldQuantity(ctx, userID, accountID, aaplID)
+	if err != nil {
+		t.Fatalf("fold: %v", err)
+	}
+	if !fold.Equal(decimal.NewFromInt(8)) {
+		t.Errorf("fold = %s, want 8 (== position)", fold)
+	}
+	var recon []model.Transaction
+	if err := g.Where("user_id = ? AND account_id = ? AND asset_id = ?", userID, accountID, aaplID).
+		Find(&recon).Error; err != nil {
+		t.Fatalf("load recon txns: %v", err)
+	}
+	if len(recon) != 1 {
+		t.Fatalf("transactions for holding = %d, want 1 (single opening_balance anchor)", len(recon))
+	}
+	if recon[0].Kind != model.KindOpeningBalance || recon[0].Source != "system" {
+		t.Errorf("recon row = {kind:%s source:%s}, want {opening_balance system}", recon[0].Kind, recon[0].Source)
+	}
+	if !recon[0].Amount.Equal(decimal.NewFromInt(8)) {
+		t.Errorf("recon amount = %s, want 8", recon[0].Amount)
+	}
+	var tradeLegs int64
+	g.Model(&model.Transaction{}).
+		Where("user_id = ? AND kind IN ?", userID, []string{model.KindTradeLeg, model.KindFlow}).
+		Count(&tradeLegs)
+	if tradeLegs != 0 {
+		t.Errorf("invented %d trade/flow rows — ADR-0017 forbids synthesizing trades", tradeLegs)
 	}
 
 	// A price observation was written.
@@ -201,5 +231,65 @@ func TestSyncHoldings_AdjustsPositionWithoutSyntheticTxns(t *testing.T) {
 	g.Model(&model.Price{}).Where("asset_id = ?", aaplID).Count(&priceCount)
 	if priceCount != 1 {
 		t.Errorf("price observations for asset %d = %d, want 1", aaplID, priceCount)
+	}
+}
+
+// TestSyncHoldings_DriftAfterAnchorWritesAdjustment proves the trust-feed
+// path: once an anchor exists for the asset, a snapshot that differs from the
+// fold produces an adjustment for the residual (not a second opening_balance)
+// and adopts the snapshot. This mirrors a holding whose quantity drifts
+// between two syncs.
+func TestSyncHoldings_DriftAfterAnchorWritesAdjustment(t *testing.T) {
+	g := openPlaidTestDB(t)
+	// Plaid reports 8 shares.
+	svc, userID, accountID, aaplID, item := seedHoldingsFixture(t, g, decimal.NewFromInt(8))
+	ctx := context.Background()
+	t.Cleanup(func() {
+		g.Unscoped().Where("user_id = ?", userID).Delete(&model.AccountBalanceObservation{})
+	})
+
+	// Simulate a prior sync that established an opening_balance anchor of 10,
+	// so the fold is 10 before this run. Plaid's 8 is then a -2 drift.
+	anchorDesc := "Opening balance"
+	anchor := &model.Transaction{
+		UserID:          userID,
+		AccountID:       accountID,
+		AssetID:         aaplID,
+		Kind:            model.KindOpeningBalance,
+		Amount:          decimal.NewFromInt(10),
+		Description:     &anchorDesc,
+		TransactionDate: time.Now().UTC(),
+		Source:          "system",
+	}
+	if err := g.Create(anchor).Error; err != nil {
+		t.Fatalf("seed anchor: %v", err)
+	}
+
+	if _, err := svc.SyncHoldings(ctx, userID, item.PlaidItemID); err != nil {
+		t.Fatalf("SyncHoldings: %v", err)
+	}
+
+	txRepo := repository.NewTransactionRepository(g)
+	fold, err := txRepo.FoldQuantity(ctx, userID, accountID, aaplID)
+	if err != nil {
+		t.Fatalf("fold: %v", err)
+	}
+	if !fold.Equal(decimal.NewFromInt(8)) {
+		t.Errorf("fold = %s, want 8 (10 leg − 2 adjustment)", fold)
+	}
+	var adj []model.Transaction
+	if err := g.Where("user_id = ? AND kind = ?", userID, model.KindAdjustment).Find(&adj).Error; err != nil {
+		t.Fatalf("load adjustments: %v", err)
+	}
+	if len(adj) != 1 || !adj[0].Amount.Equal(decimal.NewFromInt(-2)) {
+		t.Fatalf("adjustments = %+v, want a single -2 row", adj)
+	}
+	// Exactly one opening_balance row — the seeded anchor; SyncHoldings did
+	// not write a second one.
+	var openings int64
+	g.Model(&model.Transaction{}).
+		Where("user_id = ? AND kind = ?", userID, model.KindOpeningBalance).Count(&openings)
+	if openings != 1 {
+		t.Errorf("opening_balance rows = %d, want 1 (the pre-existing anchor only)", openings)
 	}
 }
