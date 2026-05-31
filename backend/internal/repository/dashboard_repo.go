@@ -73,14 +73,6 @@ type CashFlowMonth struct {
 	Net     decimal.Decimal
 }
 
-// NetWorthMonth is one row of the net-worth trend chart. Date is the
-// month-end day (e.g. 2026-05-31 for May 2026). Total is the
-// back-derived account-balance total at that point.
-type NetWorthMonth struct {
-	Date  time.Time
-	Total decimal.Decimal
-}
-
 // DashboardRepository runs the read-only aggregation queries that power the
 // dashboard. All queries are scoped to the requesting user_id.
 type DashboardRepository interface {
@@ -93,11 +85,6 @@ type DashboardRepository interface {
 	// calendar months ending at the month containing `now`. Income/outflow
 	// are positive; transfers excluded.
 	CashFlowByMonth(ctx context.Context, userID int64, now time.Time, months int) ([]CashFlowMonth, error)
-	// NetWorthByMonth returns approximated month-end account totals for the
-	// last `months` months ending at `now`. The current month's row uses
-	// the current persisted balance; older months back-derive by undoing
-	// transactions between the row's month-end and now.
-	NetWorthByMonth(ctx context.Context, userID int64, now time.Time, months int) ([]NetWorthMonth, error)
 	// TradeSummaryByKind aggregates security-leg counts and gross
 	// notional (|security qty × latest_price_to_primary|) over [from, to),
 	// grouped by the asset's kind ('equity', 'crypto', …). Fiat legs are
@@ -318,75 +305,6 @@ func (r *dashboardRepo) CashFlowByMonth(ctx context.Context, userID int64, now t
 		} else {
 			out = append(out, CashFlowMonth{Month: m, Inflow: decimal.Zero, Outflow: decimal.Zero, Net: decimal.Zero})
 		}
-	}
-	return out, nil
-}
-
-// NetWorthByMonth approximates month-end balances by walking backwards
-// from the current persisted total. Methodology: today's net worth is the
-// sum of live accounts.balance. Subtract all transactions dated after
-// month-end to back-derive the balance at month-end.
-//
-// This is an approximation — non-transactional balance changes (manual
-// edits to accounts.balance, currency conversion gaps, etc.) won't be
-// reflected. Documented in the chart caption. A future enhancement could
-// snapshot daily balances; for M5 this gets us a trendline.
-func (r *dashboardRepo) NetWorthByMonth(ctx context.Context, userID int64, now time.Time, months int) ([]NetWorthMonth, error) {
-	if months <= 0 {
-		months = 12
-	}
-	now = now.UTC()
-	// Current net worth, computed from positions × latest prices per ADR-0013.
-	var cur string
-	if err := r.db.WithContext(ctx).Raw(netWorthQuery, userID).Scan(&cur).Error; err != nil {
-		return nil, err
-	}
-	curD, _ := decimal.NewFromString(cur)
-
-	// Month boundaries: monthEnd[i] is the last day of the i-th month
-	// (oldest first). For "last 12 months ending now", the newest row is
-	// the current month-end (today's date capped at month-end).
-	startMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -months+1, 0)
-	out := make([]NetWorthMonth, 0, months)
-	for i := 0; i < months; i++ {
-		first := startMonth.AddDate(0, i, 0)
-		// Day before next month-first = month-end.
-		monthEnd := first.AddDate(0, 1, 0).AddDate(0, 0, -1)
-		out = append(out, NetWorthMonth{Date: monthEnd})
-	}
-
-	// For every month, sum transactions with transaction_date > monthEnd
-	// → those are the moves that happened between that point and now.
-	// Subtract from current total. We issue ONE query that fetches all
-	// transactions newer than the oldest month boundary, then bucket in Go.
-	type txRow struct {
-		Date   time.Time
-		Amount string
-	}
-	var txns []txRow
-	if err := r.db.WithContext(ctx).Raw(`
-		SELECT transaction_date AS date, amount::text AS amount
-		FROM transactions
-		WHERE deleted_at IS NULL
-		  AND user_id = ?
-		  AND transaction_date > ?
-	`, userID, out[0].Date).Scan(&txns).Error; err != nil {
-		return nil, err
-	}
-
-	// Compute cumulative "since" sum per boundary by sorting boundaries and
-	// transactions, walking through. For len(out) ≤ 24 a quadratic loop
-	// is fine; not bothering to optimize.
-	for i := range out {
-		boundary := out[i].Date
-		undo := decimal.Zero
-		for _, t := range txns {
-			if t.Date.UTC().After(boundary) {
-				amt, _ := decimal.NewFromString(t.Amount)
-				undo = undo.Add(amt)
-			}
-		}
-		out[i].Total = curD.Sub(undo)
 	}
 	return out, nil
 }

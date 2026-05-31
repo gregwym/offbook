@@ -11,6 +11,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/service/valuation"
 	"github.com/gregwym/offbook/backend/internal/testutil"
 )
 
@@ -29,9 +30,47 @@ func newDashboardSvc(t *testing.T) (svc *service.DashboardService, userID, accou
 		g.Unscoped().Where("account_id = ?", acc.ID).Delete(&model.Transaction{})
 		g.Unscoped().Delete(&model.Account{}, acc.ID)
 	})
-	svc = service.NewDashboardService(repository.NewDashboardRepository(g))
+	svc = service.NewDashboardService(
+		repository.NewDashboardRepository(g),
+		repository.NewTransactionRepository(g),
+		repository.NewUserRepository(g),
+		valuation.NewService(
+			repository.NewPositionRepository(g),
+			repository.NewPriceRepository(g),
+			repository.NewAssetRepository(g),
+			repository.NewAccountRepository(g),
+		),
+	)
 	svc.SetClock(func() time.Time { return time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) })
 	return svc, userID, acc.ID, g
+}
+
+// seedNetWorthTxn seeds a ledger transaction carrying an explicit asset + kind,
+// so the unified net-worth trend can fold quantity per asset over time.
+func seedNetWorthTxn(t *testing.T, g *gorm.DB, userID, accountID, assetID int64, kind string, date time.Time, amount string) {
+	t.Helper()
+	tx := &model.Transaction{
+		UserID: userID, AccountID: accountID, AssetID: assetID,
+		Kind:            kind,
+		Amount:          decimal.RequireFromString(amount),
+		TransactionDate: date,
+		Source:          "manual",
+	}
+	if err := g.Create(tx).Error; err != nil {
+		t.Fatalf("seed net-worth txn: %v", err)
+	}
+}
+
+func insertNetWorthPrice(t *testing.T, g *gorm.DB, assetID, quoteAssetID int64, price string, asOf time.Time) {
+	t.Helper()
+	p := &model.Price{
+		AssetID: assetID, QuoteAssetID: quoteAssetID,
+		Price: decimal.RequireFromString(price), AsOf: asOf, Source: "test",
+	}
+	if err := g.Create(p).Error; err != nil {
+		t.Fatalf("seed price: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Price{}, p.ID) })
 }
 
 func seedChartTxn(t *testing.T, g *gorm.DB, userID, accountID int64, categoryID *int64, date time.Time, amt decimal.Decimal, isTransfer bool) {
@@ -173,23 +212,18 @@ func TestDashboard_CashFlow_EmptyMonthsPaddedZeros(t *testing.T) {
 // outflows ($-100 each) happened on May 5 and May 10. The month-end
 // rows for April and earlier should back-derive to $1200 (current +
 // undone $200 of spending).
-func TestDashboard_NetWorth_BackDerives(t *testing.T) {
+// TestDashboard_NetWorth_TradeStepsWithFlatPrices: with prices flat (USD cash,
+// quote == asset), the trend steps only when the quantity fold changes. An
+// opening balance plus a later inflow produce a step at the inflow's month.
+func TestDashboard_NetWorth_TradeStepsWithFlatPrices(t *testing.T) {
 	svc, userID, accountID, g := newDashboardSvc(t)
 	ctx := context.Background()
-
-	// Seed a position at 1000 USD — newDashboardSvc creates the account
-	// with no positions. Per ADR-0013, balance is derived from positions.
 	usdID := testutil.LookupUSDAssetID(t, g)
-	if err := g.Exec(
-		`INSERT INTO positions (user_id, account_id, asset_id, quantity, updated_at)
-		 VALUES (?, ?, ?, 1000, NOW())
-		 ON CONFLICT (account_id, asset_id) WHERE deleted_at IS NULL
-		 DO UPDATE SET quantity = EXCLUDED.quantity, updated_at = NOW()`,
-		userID, accountID, usdID).Error; err != nil {
-		t.Fatalf("seed position: %v", err)
-	}
-	seedChartTxn(t, g, userID, accountID, nil, time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-100), false)
-	seedChartTxn(t, g, userID, accountID, nil, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-100), false)
+
+	// Opening balance of 1000 in February (before the window), then +500 in
+	// April. Fold: Mar-end 1000, Apr-end 1500, May-end 1500.
+	seedNetWorthTxn(t, g, userID, accountID, usdID, model.KindOpeningBalance, time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), "1000")
+	seedNetWorthTxn(t, g, userID, accountID, usdID, model.KindFlow, time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC), "500")
 
 	rows, err := svc.NetWorth(ctx, userID, 3) // March, April, May
 	if err != nil {
@@ -198,18 +232,49 @@ func TestDashboard_NetWorth_BackDerives(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("got %d rows, want 3", len(rows))
 	}
-	// rows[0] = March 2026 end (2026-03-31): subtract all transactions
-	// after that → -200 worth of outflows → balance at end-March was 1200.
-	// rows[1] = April 2026 end (2026-04-30): same, also 1200 (no April txns).
-	// rows[2] = May 2026 end (2026-05-31): no txns after that → 1000.
-	if rows[0].Total != "1200" {
-		t.Errorf("March 2026 net worth = %s, want 1200", rows[0].Total)
+	want := []string{"1000", "1500", "1500"}
+	for i, w := range want {
+		if rows[i].Total != w {
+			t.Errorf("row[%d] (%s) total = %s, want %s", i, rows[i].Date, rows[i].Total, w)
+		}
+		if !rows[i].Complete {
+			t.Errorf("row[%d] expected complete (USD == primary, always priced)", i)
+		}
 	}
-	if rows[1].Total != "1200" {
-		t.Errorf("April 2026 net worth = %s, want 1200", rows[1].Total)
+}
+
+// TestDashboard_NetWorth_PriceMovesWithNoTrades: holding a constant quantity of
+// a non-primary asset, the trend moves purely with that asset's price — and a
+// month-end before any price exists is reported incomplete, not silently $0.
+func TestDashboard_NetWorth_PriceMovesWithNoTrades(t *testing.T) {
+	svc, userID, accountID, g := newDashboardSvc(t)
+	ctx := context.Background()
+	usdID := testutil.LookupUSDAssetID(t, g)
+	eurID := testutil.LookupAssetID(t, g, "EUR", "fiat")
+
+	// Hold 100 EUR from January on — quantity never changes.
+	seedNetWorthTxn(t, g, userID, accountID, eurID, model.KindOpeningBalance, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), "100")
+	// No EUR price in March; price appears in April and rises in May.
+	insertNetWorthPrice(t, g, eurID, usdID, "1.20", time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC))
+	insertNetWorthPrice(t, g, eurID, usdID, "1.50", time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC))
+
+	rows, err := svc.NetWorth(ctx, userID, 3) // March, April, May
+	if err != nil {
+		t.Fatalf("NetWorth: %v", err)
 	}
-	if rows[2].Total != "1000" {
-		t.Errorf("May 2026 net worth = %s, want 1000", rows[2].Total)
+	if len(rows) != 3 {
+		t.Fatalf("got %d rows, want 3", len(rows))
+	}
+	// March: no EUR price → unpriced → incomplete, partial total 0.
+	if rows[0].Complete || rows[0].Total != "0" {
+		t.Errorf("March row = {total:%s complete:%v}, want {0 false} (EUR unpriced)", rows[0].Total, rows[0].Complete)
+	}
+	// April: 100 × 1.20 = 120; May: 100 × 1.50 = 150 — moving with price.
+	if rows[1].Total != "120" || !rows[1].Complete {
+		t.Errorf("April row = {total:%s complete:%v}, want {120 true}", rows[1].Total, rows[1].Complete)
+	}
+	if rows[2].Total != "150" || !rows[2].Complete {
+		t.Errorf("May row = {total:%s complete:%v}, want {150 true}", rows[2].Total, rows[2].Complete)
 	}
 }
 
@@ -226,7 +291,13 @@ func TestDashboard_NetWorth_TenantIsolation(t *testing.T) {
 	if err := g.Create(accB).Error; err != nil {
 		t.Fatalf("seed B: %v", err)
 	}
-	t.Cleanup(func() { g.Unscoped().Delete(&model.Account{}, accB.ID) })
+	t.Cleanup(func() {
+		g.Unscoped().Where("account_id = ?", accB.ID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, accB.ID)
+	})
+	// User B has real money; the fold must stay user-scoped.
+	usdID := testutil.LookupUSDAssetID(t, g)
+	seedNetWorthTxn(t, g, userB, accB.ID, usdID, model.KindOpeningBalance, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), "9999")
 
 	rows, err := svc.NetWorth(ctx, userA, 3)
 	if err != nil {

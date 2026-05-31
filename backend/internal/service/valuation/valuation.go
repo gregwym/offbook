@@ -58,12 +58,15 @@ func NewService(
 	}
 }
 
-// WithStaleWindow overrides the default 7-day tolerance. Pass a
-// non-positive value to disable the staleness check entirely (used
-// by the historical net-worth trend, where any-age price is fine).
+// WithStaleWindow returns a copy of the service with the stale tolerance
+// overridden. Pass a non-positive value to disable the staleness check
+// entirely (used by the historical net-worth trend, where any-age price is
+// fine). Copy semantics so a historical caller can't disable freshness for a
+// shared instance that also serves current reads.
 func (s *Service) WithStaleWindow(d time.Duration) *Service {
-	s.staleWindow = d
-	return s
+	cp := *s
+	cp.staleWindow = d
+	return &cp
 }
 
 // StaleWindow returns the currently-configured stale window. Useful
@@ -161,6 +164,41 @@ func (s *Service) ValuePositions(ctx context.Context, positions []model.Position
 			return SetValuation{}, err
 		}
 		out.Value = out.Value.Add(v)
+	}
+	return out, nil
+}
+
+// SeriesPoint is one timestamped entry of a valuation series.
+type SeriesPoint struct {
+	AsOf time.Time
+	SetValuation
+}
+
+// Series values a position set at each asOf and returns the aligned series.
+// positionsAt supplies the set for a given instant — current rows for "now",
+// or synthetic rows carrying the historical fold quantity for a past instant.
+// This is the single trend derivation behind both personal and household net
+// worth (#282): callers differ only in the positionsAt closure (which encodes
+// scope + tenancy) and the quote currency, so the same account set yields the
+// same series. Use WithStaleWindow(0) for historical points where any-age
+// prices are acceptable.
+func (s *Service) Series(
+	ctx context.Context,
+	asOfs []time.Time,
+	quoteAssetID int64,
+	positionsAt func(context.Context, time.Time) ([]model.Position, error),
+) ([]SeriesPoint, error) {
+	out := make([]SeriesPoint, 0, len(asOfs))
+	for _, asOf := range asOfs {
+		positions, err := positionsAt(ctx, asOf)
+		if err != nil {
+			return nil, err
+		}
+		val, err := s.ValuePositions(ctx, positions, asOf, quoteAssetID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, SeriesPoint{AsOf: asOf, SetValuation: val})
 	}
 	return out, nil
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/service/auth"
 	"github.com/gregwym/offbook/backend/internal/service/household"
 	plaidsvc "github.com/gregwym/offbook/backend/internal/service/plaid"
+	"github.com/gregwym/offbook/backend/internal/service/valuation"
 )
 
 func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
@@ -65,7 +66,8 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	ruleHandler := handler.NewCategorizationRuleHandler(ruleSvc)
 
 	dashboardRepo := repository.NewDashboardRepository(gormDB)
-	dashboardSvc := service.NewDashboardService(dashboardRepo)
+	valuationSvc := valuation.NewService(positionRepo, priceRepo, assetRepo, accountRepo)
+	dashboardSvc := service.NewDashboardService(dashboardRepo, transactionRepo, userRepo, valuationSvc)
 
 	budgetRepo := repository.NewBudgetRepository(gormDB)
 	budgetSvc := service.NewBudgetService(budgetRepo, categoryRepo)
