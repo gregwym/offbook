@@ -87,6 +87,11 @@ func TestTradeService_Record_Buy_WritesPairAndPositions(t *testing.T) {
 	if !rec.CashLeg.Amount.Equal(decimal.NewFromInt(-1500)) {
 		t.Errorf("cash amount = %s, want -1500", rec.CashLeg.Amount)
 	}
+	// Both legs are classified trade_leg (ADR-0017) — excluded from flow
+	// analytics, included in quantity reconstruction.
+	if rec.SecurityLeg.Kind != model.KindTradeLeg || rec.CashLeg.Kind != model.KindTradeLeg {
+		t.Errorf("leg kinds = (%q, %q), want both %q", rec.SecurityLeg.Kind, rec.CashLeg.Kind, model.KindTradeLeg)
+	}
 	if rec.SecurityPosition == nil || !rec.SecurityPosition.Quantity.Equal(decimal.NewFromInt(10)) {
 		t.Errorf("security position qty = %v, want 10", rec.SecurityPosition)
 	}
