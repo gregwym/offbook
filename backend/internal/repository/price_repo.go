@@ -7,6 +7,7 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // PriceRepository is the data-access contract for the prices time series.
@@ -23,10 +24,12 @@ type PriceRepository interface {
 	// as_of ASC, within [from, to). Used by the net-worth trend chart.
 	ListHistory(ctx context.Context, assetID, quoteAssetID int64, from, to time.Time) ([]model.Price, error)
 
-	// Insert appends one price observation. Callers de-dupe on
-	// (asset_id, quote_asset_id, as_of, source) at the application layer
-	// when needed — the index doesn't enforce uniqueness because the same
-	// (asset, quote, as_of) may come from multiple sources.
+	// Insert appends one price observation, idempotently. The unique index
+	// uq_prices_asset_quote_asof_source keys on
+	// (asset_id, quote_asset_id, as_of, source), so re-ingesting the same
+	// observation upserts the price in place rather than duplicating the row.
+	// The same (asset, quote, as_of) may still come from multiple sources —
+	// those don't conflict.
 	Insert(ctx context.Context, p *model.Price) error
 }
 
@@ -64,5 +67,16 @@ func (r *priceRepo) ListHistory(ctx context.Context, assetID, quoteAssetID int64
 }
 
 func (r *priceRepo) Insert(ctx context.Context, p *model.Price) error {
-	return r.db.WithContext(ctx).Create(p).Error
+	// Idempotent on the unique key (asset_id, quote_asset_id, as_of, source):
+	// a re-ingest from the same source updates the price in place. Multiple
+	// sources for the same instant remain distinct rows.
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "asset_id"}, {Name: "quote_asset_id"},
+				{Name: "as_of"}, {Name: "source"},
+			},
+			DoUpdates: clause.AssignmentColumns([]string{"price"}),
+		}).
+		Create(p).Error
 }
