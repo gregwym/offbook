@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
+	"github.com/gregwym/offbook/backend/internal/service/valuation"
 )
 
 // Supported period keys for ?period=
@@ -67,20 +69,32 @@ type CashFlowMonth struct {
 	Net     string `json:"net"`
 }
 
-// NetWorthPoint mirrors repository.NetWorthMonth for the API.
+// NetWorthPoint is one month-end of the net-worth trend. Complete is false
+// when at least one held asset had no available price at that month-end, so
+// Total is a partial sum (#282) — the UI can flag "incomplete" rather than
+// present a confident-but-wrong figure.
 type NetWorthPoint struct {
-	Date  string `json:"date"`
-	Total string `json:"total"`
+	Date     string `json:"date"`
+	Total    string `json:"total"`
+	Complete bool   `json:"complete"`
 }
 
 // DashboardService composes the summary from the dashboard repo.
 type DashboardService struct {
-	repo repository.DashboardRepository
-	now  func() time.Time // injected so tests can fix the clock
+	repo  repository.DashboardRepository
+	txns  repository.TransactionRepository
+	users repository.UserRepository
+	val   *valuation.Service
+	now   func() time.Time // injected so tests can fix the clock
 }
 
-func NewDashboardService(repo repository.DashboardRepository) *DashboardService {
-	return &DashboardService{repo: repo, now: time.Now}
+func NewDashboardService(
+	repo repository.DashboardRepository,
+	txns repository.TransactionRepository,
+	users repository.UserRepository,
+	val *valuation.Service,
+) *DashboardService {
+	return &DashboardService{repo: repo, txns: txns, users: users, val: val, now: time.Now}
 }
 
 // SetClock overrides the time source. Tests use this; production callers
@@ -164,24 +178,56 @@ func (s *DashboardService) CashFlow(ctx context.Context, userID int64, months in
 	return out, nil
 }
 
-// NetWorth returns the trailing `months` months of back-derived month-end
-// totals. Defaults to 12.
+// NetWorth returns the trailing `months` months of month-end net worth,
+// computed by the unified valuation derivation (#282): at each month-end the
+// quantity held per asset is the transaction fold up to that date, priced at
+// that date's rate in the user's primary currency. This replaces the old
+// back-derivation, which subtracted raw transaction amounts across differing
+// assets (shares vs dollars) from a constant present-day total. Defaults to 12.
 func (s *DashboardService) NetWorth(ctx context.Context, userID int64, months int) ([]NetWorthPoint, error) {
 	if months <= 0 {
 		months = 12
 	}
-	rows, err := s.repo.NetWorthByMonth(ctx, userID, s.now(), months)
+	user, err := s.users.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]NetWorthPoint, 0, len(rows))
-	for _, r := range rows {
+
+	asOfs := monthEndGrid(s.now().UTC(), months)
+	// Any-age prices are acceptable for a historical trend; the freshness
+	// gate exists to flag a stale *current* price, not to blank out history.
+	series, err := s.val.WithStaleWindow(0).Series(ctx, asOfs, user.PrimaryCurrencyAssetID,
+		func(ctx context.Context, asOf time.Time) ([]model.Position, error) {
+			return s.txns.FoldByUserAsOf(ctx, userID, asOf)
+		})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]NetWorthPoint, 0, len(series))
+	for _, p := range series {
 		out = append(out, NetWorthPoint{
-			Date:  r.Date.Format("2006-01-02"),
-			Total: r.Total.String(),
+			Date:     p.AsOf.Format("2006-01-02"),
+			Total:    p.Value.String(),
+			Complete: p.Complete(),
 		})
 	}
 	return out, nil
+}
+
+// monthEndGrid returns the last-instant-of-month for the trailing `months`
+// months ending in now's month, oldest first. Each boundary is 23:59:59.999…
+// UTC of the month's last day so a price/transaction dated anywhere that day
+// is included.
+func monthEndGrid(now time.Time, months int) []time.Time {
+	startMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -months+1, 0)
+	out := make([]time.Time, 0, months)
+	for i := 0; i < months; i++ {
+		firstOfNext := startMonth.AddDate(0, i+1, 0)
+		monthEnd := firstOfNext.Add(-time.Nanosecond)
+		out = append(out, monthEnd)
+	}
+	return out
 }
 
 // TradeSummary is the AI-context view of a user's trade activity over

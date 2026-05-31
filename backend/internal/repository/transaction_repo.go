@@ -105,6 +105,13 @@ type TransactionRepository interface {
 	// positions rebuild to materialize positions.quantity = Σ amount per pair
 	// (ADR-0017) — proving positions is a pure fold of the ledger.
 	DistinctAccountAssetPairs(ctx context.Context, userID int64) ([]AccountAssetPair, error)
+	// FoldByUserAsOf returns one synthetic position per asset for the user:
+	// quantity = Σ non-deleted transactions.amount with transaction_date <=
+	// asOf, across all the user's accounts. Assets folding to zero are
+	// omitted. Used by the unified net-worth trend (#282) to reconstruct the
+	// quantity held at a past instant from the ledger. AccountID is left zero
+	// — the caller values per asset in a single quote currency.
+	FoldByUserAsOf(ctx context.Context, userID int64, asOf time.Time) ([]model.Position, error)
 	// ListForCategorizationScope returns a chunk of non-deleted transactions
 	// for the user, ordered by id ASC for cursor-style pagination. Callers
 	// drive a loop by passing the last returned row's id as afterID on the
@@ -451,6 +458,35 @@ func (r *transactionRepo) DistinctAccountAssetPairs(ctx context.Context, userID 
 		Order("account_id, asset_id").
 		Find(&out).Error; err != nil {
 		return nil, err
+	}
+	return out, nil
+}
+
+func (r *transactionRepo) FoldByUserAsOf(ctx context.Context, userID int64, asOf time.Time) ([]model.Position, error) {
+	type row struct {
+		AssetID int64
+		Qty     string
+	}
+	var rows []row
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT asset_id, COALESCE(SUM(amount), 0)::text AS qty
+		FROM transactions
+		WHERE deleted_at IS NULL
+		  AND user_id = ?
+		  AND transaction_date <= ?
+		GROUP BY asset_id
+		HAVING COALESCE(SUM(amount), 0) <> 0
+		ORDER BY asset_id
+	`, userID, asOf).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]model.Position, 0, len(rows))
+	for _, r := range rows {
+		q, err := decimal.NewFromString(r.Qty)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, model.Position{UserID: userID, AssetID: r.AssetID, Quantity: q})
 	}
 	return out, nil
 }
