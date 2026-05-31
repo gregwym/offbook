@@ -24,7 +24,6 @@ const TransactionsPage = lazy(() => import('./pages/TransactionsPage').then((m) 
 const RulesPage = lazy(() => import('./pages/RulesPage').then((m) => ({ default: m.RulesPage })))
 const BudgetsPage = lazy(() => import('./pages/BudgetsPage').then((m) => ({ default: m.BudgetsPage })))
 const SavingsGoalsPage = lazy(() => import('./pages/SavingsGoalsPage').then((m) => ({ default: m.SavingsGoalsPage })))
-const InvestmentsPage = lazy(() => import('./pages/InvestmentsPage').then((m) => ({ default: m.InvestmentsPage })))
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const HouseholdMembersPage = lazy(() => import('./pages/HouseholdMembersPage').then((m) => ({ default: m.HouseholdMembersPage })))
 const HouseholdSettingsPage = lazy(() => import('./pages/HouseholdSettingsPage').then((m) => ({ default: m.HouseholdSettingsPage })))
@@ -72,7 +71,10 @@ export default function App() {
           <Route path="/rules" element={<LazyRoute><RulesPage /></LazyRoute>} />
           <Route path="/budgets" element={<LazyRoute><BudgetsPage /></LazyRoute>} />
           <Route path="/savings-goals" element={<LazyRoute><SavingsGoalsPage /></LazyRoute>} />
-          <Route path="/investments" element={<LazyRoute><InvestmentsPage /></LazyRoute>} />
+          {/* /investments was dissolved per ADR-0013 — allocation moved to
+              Insights, holdings to Accounts, trades to Transactions. Keep
+              the redirect so bookmarks survive (#268). */}
+          <Route path="/investments" element={<Navigate to="/insights" replace />} />
           {/* /ai is deferred in v6 — AI provider config lives in Settings.
               Redirect bookmarks to Settings rather than 404. */}
           <Route path="/ai" element={<Navigate to="/settings" replace />} />

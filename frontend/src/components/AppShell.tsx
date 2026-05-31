@@ -7,7 +7,6 @@ import {
   Receipt,
   Settings,
   Target,
-  TrendingUp,
   Users,
   Wallet,
   X,
@@ -23,17 +22,18 @@ type NavItem = { to: string; label: string; icon: typeof LayoutDashboard }
 
 // Personal-scope routes — mutually exclusive with HOUSEHOLD_NAV per
 // .claude/rules/frontend.md (sidebar renders only the active scope's list).
-// v6 §07 names exactly seven surfaces here. "Connect Bank" + "Import"
+// v6 §07 names exactly six surfaces here. "Connect Bank" + "Import"
 // folded into /accounts/add; "Rules" lives within the Transactions flow
 // (create-from-row) rather than a top-level entry; "AI Advisor" deferred
-// — provider config lives in Settings.
+// — provider config lives in Settings. "Investments" dissolved per
+// ADR-0013 — allocation lives on Insights, holdings on Accounts, trades
+// in Transactions (#268).
 const PERSONAL_NAV: NavItem[] = [
   { to: '/insights',      label: 'Insights',      icon: LayoutDashboard },
   { to: '/accounts',      label: 'Accounts',      icon: Wallet },
   { to: '/transactions',  label: 'Transactions',  icon: Receipt },
   { to: '/budgets',       label: 'Budgets',       icon: Target },
   { to: '/savings-goals', label: 'Goals',         icon: PiggyBank },
-  { to: '/investments',   label: 'Investments',   icon: TrendingUp },
   { to: '/settings',      label: 'Settings',      icon: Settings },
 ]
 
