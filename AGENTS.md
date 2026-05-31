@@ -82,6 +82,11 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 - Instead: `gh issue create --title "..." --body "..." --label backlog`
 - Then return to current work
 
+## Frontend↔Backend Contract Discipline
+- **Removing a backend route requires removing or migrating every frontend caller in the same PR.** Bugs #266 and #268 both shipped because a route was deleted in isolation (M10a/#240 dropped the `/investments` wiring per ADR-0013) and the frontend kept calling it. Before deleting a handler or its Register call, grep `frontend/src/api/*.ts` for the URL string. If the replacement lands in a follow-on PR (e.g. ADR-0013 → M10b #238), either redirect the caller to the new route, render an explicit empty state, or temporarily wrap the call in `.catch(...)` so the page degrades — never leave a frontend caller pointed at a 404.
+- `make contract-check` (and the `Contract check` CI job) enforces this mechanically: every `apiClient.<method>('<path>')` in `frontend/src/api/*.ts` must map to a registered backend route. The check is sub-second and runs first inside `make verify`. If it fails, fix the contract — never silence the check.
+- The full layered test-gap plan that produced this rule lives in epic #270.
+
 ## Scopes & Households (M2.5+)
 - Every domain row (account, transaction, budget, savings goal, investment, AI thread) carries `user_id NOT NULL`. Always derive `user_id` from the session, never trust it in the request body.
 - Two scopes per user: **personal** (own book) and **household** (shared). Mutually exclusive route lists. Default at login: `household` if member of one, else `personal`. Persists per user in `users.last_scope`.
