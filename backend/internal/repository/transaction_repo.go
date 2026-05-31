@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -91,6 +92,14 @@ type TransactionRepository interface {
 	// by the cost-basis recompute, which walks the entire trade history
 	// per (account, asset) and folds quantities + cash legs together.
 	ListByAccountAndAsset(ctx context.Context, userID, accountID, assetID int64) ([]model.Transaction, error)
+	// FoldQuantity returns Σ amount over non-deleted transactions for the
+	// (account, asset) pair — the quantity the position should equal
+	// (ADR-0017). Returns 0 when there are no rows.
+	FoldQuantity(ctx context.Context, userID, accountID, assetID int64) (decimal.Decimal, error)
+	// HasReconcilingTxn reports whether an opening_balance or adjustment row
+	// already exists for the (account, asset) pair. The first reconciling
+	// write is an opening_balance anchor; later ones are adjustments.
+	HasReconcilingTxn(ctx context.Context, userID, accountID, assetID int64) (bool, error)
 	// ListForCategorizationScope returns a chunk of non-deleted transactions
 	// for the user, ordered by id ASC for cursor-style pagination. Callers
 	// drive a loop by passing the last returned row's id as afterID on the
@@ -402,6 +411,36 @@ func (r *transactionRepo) ListByAccountAndAsset(ctx context.Context, userID, acc
 		return nil, err
 	}
 	return out, nil
+}
+
+func (r *transactionRepo) FoldQuantity(ctx context.Context, userID, accountID, assetID int64) (decimal.Decimal, error) {
+	var s string
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(amount), 0)::text
+		FROM transactions
+		WHERE deleted_at IS NULL
+		  AND user_id = ? AND account_id = ? AND asset_id = ?
+	`, userID, accountID, assetID).Scan(&s).Error; err != nil {
+		return decimal.Zero, err
+	}
+	d, err := decimal.NewFromString(s)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	return d, nil
+}
+
+func (r *transactionRepo) HasReconcilingTxn(ctx context.Context, userID, accountID, assetID int64) (bool, error) {
+	var n int64
+	if err := r.db.WithContext(ctx).
+		Model(&model.Transaction{}).
+		Where("user_id = ? AND account_id = ? AND asset_id = ? AND kind IN ?",
+			userID, accountID, assetID, []string{model.KindOpeningBalance, model.KindAdjustment}).
+		Limit(1).
+		Count(&n).Error; err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (r *transactionRepo) SoftDelete(ctx context.Context, userID, id int64) error {
