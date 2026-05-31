@@ -582,6 +582,8 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 		itemRepo := repository.NewPlaidItemRepository(tx)
 		acctRepo := repository.NewAccountRepository(tx)
 		syncErrRepo := repository.NewPlaidSyncErrorRepository(tx)
+		obsRepo := repository.NewBalanceObservationRepository(tx)
+		posRepo := repository.NewPositionRepository(tx)
 		accountIDCache := map[string]accountRef{}
 		spIdx := 0
 
@@ -801,6 +803,17 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 			}
 		}
 
+		// Reconcile each account's cash position against the transaction
+		// fold (ADR-0017). SyncAccounts maintains positions.quantity =
+		// Plaid's reported balance; now that this drain's flows are folded
+		// in, ReconcilePosition writes an opening_balance anchor (first run)
+		// or an adjustment (later drift) for the delta so
+		// Σ transactions.amount == positions.quantity holds per cash asset.
+		// Runs after all row writes so opening_balance = balance − Σ flows.
+		if err := s.reconcileItemCashPositions(ctx, txRepo, obsRepo, posRepo, acctRepo, userID, plaidItemID); err != nil {
+			return err
+		}
+
 		// Cursor advance — final write inside the same transaction. Always
 		// happens, even when result.Failed > 0: the whole point of the DLQ
 		// is to let good rows commit and let the cursor move past the
@@ -827,6 +840,59 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 		_ = s.itemRepo.UpdateSyncStatus(statusCtx, userID, item.ID, "ok_with_errors", &msg)
 	}
 	return result, nil
+}
+
+// reconcileItemCashPositions makes Σ transactions.amount == positions.quantity
+// hold for every account's cash sleeve after a transactions drain (ADR-0017).
+//
+// For each of the item's accounts it reads the cash position (the position in
+// the account's primary quote asset, which SyncAccounts keeps pinned to
+// Plaid's reported balance) and calls ReconcilePosition with that quantity as
+// the reported truth. The first reconciling row per (account, cash asset) is
+// an opening_balance anchor; later divergence produces an adjustment. Because
+// positions.quantity already equals the reported balance, no position write is
+// needed here — making the fold equal it keeps both in sync.
+//
+// Accounts with no cash position row (e.g. a holdings-only sleeve) are skipped;
+// their non-cash positions are reconciled by SyncHoldings.
+//
+// All repos are bound to the surrounding sync transaction so the observation,
+// fold read, and reconciling write commit atomically with the drain.
+func (s *Service) reconcileItemCashPositions(
+	ctx context.Context,
+	txRepo repository.TransactionRepository,
+	obsRepo repository.BalanceObservationRepository,
+	posRepo repository.PositionRepository,
+	acctRepo repository.AccountRepository,
+	userID int64,
+	plaidItemID string,
+) error {
+	accounts, err := acctRepo.ListByPlaidItemID(ctx, userID, plaidItemID)
+	if err != nil {
+		return fmt.Errorf("plaid: list item accounts for reconcile: %w", err)
+	}
+	now := time.Now().UTC()
+	for _, acct := range accounts {
+		positions, err := posRepo.ListByAccountID(ctx, userID, acct.ID)
+		if err != nil {
+			return fmt.Errorf("plaid: read positions for reconcile (acct=%d): %w", acct.ID, err)
+		}
+		var cash *model.Position
+		for i := range positions {
+			if positions[i].AssetID == acct.PrimaryQuoteAssetID {
+				cash = &positions[i]
+				break
+			}
+		}
+		if cash == nil {
+			continue
+		}
+		if _, err := service.ReconcilePosition(ctx, txRepo, obsRepo,
+			userID, acct.ID, acct.PrimaryQuoteAssetID, cash.Quantity, now, "plaid"); err != nil {
+			return fmt.Errorf("plaid: reconcile cash (acct=%d): %w", acct.ID, err)
+		}
+	}
+	return nil
 }
 
 // accountRef bundles the two values transaction mapping needs from a Plaid
