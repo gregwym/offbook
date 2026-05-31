@@ -143,13 +143,15 @@ type ThreadSummary struct {
 }
 
 // AssetClassAllocation is one row of the household allocation rollup — the
-// total value of shared positions whose asset kind matches, expressed as
-// each owner's primary-currency value. Heterogeneous-currency households
-// surface their primary-currency rollup per position; the wire string keeps
-// NUMERIC precision intact.
+// total value of shared positions whose asset kind matches, in the household
+// quote currency (the owning member's primary currency). The wire string keeps
+// NUMERIC precision intact. Complete is false when at least one position of
+// this kind had no available price, so Value is a partial sum (#282) — the UI
+// can flag the bucket as incomplete rather than understate it silently.
 type AssetClassAllocation struct {
-	Kind  string `json:"kind"`
-	Value string `json:"value"`
+	Kind     string `json:"kind"`
+	Value    string `json:"value"`
+	Complete bool   `json:"complete"`
 }
 
 // NetWorthPoint is one (date, value) row of the household net-worth trend.
@@ -465,13 +467,52 @@ func (a *Aggregator) Allocation(ctx context.Context, householdID int64) ([]Asset
 		return nil, fmt.Errorf("list shares: %w", err)
 	}
 	accountIDs := filterAccountsByUsers(shares, liveUserIDs)
-	buckets, err := a.repo.AllocationByKind(ctx, accountIDs)
+
+	quoteAssetID, err := a.repo.HouseholdQuoteAssetID(ctx, householdID)
 	if err != nil {
-		return nil, fmt.Errorf("allocation by kind: %w", err)
+		return nil, fmt.Errorf("household quote currency: %w", err)
 	}
-	out := make([]AssetClassAllocation, 0, len(buckets))
-	for _, b := range buckets {
-		out = append(out, AssetClassAllocation{Kind: b.Kind, Value: b.Value.String()})
+	positions, err := a.repo.ListPositionsForAllocation(ctx, accountIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list positions for allocation: %w", err)
+	}
+
+	// Value each position through the shared derivation (current snapshot) and
+	// bucket by asset kind. An unpriced position marks its kind incomplete
+	// instead of contributing a silent $0 (#282).
+	now := a.now().UTC()
+	type bucket struct {
+		value    decimal.Decimal
+		complete bool
+		order    int
+	}
+	buckets := map[string]*bucket{}
+	order := 0
+	ensure := func(kind string) *bucket {
+		b, ok := buckets[kind]
+		if !ok {
+			b = &bucket{value: decimal.Zero, complete: true, order: order}
+			order++
+			buckets[kind] = b
+		}
+		return b
+	}
+	for _, p := range positions {
+		b := ensure(p.Kind)
+		v, err := a.val.Value(ctx, model.Position{AssetID: p.AssetID, Quantity: p.Quantity}, now, quoteAssetID)
+		if errors.Is(err, valuation.ErrStalePrice) {
+			b.complete = false
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("value position (asset=%d): %w", p.AssetID, err)
+		}
+		b.value = b.value.Add(v)
+	}
+
+	out := make([]AssetClassAllocation, len(buckets))
+	for kind, b := range buckets {
+		out[b.order] = AssetClassAllocation{Kind: kind, Value: b.value.String(), Complete: b.complete}
 	}
 	return out, nil
 }
