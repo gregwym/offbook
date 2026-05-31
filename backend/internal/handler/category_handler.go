@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/service/auth"
 )
 
 type CategoryHandler struct {
@@ -21,7 +22,8 @@ func (h *CategoryHandler) Register(g *gin.RouterGroup) {
 }
 
 func (h *CategoryHandler) List(c *gin.Context) {
-	cats, err := h.svc.List(c.Request.Context())
+	uid := auth.MustUserID(c.Request.Context())
+	cats, err := h.svc.List(c.Request.Context(), uid)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
 		return
