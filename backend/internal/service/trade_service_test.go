@@ -187,3 +187,30 @@ func TestTradeService_Record_TenantIsolation(t *testing.T) {
 	}
 	_ = userA
 }
+
+// TestTradeService_TradeLegsExcludedFromSpending: a buy's cash leg is
+// kind=trade_leg, so it must not count as spending in flow analytics (#293
+// slice 3 — the flow filter is kind='flow'). Previously trade legs leaked
+// into spending because they set transfer_pair_id but not is_transfer.
+func TestTradeService_TradeLegsExcludedFromSpending(t *testing.T) {
+	svc, userID, accountID, aapl, g := seedTradeFixture(t)
+	ctx := context.Background()
+
+	if _, err := svc.Record(ctx, userID, accountID, service.RecordTradeInput{
+		Kind: "buy", AssetID: aapl,
+		Quantity: decimal.NewFromInt(10), Price: decimal.NewFromInt(150),
+		TradeDate: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	dash := repository.NewDashboardRepository(g)
+	agg, err := dash.Summarize(ctx, userID, time.Now().AddDate(0, -1, 0), time.Now().AddDate(0, 0, 1))
+	if err != nil {
+		t.Fatalf("summarize: %v", err)
+	}
+	// The -1500 cash leg is a trade_leg, not a flow → excluded from spending.
+	if !agg.Spending.IsZero() {
+		t.Errorf("spending = %s, want 0 (trade legs excluded from flow analytics)", agg.Spending)
+	}
+}

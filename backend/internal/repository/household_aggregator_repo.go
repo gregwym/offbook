@@ -209,7 +209,7 @@ func (r *householdAggregatorRepo) PeriodIncomeSpending(ctx context.Context, acco
 		FROM transactions
 		WHERE deleted_at IS NULL
 		  AND account_id IN ?
-		  AND kind NOT IN ('opening_balance', 'adjustment')
+		  AND kind = 'flow'
 		  AND transaction_date >= ?
 		  AND transaction_date <  ?
 	`, accountIDs, from, to).Scan(&ie).Error
@@ -255,7 +255,7 @@ func (r *householdAggregatorRepo) CategoryAggregates(ctx context.Context, accoun
 		LEFT JOIN categories c ON c.id = t.category_id
 		WHERE t.deleted_at IS NULL
 		  AND t.account_id IN ?
-		  AND t.kind NOT IN ('opening_balance', 'adjustment')
+		  AND t.kind = 'flow'
 		  AND t.transaction_date >= ?
 		  AND t.transaction_date <  ?
 		GROUP BY t.category_id, c.name
@@ -291,7 +291,7 @@ func (r *householdAggregatorRepo) SpendingByCategory(ctx context.Context, accoun
 		WHERE deleted_at IS NULL
 		  AND account_id IN ?
 		  AND category_id = ?
-		  AND kind NOT IN ('opening_balance', 'adjustment')
+		  AND kind = 'flow'
 		  AND transaction_date >= ?
 		  AND transaction_date <  ?
 	`, accountIDs, categoryID, from, to).Scan(&s).Error
