@@ -13,8 +13,14 @@ import (
 // for M2 we only need existence checks during transaction validation and a
 // future read for the frontend dropdown (#32).
 type CategoryRepository interface {
+	// GetByID fetches one category by id. Not user-scoped: today every
+	// category is a system row (user_id NULL). When category CRUD lands
+	// (#285), this must gain a user_id filter so a caller can't reference
+	// another user's private category.
 	GetByID(ctx context.Context, id int64) (*model.Category, error)
-	List(ctx context.Context) ([]model.Category, error)
+	// List returns the system taxonomy (user_id NULL) plus the caller's
+	// own categories.
+	List(ctx context.Context, userID int64) ([]model.Category, error)
 }
 
 type categoryRepo struct {
@@ -36,9 +42,11 @@ func (r *categoryRepo) GetByID(ctx context.Context, id int64) (*model.Category, 
 	return &c, nil
 }
 
-func (r *categoryRepo) List(ctx context.Context) ([]model.Category, error) {
+func (r *categoryRepo) List(ctx context.Context, userID int64) ([]model.Category, error) {
 	var out []model.Category
-	if err := r.db.WithContext(ctx).Order("name ASC").Find(&out).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Where("user_id IS NULL OR user_id = ?", userID).
+		Order("name ASC").Find(&out).Error; err != nil {
 		return nil, err
 	}
 	return out, nil

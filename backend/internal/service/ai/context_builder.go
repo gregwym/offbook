@@ -196,7 +196,7 @@ func (b *ContextBuilder) Build(ctx context.Context, userID int64) (*Context, err
 		if err != nil {
 			return nil, fmt.Errorf("ai: list budgets: %w", err)
 		}
-		labels := b.categoryLabels(ctx)
+		labels := b.categoryLabels(ctx, userID)
 		for _, bud := range list {
 			if !bud.IsActive {
 				continue
@@ -262,11 +262,11 @@ func (b *ContextBuilder) Build(ctx context.Context, userID int64) (*Context, err
 // Empty map (rather than error) when the category service is missing or
 // errors — labels are nice-to-have; budget data is the load-bearing
 // signal.
-func (b *ContextBuilder) categoryLabels(ctx context.Context) map[int64]string {
+func (b *ContextBuilder) categoryLabels(ctx context.Context, userID int64) map[int64]string {
 	if b.categories == nil {
 		return map[int64]string{}
 	}
-	cats, err := b.categories.List(ctx)
+	cats, err := b.categories.List(ctx, userID)
 	if err != nil {
 		return map[int64]string{}
 	}

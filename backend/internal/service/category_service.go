@@ -7,9 +7,9 @@ import (
 	"github.com/gregwym/offbook/backend/internal/repository"
 )
 
-// CategoryService is intentionally thin — categories are shared lookup data
-// (seeded in migration 000002) with no per-user ownership. The repository
-// already returns canonically-ordered rows.
+// CategoryService is intentionally thin. Categories are the seeded system
+// taxonomy (migration 000002, user_id NULL) plus any user-owned categories
+// once CRUD ships (#285). List returns system rows plus the caller's own.
 type CategoryService struct {
 	repo repository.CategoryRepository
 }
@@ -18,6 +18,6 @@ func NewCategoryService(repo repository.CategoryRepository) *CategoryService {
 	return &CategoryService{repo: repo}
 }
 
-func (s *CategoryService) List(ctx context.Context) ([]model.Category, error) {
-	return s.repo.List(ctx)
+func (s *CategoryService) List(ctx context.Context, userID int64) ([]model.Category, error) {
+	return s.repo.List(ctx, userID)
 }

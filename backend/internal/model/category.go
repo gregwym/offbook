@@ -7,7 +7,10 @@ import (
 )
 
 type Category struct {
-	ID        int64          `gorm:"primaryKey" json:"id"`
+	ID int64 `gorm:"primaryKey" json:"id"`
+	// UserID owns a user-created category; NULL means a system category
+	// (the seeded taxonomy). Reads are scoped to "user_id IS NULL OR = me".
+	UserID    *int64         `json:"user_id,omitempty"`
 	ParentID  *int64         `json:"parent_id,omitempty"`
 	Name      string         `gorm:"not null" json:"name"`
 	Slug      string         `gorm:"not null" json:"slug"`
