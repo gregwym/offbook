@@ -168,6 +168,25 @@ func (s *Service) ValuePositions(ctx context.Context, positions []model.Position
 	return out, nil
 }
 
+// MonthEndGrid returns the last instant of each of the trailing `months`
+// calendar months ending in now's month, oldest first. Each boundary is the
+// month's final nanosecond in UTC, so a price/transaction dated anywhere that
+// day is included. Shared by personal and household trends so the same account
+// set yields the same asOf grid (#282). months <= 0 defaults to 12.
+func MonthEndGrid(now time.Time, months int) []time.Time {
+	if months <= 0 {
+		months = 12
+	}
+	now = now.UTC()
+	startMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -months+1, 0)
+	out := make([]time.Time, 0, months)
+	for i := 0; i < months; i++ {
+		firstOfNext := startMonth.AddDate(0, i+1, 0)
+		out = append(out, firstOfNext.Add(-time.Nanosecond))
+	}
+	return out
+}
+
 // SeriesPoint is one timestamped entry of a valuation series.
 type SeriesPoint struct {
 	AsOf time.Time

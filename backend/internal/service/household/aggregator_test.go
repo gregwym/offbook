@@ -36,6 +36,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service/household"
+	"github.com/gregwym/offbook/backend/internal/service/valuation"
 )
 
 // newAggregator wires the aggregator the same way router.go does, against
@@ -48,6 +49,12 @@ func newAggregator(t *testing.T) (*household.Aggregator, *gorm.DB) {
 	agg := household.NewAggregator(
 		repository.NewHouseholdAggregatorRepository(g),
 		repository.NewHouseholdRepository(g),
+		valuation.NewService(
+			repository.NewPositionRepository(g),
+			repository.NewPriceRepository(g),
+			repository.NewAssetRepository(g),
+			repository.NewAccountRepository(g),
+		),
 	)
 	return agg, g
 }

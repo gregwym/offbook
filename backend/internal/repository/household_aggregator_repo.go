@@ -77,13 +77,21 @@ type HouseholdAggregatorRepository interface {
 	// primary currency. Empty accountIDs returns nil.
 	AllocationByKind(ctx context.Context, accountIDs []int64) ([]AllocationBucket, error)
 
-	// NetWorthSeries returns one daily net-worth point per day in
-	// [from, to] (inclusive), summing CURRENT positions × historical
-	// prices across accountIDs. Days with no fresh price for a position
-	// contribute 0 for that position — matches the soft-fallback behavior
-	// of the live dashboard query so the chart is renderable even when a
-	// pricing gap exists.
-	NetWorthSeries(ctx context.Context, accountIDs []int64, from, to time.Time) ([]NetWorthPoint, error)
+	// FoldByAccountSetAsOf returns one synthetic position per asset across the
+	// given account set: quantity = Σ non-deleted transactions.amount with
+	// transaction_date <= asOf. Assets folding to zero are omitted. This is the
+	// cross-user dated fold behind the unified household net-worth trend (#282)
+	// — the household analogue of TransactionRepository.FoldByUserAsOf, but
+	// scoped by account set rather than user (the aggregator is the only
+	// blessed cross-user reader). AccountID/UserID are left zero; the caller
+	// values each asset in a single household quote currency.
+	FoldByAccountSetAsOf(ctx context.Context, accountIDs []int64, asOf time.Time) ([]model.Position, error)
+
+	// HouseholdQuoteAssetID returns the asset_id the household's aggregates are
+	// denominated in: the owning member's primary_currency_asset_id. A single
+	// quote per household keeps the net-worth trend from summing across
+	// heterogeneous currencies.
+	HouseholdQuoteAssetID(ctx context.Context, householdID int64) (int64, error)
 
 	// AccountBalances returns one row per account in accountIDs with the
 	// account's current balance in its owner's primary currency. Missing
@@ -97,14 +105,6 @@ type HouseholdAggregatorRepository interface {
 // quote per position.
 type AllocationBucket struct {
 	Kind  string
-	Value decimal.Decimal
-}
-
-// NetWorthPoint is one (date, value) point of the household net-worth
-// trend. Date is the calendar day (UTC midnight); Value is the sum of
-// current positions × historical prices for that day.
-type NetWorthPoint struct {
-	Date  time.Time
 	Value decimal.Decimal
 }
 
@@ -386,42 +386,57 @@ func (r *householdAggregatorRepo) AllocationByKind(ctx context.Context, accountI
 	return out, nil
 }
 
-func (r *householdAggregatorRepo) NetWorthSeries(ctx context.Context, accountIDs []int64, from, to time.Time) ([]NetWorthPoint, error) {
-	if len(accountIDs) == 0 || !to.After(from.Add(-time.Second)) {
+func (r *householdAggregatorRepo) FoldByAccountSetAsOf(ctx context.Context, accountIDs []int64, asOf time.Time) ([]model.Position, error) {
+	if len(accountIDs) == 0 {
 		return nil, nil
 	}
-	fromDay := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, time.UTC)
-	toDay := time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, time.UTC)
-	type rawRow struct {
-		Date  time.Time
-		Value string
+	type row struct {
+		AssetID int64
+		Qty     string
 	}
-	var rows []rawRow
-	// Cross-join generate_series with positions; price lookup is bounded by
-	// `d + 1 day` so a day's entry uses the latest price posted ON OR BEFORE
-	// end-of-that-day. LEFT JOIN keeps days with no positions at 0.
-	err := r.db.WithContext(ctx).Raw(`
-		WITH days AS (
-			SELECT generate_series(?::date, ?::date, interval '1 day')::date AS d
-		)
-		SELECT days.d AS date,
-		       COALESCE(SUM(`+fmt.Sprintf(positionValueExpr, "AND pr.as_of <= days.d + interval '1 day'")+`), 0)::text AS value
-		FROM days
-		LEFT JOIN positions p ON p.deleted_at IS NULL AND p.account_id IN ?
-		LEFT JOIN accounts  a ON a.id = p.account_id AND a.deleted_at IS NULL
-		LEFT JOIN users     u ON u.id = p.user_id
-		GROUP BY days.d
-		ORDER BY days.d
-	`, fromDay, toDay, accountIDs).Scan(&rows).Error
-	if err != nil {
+	var rows []row
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT asset_id, COALESCE(SUM(amount), 0)::text AS qty
+		FROM transactions
+		WHERE deleted_at IS NULL
+		  AND account_id IN ?
+		  AND transaction_date <= ?
+		GROUP BY asset_id
+		HAVING COALESCE(SUM(amount), 0) <> 0
+		ORDER BY asset_id
+	`, accountIDs, asOf).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	out := make([]NetWorthPoint, 0, len(rows))
+	out := make([]model.Position, 0, len(rows))
 	for _, row := range rows {
-		v, _ := decimal.NewFromString(row.Value)
-		out = append(out, NetWorthPoint{Date: row.Date.UTC(), Value: v})
+		q, err := decimal.NewFromString(row.Qty)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, model.Position{AssetID: row.AssetID, Quantity: q})
 	}
 	return out, nil
+}
+
+func (r *householdAggregatorRepo) HouseholdQuoteAssetID(ctx context.Context, householdID int64) (int64, error) {
+	var assetID int64
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT u.primary_currency_asset_id
+		FROM household_members hm
+		JOIN users u ON u.id = hm.user_id
+		WHERE hm.household_id = ?
+		  AND hm.role = 'owner'
+		  AND hm.purged_at IS NULL
+		ORDER BY hm.joined_at
+		LIMIT 1
+	`, householdID).Scan(&assetID).Error
+	if err != nil {
+		return 0, err
+	}
+	if assetID == 0 {
+		return 0, ErrNotFound
+	}
+	return assetID, nil
 }
 
 func (r *householdAggregatorRepo) AccountBalances(ctx context.Context, accountIDs []int64) ([]AccountBalanceRow, error) {
