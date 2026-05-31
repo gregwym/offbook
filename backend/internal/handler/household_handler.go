@@ -584,6 +584,7 @@ func (h *HouseholdHandler) writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_GOAL"})
 	case errors.Is(err, household.ErrEmptyName),
 		errors.Is(err, household.ErrInvalidRole),
+		errors.Is(err, household.ErrCannotPromoteToOwner),
 		errors.Is(err, household.ErrInvalidGrace),
 		errors.Is(err, household.ErrInvalidVisibility):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})

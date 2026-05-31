@@ -100,6 +100,18 @@ func TestUpdateMemberRole_OwnerPromotesContributor(t *testing.T) {
 	}
 }
 
+// TestUpdateMemberRole_RejectsPromoteToOwner: the generic role editor must
+// not mint a second owner — ownership changes go through TransferOwner. The
+// single-owner invariant (uq_household_single_owner) is enforced at the
+// service layer here so the caller gets a clean 400, not a DB error (#283).
+func TestUpdateMemberRole_RejectsPromoteToOwner(t *testing.T) {
+	svc, ownerID, contribID, hhID := seedOwnerWithMember(t)
+	_, err := svc.UpdateMemberRole(context.Background(), ownerID, hhID, contribID, model.RoleOwner)
+	if !errors.Is(err, household.ErrCannotPromoteToOwner) {
+		t.Fatalf("err = %v, want ErrCannotPromoteToOwner", err)
+	}
+}
+
 func TestUpdateMemberRole_RejectsInvalidRole(t *testing.T) {
 	svc, ownerID, contribID, hhID := seedOwnerWithMember(t)
 	_, err := svc.UpdateMemberRole(context.Background(), ownerID, hhID, contribID, "superuser")

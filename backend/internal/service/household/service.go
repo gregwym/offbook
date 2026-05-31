@@ -145,7 +145,6 @@ func (s *Service) Create(ctx context.Context, userID int64, in CreateInput) (*mo
 
 	h := &model.Household{
 		Name:            name,
-		OwnerID:         userID,
 		GracePeriodDays: grace,
 	}
 	if err := s.households.Create(ctx, h); err != nil {
@@ -489,6 +488,12 @@ func (s *Service) UpdateMemberRole(ctx context.Context, userID, householdID, tar
 	if !isValidRole(role) {
 		return nil, ErrInvalidRole
 	}
+	// Ownership changes go through TransferOwner, which atomically demotes
+	// the current owner. The generic role editor must never mint a second
+	// owner (uq_household_single_owner would reject it at the DB anyway).
+	if role == model.RoleOwner {
+		return nil, ErrCannotPromoteToOwner
+	}
 	if targetUserID == userID {
 		return nil, ErrCannotModifySelf
 	}
@@ -557,9 +562,10 @@ func (s *Service) RemoveMember(ctx context.Context, userID, householdID, targetU
 
 // TransferOwner promotes targetUserID to owner and demotes the caller to
 // contributor. Caller must be the current owner. Target must be an active
-// member of this household. Both role updates AND the households.owner_id
-// flip happen in a single DB transaction so a mid-flight failure can't
-// produce a "two owners" or "owner_id mismatches role" intermediate state.
+// member of this household. Both role updates happen in a single DB
+// transaction so a mid-flight failure can't produce a "two owners" or
+// "zero owners" intermediate state. Ownership lives solely in the member
+// role now (#283) — there is no households.owner_id to keep in sync.
 //
 // Self-transfer is rejected (no-op anyway). After the transfer the caller
 // is no longer the owner — they may then call Leave if they want to exit
@@ -590,16 +596,11 @@ func (s *Service) TransferOwner(ctx context.Context, callerID, householdID, targ
 	}
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Promote target to owner.
-		if res := tx.Model(&model.HouseholdMember{}).
-			Where("id = ? AND left_at IS NULL AND purged_at IS NULL", target.ID).
-			Update("role", model.RoleOwner); res.Error != nil {
-			return fmt.Errorf("promote target: %w", res.Error)
-		} else if res.RowsAffected == 0 {
-			return ErrMemberNotFound
-		}
-		// 2. Demote caller to contributor (chosen over view_only — the
-		// previous owner deserves write access by default).
+		// Demote the caller FIRST, then promote the target. The
+		// uq_household_single_owner partial index permits only one active
+		// owner per household, so the two updates must never leave two
+		// owner rows visible at once — demote-then-promote keeps the owner
+		// count at 1→0→1 rather than 1→2→1.
 		if res := tx.Model(&model.HouseholdMember{}).
 			Where("id = ? AND left_at IS NULL AND purged_at IS NULL", caller.ID).
 			Update("role", model.RoleContributor); res.Error != nil {
@@ -607,13 +608,12 @@ func (s *Service) TransferOwner(ctx context.Context, callerID, householdID, targ
 		} else if res.RowsAffected == 0 {
 			return ErrForbidden
 		}
-		// 3. Flip the owner_id on the household row to match.
-		if res := tx.Model(&model.Household{}).
-			Where("id = ?", householdID).
-			Update("owner_id", targetUserID); res.Error != nil {
-			return fmt.Errorf("update owner_id: %w", res.Error)
+		if res := tx.Model(&model.HouseholdMember{}).
+			Where("id = ? AND left_at IS NULL AND purged_at IS NULL", target.ID).
+			Update("role", model.RoleOwner); res.Error != nil {
+			return fmt.Errorf("promote target: %w", res.Error)
 		} else if res.RowsAffected == 0 {
-			return ErrHouseholdNotFound
+			return ErrMemberNotFound
 		}
 		return nil
 	})

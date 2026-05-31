@@ -10,7 +10,8 @@ import (
 )
 
 // TestTransferOwner_HappyPath: owner promotes a contributor; the promotion
-// flips both roles AND households.owner_id atomically.
+// atomically demotes the old owner and promotes the new one. Ownership lives
+// solely in the member role (#283).
 func TestTransferOwner_HappyPath(t *testing.T) {
 	svc, ownerID, contribID, hhID := seedOwnerWithMember(t)
 	ctx := context.Background()
@@ -26,9 +27,6 @@ func TestTransferOwner_HappyPath(t *testing.T) {
 	}
 	if asOldOwner.Role != model.RoleContributor {
 		t.Errorf("old owner role = %q, want contributor", asOldOwner.Role)
-	}
-	if asOldOwner.Household.OwnerID != contribID {
-		t.Errorf("Household.OwnerID = %d, want %d (new owner)", asOldOwner.Household.OwnerID, contribID)
 	}
 	// New owner sees themselves as owner.
 	asNewOwner, err := svc.Get(ctx, contribID, hhID)

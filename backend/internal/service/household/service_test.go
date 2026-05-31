@@ -177,12 +177,10 @@ func TestCreate_CreatorBecomesOwner(t *testing.T) {
 	}
 	cleanupHousehold(t, g, hh.ID)
 
-	if hh.OwnerID != userID {
-		t.Errorf("OwnerID = %d, want %d", hh.OwnerID, userID)
-	}
 	if hh.GracePeriodDays != grace {
 		t.Errorf("GracePeriodDays = %d, want %d", hh.GracePeriodDays, grace)
 	}
+	// Ownership lives in the member role now (#283), asserted below.
 	detail, err := svc.Get(ctx, userID, hh.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)

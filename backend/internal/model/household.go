@@ -24,9 +24,11 @@ const (
 )
 
 type Household struct {
-	ID              int64          `gorm:"primaryKey" json:"id"`
-	Name            string         `gorm:"not null" json:"name"`
-	OwnerID         int64          `gorm:"not null" json:"owner_id"`
+	ID   int64  `gorm:"primaryKey" json:"id"`
+	Name string `gorm:"not null" json:"name"`
+	// Ownership is not stored here. The single source of truth is the
+	// household_members row with role='owner' (one active owner per
+	// household, enforced by uq_household_single_owner). See #283.
 	GracePeriodDays int            `gorm:"not null;default:30" json:"grace_period_days"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`

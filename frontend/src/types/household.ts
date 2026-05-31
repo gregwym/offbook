@@ -6,7 +6,8 @@ export type HouseholdRole = 'owner' | 'contributor' | 'view_only'
 export type Household = {
   id: number
   name: string
-  owner_id: number
+  // Ownership is not a household field — it's the member with role 'owner'
+  // (single source of truth, backend #283).
   grace_period_days: number
   created_at: string
   updated_at: string

@@ -56,9 +56,11 @@ func newAggregator(t *testing.T) (*household.Aggregator, *gorm.DB) {
 // household and registers cleanup. Members are added separately.
 func seedHouseholdRow(t *testing.T, g *gorm.DB, ownerID int64, name string, grace int) *model.Household {
 	t.Helper()
+	// ownerID is retained in the signature for call-site clarity; ownership
+	// is established by the owner member row callers add separately (#283).
+	_ = ownerID
 	hh := &model.Household{
 		Name:            name + "-" + fmt.Sprintf("%d", time.Now().UnixNano()),
-		OwnerID:         ownerID,
 		GracePeriodDays: grace,
 	}
 	if err := g.Create(hh).Error; err != nil {
