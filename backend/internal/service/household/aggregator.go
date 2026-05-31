@@ -324,7 +324,7 @@ func (a *Aggregator) BudgetPace(ctx context.Context, householdID int64, period s
 
 	budgets, err := a.repo.ListSharedBudgets(ctx, householdID, "")
 	if err != nil {
-		return nil, fmt.Errorf("list shared_budgets: %w", err)
+		return nil, fmt.Errorf("list household budgets: %w", err)
 	}
 	live, _, err := a.liveAndInGrace(ctx, householdID)
 	if err != nil {
@@ -368,7 +368,7 @@ func (a *Aggregator) GoalProgress(ctx context.Context, householdID int64) ([]Goa
 	}
 	goals, err := a.repo.ListSharedGoals(ctx, householdID)
 	if err != nil {
-		return nil, fmt.Errorf("list shared_goals: %w", err)
+		return nil, fmt.Errorf("list household goals: %w", err)
 	}
 	out := make([]GoalProgressItem, 0, len(goals))
 	for _, g := range goals {

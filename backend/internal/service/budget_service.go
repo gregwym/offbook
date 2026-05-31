@@ -87,7 +87,7 @@ func (s *BudgetService) WithNow(now func() time.Time) *BudgetService {
 	return s
 }
 
-func (s *BudgetService) Create(ctx context.Context, userID int64, in CreateBudgetInput) (*model.Budget, error) {
+func (s *BudgetService) Create(ctx context.Context, owner repository.PlanOwner, in CreateBudgetInput) (*model.Budget, error) {
 	period := strings.TrimSpace(in.Period)
 	if _, ok := validBudgetPeriods[period]; !ok {
 		return nil, ErrInvalidBudgetPeriod
@@ -102,12 +102,13 @@ func (s *BudgetService) Create(ctx context.Context, userID int64, in CreateBudge
 		return nil, err
 	}
 	b := &model.Budget{
-		UserID:     userID,
-		CategoryID: in.CategoryID,
-		Period:     period,
-		Amount:     in.Amount,
-		Rollover:   in.Rollover != nil && *in.Rollover,
-		IsActive:   true,
+		UserID:      owner.UserID,
+		HouseholdID: owner.HouseholdID,
+		CategoryID:  in.CategoryID,
+		Period:      period,
+		Amount:      in.Amount,
+		Rollover:    in.Rollover != nil && *in.Rollover,
+		IsActive:    true,
 	}
 	if in.IsActive != nil {
 		b.IsActive = *in.IsActive
@@ -121,8 +122,8 @@ func (s *BudgetService) Create(ctx context.Context, userID int64, in CreateBudge
 	return b, nil
 }
 
-func (s *BudgetService) Get(ctx context.Context, userID, id int64) (*model.Budget, error) {
-	b, err := s.repo.GetByID(ctx, userID, id)
+func (s *BudgetService) Get(ctx context.Context, owner repository.PlanOwner, id int64) (*model.Budget, error) {
+	b, err := s.repo.GetByID(ctx, owner, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrBudgetNotFound
@@ -132,12 +133,12 @@ func (s *BudgetService) Get(ctx context.Context, userID, id int64) (*model.Budge
 	return b, nil
 }
 
-func (s *BudgetService) List(ctx context.Context, userID int64) ([]model.Budget, error) {
-	return s.repo.List(ctx, userID)
+func (s *BudgetService) List(ctx context.Context, owner repository.PlanOwner) ([]model.Budget, error) {
+	return s.repo.List(ctx, owner)
 }
 
-func (s *BudgetService) Update(ctx context.Context, userID, id int64, in UpdateBudgetInput) (*model.Budget, error) {
-	b, err := s.repo.GetByID(ctx, userID, id)
+func (s *BudgetService) Update(ctx context.Context, owner repository.PlanOwner, id int64, in UpdateBudgetInput) (*model.Budget, error) {
+	b, err := s.repo.GetByID(ctx, owner, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrBudgetNotFound
@@ -184,8 +185,8 @@ func (s *BudgetService) Update(ctx context.Context, userID, id int64, in UpdateB
 	return b, nil
 }
 
-func (s *BudgetService) SoftDelete(ctx context.Context, userID, id int64) error {
-	if err := s.repo.SoftDelete(ctx, userID, id); err != nil {
+func (s *BudgetService) SoftDelete(ctx context.Context, owner repository.PlanOwner, id int64) error {
+	if err := s.repo.SoftDelete(ctx, owner, id); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return ErrBudgetNotFound
 		}
@@ -197,7 +198,7 @@ func (s *BudgetService) SoftDelete(ctx context.Context, userID, id int64) error 
 // Spend returns the current-period spend view for a budget. The period
 // window depends on the budget's `period` field; see budgetPeriodWindow.
 func (s *BudgetService) Spend(ctx context.Context, userID, id int64) (*BudgetSpend, error) {
-	b, err := s.Get(ctx, userID, id)
+	b, err := s.Get(ctx, repository.UserOwner(userID), id)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +257,7 @@ type BudgetAlert struct {
 // We deliberately do NOT call Spend() per budget — that would be N
 // round-trips for a hot dashboard endpoint.
 func (s *BudgetService) Alerts(ctx context.Context, userID int64) ([]BudgetAlert, error) {
-	budgets, err := s.repo.List(ctx, userID)
+	budgets, err := s.repo.List(ctx, repository.UserOwner(userID))
 	if err != nil {
 		return nil, fmt.Errorf("list budgets: %w", err)
 	}

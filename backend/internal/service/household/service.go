@@ -11,6 +11,7 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
+	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/auth"
 )
 
@@ -67,15 +68,12 @@ type Service struct {
 	accounts   repository.AccountRepository
 	config     repository.InstanceConfigRepository
 	users      repository.UserRepository
-	// Optional shared_budgets repos — wired via WithSharedBudgets. Nil-safe;
-	// the CreateSharedBudget/etc. paths gate on these being set indirectly
-	// via requireCategoryExists.
-	sharedBudgets repository.SharedBudgetRepository
-	categories    repository.CategoryRepository
-	// Optional shared_goals repo — wired via WithSharedGoals. Nil-safe in
-	// the same way; the goal CRUD methods are only reachable through the
-	// router, which always wires them.
-	sharedGoals repository.SharedGoalRepository
+	// Unified budget / savings-goal services for household-owned plans
+	// (ADR-0018), wired via WithSharedBudgets / WithSharedGoals. Household
+	// budget/goal CRUD delegates to these so personal and household share one
+	// validated path; the router always wires them.
+	budgets *service.BudgetService
+	goals   *service.SavingsGoalService
 	// db is held for multi-write operations (currently only TransferOwner)
 	// that need atomicity beyond what a single repo call provides.
 	// Nil-safe: methods that don't require it work without it; tests set

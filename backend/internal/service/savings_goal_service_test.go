@@ -72,7 +72,7 @@ func TestSavingsGoalService_Create_Validation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			g, err := svc.Create(ctx, userID, tc.in)
+			g, err := svc.Create(ctx, repository.UserOwner(userID), tc.in)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Errorf("err = %v, want %v", err, tc.wantErr)
@@ -85,7 +85,7 @@ func TestSavingsGoalService_Create_Validation(t *testing.T) {
 			if g == nil || g.ID == 0 {
 				t.Fatalf("want created goal, got %+v", g)
 			}
-			t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, g.ID) })
+			t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userID), g.ID) })
 		})
 	}
 }
@@ -106,7 +106,7 @@ func TestSavingsGoalService_Create_RejectsCrossUserAccount(t *testing.T) {
 	}
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Account{}, accB.ID) })
 
-	_, err := svc.Create(ctx, userA, service.CreateGoalInput{
+	_, err := svc.Create(ctx, repository.UserOwner(userA), service.CreateGoalInput{
 		Name: "Hack", TargetAmount: decimal.NewFromInt(100), AccountID: &accB.ID,
 	})
 	if !errors.Is(err, service.ErrGoalAccountMismatch) {
@@ -120,22 +120,22 @@ func TestSavingsGoalService_TenantIsolation(t *testing.T) {
 	svc, userA, _, g := newGoalSvc(t)
 	ctx := context.Background()
 
-	goal, err := svc.Create(ctx, userA, service.CreateGoalInput{
+	goal, err := svc.Create(ctx, repository.UserOwner(userA), service.CreateGoalInput{
 		Name: "TenantIso", TargetAmount: decimal.NewFromInt(1000),
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userA, goal.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userA), goal.ID) })
 
 	userB := seedTestUser(t, g)
-	if _, err := svc.Get(ctx, userB, goal.ID); !errors.Is(err, service.ErrSavingsGoalNotFound) {
+	if _, err := svc.Get(ctx, repository.UserOwner(userB), goal.ID); !errors.Is(err, service.ErrSavingsGoalNotFound) {
 		t.Errorf("cross-tenant Get err = %v", err)
 	}
-	if err := svc.SoftDelete(ctx, userB, goal.ID); !errors.Is(err, service.ErrSavingsGoalNotFound) {
+	if err := svc.SoftDelete(ctx, repository.UserOwner(userB), goal.ID); !errors.Is(err, service.ErrSavingsGoalNotFound) {
 		t.Errorf("cross-tenant Delete err = %v", err)
 	}
-	if _, err := svc.Contribute(ctx, userB, goal.ID, decimal.NewFromInt(100)); !errors.Is(err, service.ErrSavingsGoalNotFound) {
+	if _, err := svc.Contribute(ctx, repository.UserOwner(userB), goal.ID, decimal.NewFromInt(100)); !errors.Is(err, service.ErrSavingsGoalNotFound) {
 		t.Errorf("cross-tenant Contribute err = %v", err)
 	}
 }
@@ -146,29 +146,29 @@ func TestSavingsGoalService_Contribute_AtomicAndPostFetched(t *testing.T) {
 	svc, userID, _, _ := newGoalSvc(t)
 	ctx := context.Background()
 
-	goal, err := svc.Create(ctx, userID, service.CreateGoalInput{
+	goal, err := svc.Create(ctx, repository.UserOwner(userID), service.CreateGoalInput{
 		Name: "Atomic", TargetAmount: decimal.NewFromInt(500),
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, goal.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userID), goal.ID) })
 
-	after, err := svc.Contribute(ctx, userID, goal.ID, decimal.NewFromInt(200))
+	after, err := svc.Contribute(ctx, repository.UserOwner(userID), goal.ID, decimal.NewFromInt(200))
 	if err != nil {
 		t.Fatalf("deposit: %v", err)
 	}
 	if !after.CurrentAmount.Equal(decimal.NewFromInt(200)) {
 		t.Errorf("after deposit = %s, want 200", after.CurrentAmount)
 	}
-	after, err = svc.Contribute(ctx, userID, goal.ID, decimal.NewFromInt(-50))
+	after, err = svc.Contribute(ctx, repository.UserOwner(userID), goal.ID, decimal.NewFromInt(-50))
 	if err != nil {
 		t.Fatalf("withdrawal: %v", err)
 	}
 	if !after.CurrentAmount.Equal(decimal.NewFromInt(150)) {
 		t.Errorf("after withdrawal = %s, want 150", after.CurrentAmount)
 	}
-	if _, err := svc.Contribute(ctx, userID, goal.ID, decimal.Zero); !errors.Is(err, service.ErrZeroContribution) {
+	if _, err := svc.Contribute(ctx, repository.UserOwner(userID), goal.ID, decimal.Zero); !errors.Is(err, service.ErrZeroContribution) {
 		t.Errorf("zero contribution err = %v", err)
 	}
 }
@@ -180,13 +180,13 @@ func TestSavingsGoalService_Contribute_ConcurrentSafe(t *testing.T) {
 	svc, userID, _, _ := newGoalSvc(t)
 	ctx := context.Background()
 
-	goal, err := svc.Create(ctx, userID, service.CreateGoalInput{
+	goal, err := svc.Create(ctx, repository.UserOwner(userID), service.CreateGoalInput{
 		Name: "Concurrent", TargetAmount: decimal.NewFromInt(1000),
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, goal.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userID), goal.ID) })
 
 	const n = 50
 	var wg sync.WaitGroup
@@ -195,7 +195,7 @@ func TestSavingsGoalService_Contribute_ConcurrentSafe(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := svc.Contribute(ctx, userID, goal.ID, decimal.NewFromInt(1)); err != nil {
+			if _, err := svc.Contribute(ctx, repository.UserOwner(userID), goal.ID, decimal.NewFromInt(1)); err != nil {
 				errs <- err
 			}
 		}()
@@ -206,7 +206,7 @@ func TestSavingsGoalService_Contribute_ConcurrentSafe(t *testing.T) {
 		t.Errorf("concurrent contribute err: %v", err)
 	}
 
-	g, err := svc.Get(ctx, userID, goal.ID)
+	g, err := svc.Get(ctx, repository.UserOwner(userID), goal.ID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}

@@ -2,7 +2,10 @@
 // plus computed progress + remaining (both server-side via service.View).
 export type SavingsGoal = {
   id: number
+  // Owned by exactly one of user_id (personal) / household_id (ADR-0018).
+  // Personal-scope responses from this client always carry a user_id.
   user_id: number
+  household_id: number | null
   name: string
   target_amount: string
   current_amount: string

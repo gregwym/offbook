@@ -10,7 +10,6 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/service"
-	"github.com/gregwym/offbook/backend/internal/service/auth"
 )
 
 type SavingsGoalHandler struct {
@@ -56,7 +55,7 @@ func (h *SavingsGoalHandler) Create(c *gin.Context) {
 		}
 		in.TargetDate = &d
 	}
-	g, err := h.svc.Create(c.Request.Context(), auth.MustUserID(c.Request.Context()), in)
+	g, err := h.svc.Create(c.Request.Context(), personalOwner(c), in)
 	if err != nil {
 		h.writeServiceError(c, err)
 		return
@@ -69,7 +68,7 @@ func (h *SavingsGoalHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	g, err := h.svc.Get(c.Request.Context(), auth.MustUserID(c.Request.Context()), id)
+	g, err := h.svc.Get(c.Request.Context(), personalOwner(c), id)
 	if err != nil {
 		h.writeServiceError(c, err)
 		return
@@ -78,7 +77,7 @@ func (h *SavingsGoalHandler) Get(c *gin.Context) {
 }
 
 func (h *SavingsGoalHandler) List(c *gin.Context) {
-	goals, err := h.svc.List(c.Request.Context(), auth.MustUserID(c.Request.Context()))
+	goals, err := h.svc.List(c.Request.Context(), personalOwner(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
 		return
@@ -130,7 +129,7 @@ func (h *SavingsGoalHandler) Update(c *gin.Context) {
 		}
 		in.TargetDate = &d
 	}
-	g, err := h.svc.Update(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, in)
+	g, err := h.svc.Update(c.Request.Context(), personalOwner(c), id, in)
 	if err != nil {
 		h.writeServiceError(c, err)
 		return
@@ -143,7 +142,7 @@ func (h *SavingsGoalHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.SoftDelete(c.Request.Context(), auth.MustUserID(c.Request.Context()), id); err != nil {
+	if err := h.svc.SoftDelete(c.Request.Context(), personalOwner(c), id); err != nil {
 		h.writeServiceError(c, err)
 		return
 	}
@@ -164,7 +163,7 @@ func (h *SavingsGoalHandler) Contribute(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
 		return
 	}
-	g, err := h.svc.Contribute(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, req.Amount)
+	g, err := h.svc.Contribute(c.Request.Context(), personalOwner(c), id, req.Amount)
 	if err != nil {
 		h.writeServiceError(c, err)
 		return

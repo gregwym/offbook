@@ -323,8 +323,9 @@ func TestAggregator_InGraceExcludedFromBudgetPace(t *testing.T) {
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, cat.ID) })
 
 	budgetAmt, _ := decimal.NewFromString("100")
-	budget := &model.SharedBudget{
-		HouseholdID: hh.ID,
+	hhID := hh.ID
+	budget := &model.Budget{
+		HouseholdID: &hhID,
 		CategoryID:  cat.ID,
 		Period:      "monthly",
 		Amount:      budgetAmt,
@@ -333,7 +334,7 @@ func TestAggregator_InGraceExcludedFromBudgetPace(t *testing.T) {
 	if err := g.Create(budget).Error; err != nil {
 		t.Fatalf("seed shared budget: %v", err)
 	}
-	t.Cleanup(func() { g.Unscoped().Delete(&model.SharedBudget{}, budget.ID) })
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Budget{}, budget.ID) })
 
 	when := time.Now().Add(-time.Hour)
 	seedTxn(t, g, ownerID, ownerAcct.ID, "-10", &cat.ID, when)

@@ -11,16 +11,16 @@ import (
 	"github.com/gregwym/offbook/backend/internal/model"
 )
 
-// BudgetRepository is the data-access contract for budgets. All read/write
-// paths are scoped by user_id — budgets are user-private and never shared
-// across tenants. Cross-household sharing lives in the separate
-// `shared_budgets` table (deferred to M8).
+// BudgetRepository is the data-access contract for budgets. CRUD is scoped by
+// PlanOwner — a personal book (user_id) or a household (household_id), per
+// ADR-0018. Spend computation stays user-scoped: only the personal evaluation
+// path uses it; household spend is computed by the aggregator.
 type BudgetRepository interface {
 	Create(ctx context.Context, b *model.Budget) error
-	GetByID(ctx context.Context, userID, id int64) (*model.Budget, error)
-	List(ctx context.Context, userID int64) ([]model.Budget, error)
+	GetByID(ctx context.Context, owner PlanOwner, id int64) (*model.Budget, error)
+	List(ctx context.Context, owner PlanOwner) ([]model.Budget, error)
 	Update(ctx context.Context, b *model.Budget) error
-	SoftDelete(ctx context.Context, userID, id int64) error
+	SoftDelete(ctx context.Context, owner PlanOwner, id int64) error
 	// CurrentPeriodSpend returns the sum of -amount (i.e. positive spending)
 	// over [from, to) for transactions matching (userID, categoryID). Outflows
 	// only: amount < 0 in the codebase's sign convention. Returns 0 (not an
@@ -46,10 +46,9 @@ func (r *budgetRepo) Create(ctx context.Context, b *model.Budget) error {
 	return r.db.WithContext(ctx).Create(b).Error
 }
 
-func (r *budgetRepo) GetByID(ctx context.Context, userID, id int64) (*model.Budget, error) {
+func (r *budgetRepo) GetByID(ctx context.Context, owner PlanOwner, id int64) (*model.Budget, error) {
 	var b model.Budget
-	if err := r.db.WithContext(ctx).
-		Where("user_id = ?", userID).
+	if err := owner.Apply(r.db.WithContext(ctx)).
 		First(&b, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
@@ -59,10 +58,9 @@ func (r *budgetRepo) GetByID(ctx context.Context, userID, id int64) (*model.Budg
 	return &b, nil
 }
 
-func (r *budgetRepo) List(ctx context.Context, userID int64) ([]model.Budget, error) {
+func (r *budgetRepo) List(ctx context.Context, owner PlanOwner) ([]model.Budget, error) {
 	var out []model.Budget
-	if err := r.db.WithContext(ctx).
-		Where("user_id = ?", userID).
+	if err := owner.Apply(r.db.WithContext(ctx)).
 		Order("is_active DESC, id ASC").
 		Find(&out).Error; err != nil {
 		return nil, err
@@ -71,8 +69,8 @@ func (r *budgetRepo) List(ctx context.Context, userID int64) ([]model.Budget, er
 }
 
 func (r *budgetRepo) Update(ctx context.Context, b *model.Budget) error {
-	res := r.db.WithContext(ctx).
-		Where("user_id = ?", b.UserID).
+	res := PlanOwner{UserID: b.UserID, HouseholdID: b.HouseholdID}.
+		Apply(r.db.WithContext(ctx)).
 		Save(b)
 	if res.Error != nil {
 		return res.Error
@@ -83,9 +81,8 @@ func (r *budgetRepo) Update(ctx context.Context, b *model.Budget) error {
 	return nil
 }
 
-func (r *budgetRepo) SoftDelete(ctx context.Context, userID, id int64) error {
-	res := r.db.WithContext(ctx).
-		Where("user_id = ?", userID).
+func (r *budgetRepo) SoftDelete(ctx context.Context, owner PlanOwner, id int64) error {
+	res := owner.Apply(r.db.WithContext(ctx)).
 		Delete(&model.Budget{}, id)
 	if res.Error != nil {
 		return res.Error

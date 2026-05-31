@@ -7,9 +7,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// SavingsGoal is a named savings target owned by exactly one of a user
+// (personal) or a household (shared) — ADR-0018. AccountID is only meaningful
+// for a personal goal (a household goal spans members' shared accounts); the
+// DB CHECK savings_goals_account_personal_chk enforces account_id ⇒ user-owned.
 type SavingsGoal struct {
 	ID            int64           `gorm:"primaryKey" json:"id"`
-	UserID        int64           `gorm:"not null" json:"user_id"`
+	UserID        *int64          `json:"user_id"`
+	HouseholdID   *int64          `json:"household_id"`
 	Name          string          `gorm:"not null" json:"name"`
 	TargetAmount  decimal.Decimal `gorm:"type:numeric(30,18);not null" json:"target_amount"`
 	CurrentAmount decimal.Decimal `gorm:"type:numeric(30,18);not null;default:0" json:"current_amount"`

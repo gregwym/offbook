@@ -56,13 +56,14 @@ type HouseholdAggregatorRepository interface {
 	// positive number (spending). Used by BudgetPace.
 	SpendingByCategory(ctx context.Context, accountIDs []int64, categoryID int64, from, to time.Time) (decimal.Decimal, error)
 
-	// ListSharedBudgets returns shared_budgets for the household (optionally
-	// filtered by period). M2.5 ships no CRUD for these — readers tolerate
-	// an empty result set.
-	ListSharedBudgets(ctx context.Context, householdID int64, period string) ([]model.SharedBudget, error)
+	// ListSharedBudgets returns the household-owned budgets (optionally
+	// filtered by period). Since ADR-0018 these are rows in the unified
+	// `budgets` table with household_id set; readers tolerate an empty set.
+	ListSharedBudgets(ctx context.Context, householdID int64, period string) ([]model.Budget, error)
 
-	// ListSharedGoals returns shared_goals for the household.
-	ListSharedGoals(ctx context.Context, householdID int64) ([]model.SharedGoal, error)
+	// ListSharedGoals returns the household-owned savings goals (unified
+	// `savings_goals` table, household_id set).
+	ListSharedGoals(ctx context.Context, householdID int64) ([]model.SavingsGoal, error)
 
 	// ListSharedThreads returns ai_threads where shared_with_household = true
 	// and household_id matches. Order: most recently updated first.
@@ -304,20 +305,20 @@ func (r *householdAggregatorRepo) SpendingByCategory(ctx context.Context, accoun
 	return d, nil
 }
 
-func (r *householdAggregatorRepo) ListSharedBudgets(ctx context.Context, householdID int64, period string) ([]model.SharedBudget, error) {
+func (r *householdAggregatorRepo) ListSharedBudgets(ctx context.Context, householdID int64, period string) ([]model.Budget, error) {
 	q := r.db.WithContext(ctx).Where("household_id = ? AND is_active = ?", householdID, true)
 	if period != "" {
 		q = q.Where("period = ?", period)
 	}
-	var out []model.SharedBudget
+	var out []model.Budget
 	if err := q.Order("id").Find(&out).Error; err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (r *householdAggregatorRepo) ListSharedGoals(ctx context.Context, householdID int64) ([]model.SharedGoal, error) {
-	var out []model.SharedGoal
+func (r *householdAggregatorRepo) ListSharedGoals(ctx context.Context, householdID int64) ([]model.SavingsGoal, error) {
+	var out []model.SavingsGoal
 	err := r.db.WithContext(ctx).
 		Where("household_id = ?", householdID).
 		Order("id").

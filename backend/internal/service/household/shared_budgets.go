@@ -3,17 +3,16 @@ package household
 import (
 	"context"
 	"errors"
-	"fmt"
-	"strings"
 
 	"github.com/shopspring/decimal"
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
+	"github.com/gregwym/offbook/backend/internal/service"
 )
 
-// SharedBudgetInput is the validated payload for creating a shared budget.
-// Same shape as the personal-budget input minus user_id (household_id is
+// SharedBudgetInput is the validated payload for creating a household budget.
+// Same shape as the personal-budget input minus the owner (household_id is
 // derived from the path).
 type SharedBudgetInput struct {
 	CategoryID int64
@@ -32,117 +31,64 @@ type UpdateSharedBudgetInput struct {
 	IsActive   *bool
 }
 
-// Shared-budget errors complement the household-wide ones in errors.go.
-// We intentionally don't reuse the personal-budget errors (different
-// package boundary, simpler mapping in the handler).
+// Budget errors are aliases of the unified budget service's errors (ADR-0018):
+// household and personal budgets share one validated CRUD path, so they share
+// one error set. The handler's errors.Is checks keep working unchanged.
 var (
-	ErrInvalidBudgetPeriod = errors.New("period must be one of: monthly, weekly, annual")
-	ErrInvalidBudgetAmount = errors.New("amount must be > 0")
-	ErrUnknownCategory     = errors.New("category does not exist")
-	ErrBudgetNotFound      = errors.New("shared budget not found")
+	ErrInvalidBudgetPeriod   = service.ErrInvalidBudgetPeriod
+	ErrInvalidBudgetAmount   = service.ErrInvalidBudgetAmount
+	ErrUnknownCategory       = service.ErrUnknownCategory
+	ErrBudgetNotFound        = service.ErrBudgetNotFound
+	ErrDuplicateActiveBudget = service.ErrDuplicateActiveBudget
 )
 
-var validBudgetPeriods = map[string]struct{}{
-	"monthly": {}, "weekly": {}, "annual": {},
-}
-
-// WithSharedBudgets wires the optional repos that the shared-budget CRUD
-// path needs. Returns the receiver so it composes with WithDB.
-func (s *Service) WithSharedBudgets(repo repository.SharedBudgetRepository, categories repository.CategoryRepository) *Service {
-	s.sharedBudgets = repo
-	s.categories = categories
+// WithSharedBudgets wires the unified budget service used for household-owned
+// budget CRUD. Returns the receiver so it composes with WithDB / WithSharedGoals.
+func (s *Service) WithSharedBudgets(budgets *service.BudgetService) *Service {
+	s.budgets = budgets
 	return s
 }
 
 // CreateSharedBudget creates a budget owned by the household. Owner or
-// contributor may create; view_only is read-only.
-func (s *Service) CreateSharedBudget(ctx context.Context, userID, householdID int64, in SharedBudgetInput) (*model.SharedBudget, error) {
+// contributor may create; view_only is read-only. The validation, category
+// check, and duplicate-active detection live once in the budget service.
+func (s *Service) CreateSharedBudget(ctx context.Context, userID, householdID int64, in SharedBudgetInput) (*model.Budget, error) {
 	if err := s.requireContributor(ctx, userID, householdID); err != nil {
 		return nil, err
 	}
-	period := strings.TrimSpace(in.Period)
-	if _, ok := validBudgetPeriods[period]; !ok {
-		return nil, ErrInvalidBudgetPeriod
-	}
-	if !in.Amount.IsPositive() {
-		return nil, ErrInvalidBudgetAmount
-	}
-	if err := s.requireCategoryExists(ctx, in.CategoryID); err != nil {
-		return nil, err
-	}
-	b := &model.SharedBudget{
-		HouseholdID: householdID,
-		CategoryID:  in.CategoryID,
-		Period:      period,
-		Amount:      in.Amount,
-		Rollover:    in.Rollover != nil && *in.Rollover,
-		IsActive:    true,
-	}
-	if in.IsActive != nil {
-		b.IsActive = *in.IsActive
-	}
-	if err := s.sharedBudgets.Create(ctx, b); err != nil {
-		return nil, fmt.Errorf("create shared_budget: %w", err)
-	}
-	return b, nil
+	return s.budgets.Create(ctx, repository.HouseholdOwner(householdID), service.CreateBudgetInput{
+		CategoryID: in.CategoryID,
+		Period:     in.Period,
+		Amount:     in.Amount,
+		Rollover:   in.Rollover,
+		IsActive:   in.IsActive,
+	})
 }
 
-// ListSharedBudgets returns every shared budget for the household. Any
-// active member may read (matches the read-side aggregator's audience).
-func (s *Service) ListSharedBudgets(ctx context.Context, userID, householdID int64) ([]model.SharedBudget, error) {
+// ListSharedBudgets returns every household-owned budget. Any active member
+// may read (matches the read-side aggregator's audience).
+func (s *Service) ListSharedBudgets(ctx context.Context, userID, householdID int64) ([]model.Budget, error) {
 	if _, err := s.members.GetActive(ctx, householdID, userID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrNotMember
 		}
 		return nil, err
 	}
-	return s.sharedBudgets.List(ctx, householdID)
+	return s.budgets.List(ctx, repository.HouseholdOwner(householdID))
 }
 
 // UpdateSharedBudget applies a sparse patch. Owner or contributor may edit.
-func (s *Service) UpdateSharedBudget(ctx context.Context, userID, householdID, id int64, in UpdateSharedBudgetInput) (*model.SharedBudget, error) {
+func (s *Service) UpdateSharedBudget(ctx context.Context, userID, householdID, id int64, in UpdateSharedBudgetInput) (*model.Budget, error) {
 	if err := s.requireContributor(ctx, userID, householdID); err != nil {
 		return nil, err
 	}
-	b, err := s.sharedBudgets.GetByID(ctx, householdID, id)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return nil, ErrBudgetNotFound
-		}
-		return nil, err
-	}
-	if in.CategoryID != nil {
-		if err := s.requireCategoryExists(ctx, *in.CategoryID); err != nil {
-			return nil, err
-		}
-		b.CategoryID = *in.CategoryID
-	}
-	if in.Period != nil {
-		p := strings.TrimSpace(*in.Period)
-		if _, ok := validBudgetPeriods[p]; !ok {
-			return nil, ErrInvalidBudgetPeriod
-		}
-		b.Period = p
-	}
-	if in.Amount != nil {
-		if !in.Amount.IsPositive() {
-			return nil, ErrInvalidBudgetAmount
-		}
-		b.Amount = *in.Amount
-	}
-	if in.Rollover != nil {
-		b.Rollover = *in.Rollover
-	}
-	if in.IsActive != nil {
-		b.IsActive = *in.IsActive
-	}
-	if err := s.sharedBudgets.Update(ctx, b); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return nil, ErrBudgetNotFound
-		}
-		return nil, fmt.Errorf("update shared_budget: %w", err)
-	}
-	return b, nil
+	return s.budgets.Update(ctx, repository.HouseholdOwner(householdID), id, service.UpdateBudgetInput{
+		CategoryID: in.CategoryID,
+		Period:     in.Period,
+		Amount:     in.Amount,
+		Rollover:   in.Rollover,
+		IsActive:   in.IsActive,
+	})
 }
 
 // SoftDeleteSharedBudget removes a budget. Owner or contributor may delete.
@@ -150,13 +96,7 @@ func (s *Service) SoftDeleteSharedBudget(ctx context.Context, userID, householdI
 	if err := s.requireContributor(ctx, userID, householdID); err != nil {
 		return err
 	}
-	if err := s.sharedBudgets.SoftDelete(ctx, householdID, id); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return ErrBudgetNotFound
-		}
-		return fmt.Errorf("soft-delete shared_budget: %w", err)
-	}
-	return nil
+	return s.budgets.SoftDelete(ctx, repository.HouseholdOwner(householdID), id)
 }
 
 // requireContributor accepts owner OR contributor; view_only is rejected
@@ -175,21 +115,4 @@ func (s *Service) requireContributor(ctx context.Context, userID, householdID in
 	default:
 		return ErrForbidden
 	}
-}
-
-// requireCategoryExists is a thin guard so we surface a clean error code
-// instead of a foreign-key violation when the caller passes a bad id.
-func (s *Service) requireCategoryExists(ctx context.Context, categoryID int64) error {
-	if s.categories == nil {
-		// Defensive: if WithSharedBudgets wasn't called we'd hit the FK
-		// error path below — but the cleaner thing is to fail early.
-		return ErrUnknownCategory
-	}
-	if _, err := s.categories.GetByID(ctx, categoryID); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return ErrUnknownCategory
-		}
-		return fmt.Errorf("validate category: %w", err)
-	}
-	return nil
 }

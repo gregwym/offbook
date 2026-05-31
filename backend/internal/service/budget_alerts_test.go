@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/gregwym/offbook/backend/internal/model"
+	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
 )
 
@@ -75,7 +76,7 @@ func TestBudgetService_Alerts_Thresholds(t *testing.T) {
 	// Three budgets, all monthly, all $100.
 	budgets := []*model.Budget{}
 	for _, c := range cats {
-		b, err := svc.Create(ctx, userID, service.CreateBudgetInput{
+		b, err := svc.Create(ctx, repository.UserOwner(userID), service.CreateBudgetInput{
 			CategoryID: c.ID, Period: "monthly", Amount: decimal.NewFromInt(100),
 		})
 		if err != nil {
@@ -85,7 +86,7 @@ func TestBudgetService_Alerts_Thresholds(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		for _, b := range budgets {
-			_ = svc.SoftDelete(ctx, userID, b.ID)
+			_ = svc.SoftDelete(ctx, repository.UserOwner(userID), b.ID)
 		}
 	})
 
@@ -137,14 +138,14 @@ func TestBudgetService_Alerts_InactiveExcluded(t *testing.T) {
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, cat.ID) })
 
 	inactive := false
-	b, err := svc.Create(ctx, userID, service.CreateBudgetInput{
+	b, err := svc.Create(ctx, repository.UserOwner(userID), service.CreateBudgetInput{
 		CategoryID: cat.ID, Period: "monthly", Amount: decimal.NewFromInt(100),
 		IsActive: &inactive,
 	})
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, b.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userID), b.ID) })
 
 	seedSpend(t, g, userID, acctID, cat.ID, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-500))
 
@@ -176,13 +177,13 @@ func TestBudgetService_Alerts_TenantIsolation(t *testing.T) {
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, cat.ID) })
 
 	// User A has a budget; user B does all the spending — A's alerts must be empty.
-	b, err := svc.Create(ctx, userA, service.CreateBudgetInput{
+	b, err := svc.Create(ctx, repository.UserOwner(userA), service.CreateBudgetInput{
 		CategoryID: cat.ID, Period: "monthly", Amount: decimal.NewFromInt(100),
 	})
 	if err != nil {
 		t.Fatalf("create A budget: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userA, b.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userA), b.ID) })
 
 	seedSpend(t, g, userB, acctB, cat.ID, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-9999))
 
@@ -210,13 +211,13 @@ func TestBudgetService_Alerts_OnlyAtThreshold(t *testing.T) {
 	}
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, cat.ID) })
 
-	b, err := svc.Create(ctx, userID, service.CreateBudgetInput{
+	b, err := svc.Create(ctx, repository.UserOwner(userID), service.CreateBudgetInput{
 		CategoryID: cat.ID, Period: "monthly", Amount: decimal.NewFromInt(100),
 	})
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, b.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userID), b.ID) })
 
 	// 79.99 → no alert
 	tx := &model.Transaction{

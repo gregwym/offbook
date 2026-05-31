@@ -4,7 +4,10 @@ export type BudgetPeriod = (typeof BUDGET_PERIODS)[number]
 
 export type Budget = {
   id: number
+  // Owned by exactly one of user_id (personal) / household_id (ADR-0018).
+  // Personal-scope responses from this client always carry a user_id.
   user_id: number
+  household_id: number | null
   category_id: number
   period: BudgetPeriod
   amount: string
