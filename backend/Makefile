@@ -19,7 +19,11 @@ HEALTH_URL  = http://localhost:$(PORT)/api/v1/health
 # DATABASE_URL on either if you need to point at a non-local Postgres.
 TEST_DATABASE_URL ?= postgres://offbook:offbook@localhost:5432/offbook_test?sslmode=disable
 
-.PHONY: help dev stop restart smoke test test-v test-fast lint vet build verify contract-check clean routes logs
+.PHONY: help dev stop restart smoke test test-v test-fast lint vet build verify contract-check schema schema-check clean routes logs
+
+# Checked-in schema report (#304). Regenerated from the migrated DB by
+# cmd/schema-report; CI enforces it via schema-check.
+SCHEMA_FILE ?= ../docs/db/schema.md
 
 help:
 	@echo "make dev        - start backend (stops any previous instance first)"
@@ -34,6 +38,8 @@ help:
 	@echo "make build      - go build ./..."
 	@echo "make verify     - full CI mirror: contract-check, backend vet+test, frontend lint+build"
 	@echo "make contract-check - assert every frontend apiClient URL maps to a registered backend route (#273)"
+	@echo "make schema     - regenerate $(SCHEMA_FILE) from the migrated DB (#304)"
+	@echo "make schema-check - fail if $(SCHEMA_FILE) is stale vs the migrations (CI mirror)"
 	@echo "make routes     - print routes from the last server log"
 	@echo "make logs       - tail $(LOGFILE)"
 
@@ -103,6 +109,8 @@ verify:
 	@$(MAKE) lint
 	@echo "== backend test =="
 	@$(MAKE) test
+	@echo "== schema check =="
+	@$(MAKE) schema-check
 	@if [ -d ../frontend ] && [ -f ../frontend/package.json ]; then \
 		echo "== frontend lint =="; \
 		(cd ../frontend && pnpm lint) || exit 1; \
@@ -121,6 +129,21 @@ routes:
 # Catches the bug class behind #266 / #268 — see epic #270.
 contract-check:
 	@go run ./cmd/contract-check
+
+# Regenerate the checked-in schema report from the migrated DB. Migrates
+# offbook_test first (idempotent; same DB `make test` uses) so the report
+# always reflects the head migration. The report is DB-name-independent, so
+# this produces the same bytes locally and in CI. If a stale test DB blocks
+# `migrate up` across branches, recreate it (DROP/CREATE offbook_test).
+schema:
+	@APP_ENV=test DATABASE_URL='$(TEST_DATABASE_URL)' go run ./cmd/migrate up >/dev/null
+	@APP_ENV=test DATABASE_URL='$(TEST_DATABASE_URL)' go run ./cmd/schema-report --out $(SCHEMA_FILE)
+
+# Fail if $(SCHEMA_FILE) doesn't match the migrated schema — i.e. someone added
+# a migration without running `make schema`. Mirrors the CI schema-check job.
+schema-check:
+	@APP_ENV=test DATABASE_URL='$(TEST_DATABASE_URL)' go run ./cmd/migrate up >/dev/null
+	@APP_ENV=test DATABASE_URL='$(TEST_DATABASE_URL)' go run ./cmd/schema-report --check --out $(SCHEMA_FILE)
 
 logs:
 	@tail -f $(LOGFILE)

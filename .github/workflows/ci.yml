@@ -81,6 +81,43 @@ jobs:
         # DATABASE_URL, so parallel packages step on each other's rows.
         run: go test -race -p 1 ./...
 
+  schema-check:
+    name: Schema report up-to-date
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: offbook
+          POSTGRES_PASSWORD: offbook
+          POSTGRES_DB: offbook_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U offbook"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgres://offbook:offbook@localhost:5432/offbook_test?sslmode=disable
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Apply migrations
+        run: go run ./cmd/migrate up
+      # Fails if a migration changed the schema but docs/db/schema.md wasn't
+      # regenerated with `make schema`. The report is deterministic +
+      # DB-name-independent, so it matches what a developer commits locally.
+      - name: Check schema report is current
+        run: go run ./cmd/schema-report --check --out ../docs/db/schema.md
+
   frontend-build:
     name: Frontend build (pnpm build)
     runs-on: ubuntu-latest
