@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -131,6 +132,25 @@ func (s *AccountService) Create(ctx context.Context, userID int64, in CreateAcco
 			return fmt.Errorf("create account: %w", err)
 		}
 		if !in.OpeningBalance.IsZero() {
+			// Record the opening balance as a real ledger fact (ADR-0017):
+			// an opening_balance transaction is the anchor the position folds
+			// from. kind=opening_balance keeps it out of spending/cash-flow/
+			// budget analytics while still counting toward net worth.
+			txRepo := repository.NewTransactionRepository(tx)
+			desc := "Opening balance"
+			openingTx := &model.Transaction{
+				UserID:          userID,
+				AccountID:       a.ID,
+				AssetID:         asset.ID,
+				Kind:            model.KindOpeningBalance,
+				Amount:          in.OpeningBalance,
+				Description:     &desc,
+				TransactionDate: time.Now().UTC(),
+				Source:          "manual",
+			}
+			if err := txRepo.Create(ctx, openingTx); err != nil {
+				return fmt.Errorf("seed opening balance transaction: %w", err)
+			}
 			posRepo := repository.NewPositionRepository(tx)
 			pos := &model.Position{
 				UserID:    userID,

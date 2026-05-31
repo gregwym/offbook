@@ -284,3 +284,41 @@ func TestAccountService_CurrencyDerivedFromAsset(t *testing.T) {
 		t.Error("primary_quote_asset_id not set")
 	}
 }
+
+// TestAccountService_Create_OpeningBalanceIsLedgerFact: an opening balance is
+// recorded as an opening_balance transaction (ADR-0017) that counts toward
+// net worth but is excluded from income/spending flow analytics. (#293)
+func TestAccountService_Create_OpeningBalanceIsLedgerFact(t *testing.T) {
+	svc, userID, g := newAccountSvc(t)
+	ctx := context.Background()
+
+	in := validInput(tcSuffix(7))
+	in.OpeningBalance = decimal.NewFromInt(1000)
+	acct, err := svc.Create(ctx, userID, in)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// The anchor is a real ledger row tagged opening_balance.
+	var tx model.Transaction
+	if err := g.Where("account_id = ? AND kind = ?", acct.ID, model.KindOpeningBalance).
+		First(&tx).Error; err != nil {
+		t.Fatalf("opening_balance transaction not found: %v", err)
+	}
+	if !tx.Amount.Equal(decimal.NewFromInt(1000)) {
+		t.Errorf("opening_balance amount = %s, want 1000", tx.Amount)
+	}
+
+	// Counts toward net worth (positions × price) but NOT income/spending.
+	dash := repository.NewDashboardRepository(g)
+	agg, err := dash.Summarize(ctx, userID, time.Now().AddDate(0, -1, 0), time.Now().AddDate(0, 0, 1))
+	if err != nil {
+		t.Fatalf("summarize: %v", err)
+	}
+	if !agg.NetWorth.Equal(decimal.NewFromInt(1000)) {
+		t.Errorf("net worth = %s, want 1000 (opening balance counts)", agg.NetWorth)
+	}
+	if !agg.Income.IsZero() || !agg.Spending.IsZero() {
+		t.Errorf("income=%s spending=%s, want 0/0 (opening_balance excluded from flow)", agg.Income, agg.Spending)
+	}
+}

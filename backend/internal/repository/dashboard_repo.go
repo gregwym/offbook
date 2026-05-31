@@ -154,6 +154,7 @@ func (r *dashboardRepo) Summarize(ctx context.Context, userID int64, from, to ti
 		FROM transactions
 		WHERE deleted_at IS NULL
 		  AND user_id = ?
+		  AND kind NOT IN ('opening_balance', 'adjustment')
 		  AND transaction_date >= ?
 		  AND transaction_date <  ?
 	`, userID, from, to).Scan(&ie).Error; err != nil {
@@ -232,6 +233,7 @@ func (r *dashboardRepo) SpendByCategory(ctx context.Context, userID int64, from,
 		WHERE t.deleted_at IS NULL
 		  AND t.user_id = ?
 		  AND t.is_transfer = FALSE
+		  AND t.kind NOT IN ('opening_balance', 'adjustment')
 		  AND t.amount < 0
 		  AND t.transaction_date >= ?
 		  AND t.transaction_date <  ?
@@ -292,6 +294,7 @@ func (r *dashboardRepo) CashFlowByMonth(ctx context.Context, userID int64, now t
 		WHERE deleted_at IS NULL
 		  AND user_id = ?
 		  AND is_transfer = FALSE
+		  AND kind NOT IN ('opening_balance', 'adjustment')
 		  AND transaction_date >= ?
 		  AND transaction_date <  ?
 		GROUP BY date_trunc('month', transaction_date)
