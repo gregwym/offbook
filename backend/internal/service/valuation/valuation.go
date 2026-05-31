@@ -120,6 +120,51 @@ func (s *Service) Value(ctx context.Context, pos model.Position, asOf time.Time,
 	return pos.Quantity.Mul(leg1).Mul(leg2), nil
 }
 
+// SetValuation is the result of valuing a set of positions in a single quote
+// currency at a point in time. It deliberately separates the priced total from
+// the positions that could not be priced, so callers can render an
+// "incomplete" figure rather than a wrong-but-confident one (#282): an unpriced
+// position contributes nothing to Value and is instead surfaced in Unpriced.
+//
+// Complete() is true when every position priced. A zero Value with a non-empty
+// Unpriced is "we don't know", distinct from a genuine zero balance.
+type SetValuation struct {
+	// Value is the sum of every position that priced fresh, in the quote asset.
+	Value decimal.Decimal
+	// Unpriced lists the asset_ids whose price chain was stale/missing at asOf.
+	// A nil/empty slice means the total is complete.
+	Unpriced []int64
+}
+
+// Complete reports whether every position in the set had a fresh price — i.e.
+// Value is the whole story, not a partial sum.
+func (v SetValuation) Complete() bool { return len(v.Unpriced) == 0 }
+
+// ValuePositions values an arbitrary set of positions in quoteAssetID at asOf
+// and reports which ones could not be priced. This is the single derivation
+// behind net worth, allocation, and trend (#282): callers assemble the
+// position set — current rows for "now", or synthetic rows carrying the
+// historical fold quantity for a past asOf — and differ only in that set and
+// the quote currency.
+//
+// Missing prices are NOT coerced to $0: a stale/absent price chain drops the
+// position from Value and records its asset in Unpriced. Other errors abort.
+func (s *Service) ValuePositions(ctx context.Context, positions []model.Position, asOf time.Time, quoteAssetID int64) (SetValuation, error) {
+	out := SetValuation{Value: decimal.Zero}
+	for _, p := range positions {
+		v, err := s.Value(ctx, p, asOf, quoteAssetID)
+		if errors.Is(err, ErrStalePrice) {
+			out.Unpriced = append(out.Unpriced, p.AssetID)
+			continue
+		}
+		if err != nil {
+			return SetValuation{}, err
+		}
+		out.Value = out.Value.Add(v)
+	}
+	return out, nil
+}
+
 // AccountBalance returns the sum of the account's positions valued at
 // asOf in the account's primary_quote_asset_id. Positions whose price
 // chain is stale contribute 0 — this matches the soft-fallback behavior
@@ -138,20 +183,11 @@ func (s *Service) AccountBalance(ctx context.Context, userID, accountID int64, a
 	if err != nil {
 		return decimal.Zero, nil, fmt.Errorf("valuation: list positions for account %d: %w", accountID, err)
 	}
-	total := decimal.Zero
-	var stale []int64
-	for _, p := range positions {
-		v, err := s.Value(ctx, p, asOf, acct.PrimaryQuoteAssetID)
-		if errors.Is(err, ErrStalePrice) {
-			stale = append(stale, p.AssetID)
-			continue
-		}
-		if err != nil {
-			return decimal.Zero, nil, err
-		}
-		total = total.Add(v)
+	val, err := s.ValuePositions(ctx, positions, asOf, acct.PrimaryQuoteAssetID)
+	if err != nil {
+		return decimal.Zero, nil, err
 	}
-	return total, stale, nil
+	return val.Value, val.Unpriced, nil
 }
 
 // lookupRate returns the most-recent price for (assetID → quoteAssetID)
