@@ -123,7 +123,7 @@ func TestEndToEnd_RegressionFor266And268(t *testing.T) {
 	}
 	var missing []frontendCall
 	for _, fc := range frontend {
-		if _, ok := backendSet[fc.route.normalized()]; !ok {
+		if _, ok := backendSet[fc.normalized()]; !ok {
 			missing = append(missing, fc)
 		}
 	}
