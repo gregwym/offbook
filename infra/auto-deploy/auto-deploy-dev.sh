@@ -47,4 +47,6 @@ fi
 echo "auto-deploy: deployed=${deployed:-none} -> origin/$BRANCH=$remote; redeploying"
 git checkout --quiet "$BRANCH"
 git merge --ff-only --quiet "origin/$BRANCH"
-make deploy-dev
+# Env-agnostic: deploys the instance configured by ENV_FILE (default .env).
+# Override OFFBOOK_ENV_FILE to point a prod host's timer at .env.prod.
+make deploy ENV_FILE="${OFFBOOK_ENV_FILE:-.env}"
