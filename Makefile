@@ -1,19 +1,22 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help verify acceptance qa-smoke qa-suite bootstrap-dev deploy-dev deploy
+.PHONY: help verify acceptance qa-smoke qa-suite require-env bootstrap deploy
 
-# Local Tailscale dev stack (ADR-0016). Omits docker-compose.tailscale.yml on
-# purpose: the sidecar is authenticated and long-lived, so deploy-dev rebuilds
-# only the app images and never touches the sidecar or postgres.
-DEV_COMPOSE := docker compose -p offbook-dev -f docker-compose.yml
-# Full stack incl. the Tailscale sidecar — used by bootstrap-dev for first boot,
-# when postgres + the sidecar don't exist yet.
-DEV_COMPOSE_FULL := docker compose -p offbook-dev -f docker-compose.yml -f docker-compose.tailscale.yml
-
-# Remote deploy target (see the `deploy` target below). DEPLOY_HOST is required;
-# DEPLOY_PATH is where the repo is checked out on that host.
-DEPLOY_HOST ?=
-DEPLOY_PATH ?= ~/offbook
+# bootstrap/deploy are env-agnostic — ENV_FILE selects the instance (ADR-0016).
+# Each env file is the single source of truth for an instance: it declares
+# OFFBOOK_PROJECT (compose project name) and OFFBOOK_COMPOSE_FILES (its overlay
+# list, incl. the tailscale sidecar) alongside its secrets/TS_*/DB.
+#   make deploy                  -> dev   (.env)
+#   make deploy ENV_FILE=.env.prod  -> prod
+ENV_FILE ?= .env
+# Read project + overlay files from the env file (custom OFFBOOK_* vars, not
+# COMPOSE_FILE, so stray `docker compose` calls aren't affected). Missing file
+# -> empty; the require-env prerequisite turns that into a clear error.
+OFFBOOK_PROJECT := $(shell sed -n 's/^OFFBOOK_PROJECT=//p' $(ENV_FILE) 2>/dev/null)
+OFFBOOK_FILES := $(shell sed -n 's/^OFFBOOK_COMPOSE_FILES=//p' $(ENV_FILE) 2>/dev/null | tr ':' ' ')
+# Compose invocation for the selected instance: explicit project + overlays from
+# the env file, with the env file as the interpolation/secret source.
+COMPOSE := docker compose --env-file $(ENV_FILE) -p $(OFFBOOK_PROJECT) $(foreach f,$(OFFBOOK_FILES),-f $(f))
 
 ACCEPTANCE_DIR := acceptance
 ACCEPTANCE_BASE_URL ?= http://localhost:15173
@@ -27,66 +30,56 @@ help:
 	@printf '%s\n' '  command make qa-smoke            Run the baseline acceptance smoke suite'
 	@printf '%s\n' '  command make qa-suite QA_SUITE=plaid  Run one acceptance suite or spec pattern'
 	@printf '%s\n' '  command make verify              Run the backend CI mirror from backend/'
-	@printf '%s\n' '  command make bootstrap-dev TS_AUTHKEY=tskey-...  First boot: bring up the FULL stack (postgres + sidecar), stamped'
-	@printf '%s\n' '  command make deploy-dev          Rebuild + recreate the local offbook-dev stack at the current HEAD'
-	@printf '%s\n' '  command make deploy DEPLOY_HOST=user@host  Redeploy a remote host over SSH (current HEAD; push first)'
+	@printf '%s\n' '  command make bootstrap [ENV_FILE=.env]   First boot: full stack (postgres + sidecar), stamped, per the env file'
+	@printf '%s\n' '  command make deploy    [ENV_FILE=.env]   Rebuild + recreate app, prune; .env=dev, ENV_FILE=.env.prod=prod'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Backend-only targets live in backend/Makefile; run them from backend/ with command make <target>.'
 
 verify:
 	@$(MAKE) -C backend verify
 
-# bootstrap-dev is the ONE-TIME first boot: it brings up the full stack —
-# postgres + backend + frontend + the Tailscale sidecar — because deploy-dev
-# (--no-deps, no tailscale override) can't create those. Crucially it stamps
-# the build with the current SHA (GIT_SHA), same as deploy-dev, so /health
-# reports a real commit from the very first boot instead of "dev". After this,
-# use deploy-dev (or the auto-deploy timer) for updates.
-#   command make bootstrap-dev TS_AUTHKEY=tskey-auth-... [TS_HOSTNAME=offbook-dev]
-bootstrap-dev:
-	@test -n "$${TS_AUTHKEY:-}" || { echo 'Set TS_AUTHKEY=tskey-... — first boot registers the Tailscale sidecar. TS_HOSTNAME defaults to offbook-dev.' >&2; exit 2; }
-	@SHA="$$(git rev-parse --short HEAD)"; \
-		echo "Bootstrapping offbook-dev @ $$SHA (postgres + backend + frontend + tailscale)…"; \
-		GIT_SHA="$$SHA" TS_HOSTNAME="$${TS_HOSTNAME:-offbook-dev}" $(DEV_COMPOSE_FULL) up -d --build
-	@printf 'Bootstrapped offbook-dev → '; \
-		curl -fsS http://localhost:8000/api/v1/health 2>/dev/null && echo \
-		|| echo '(backend still starting — check GET /health in a few seconds)'
+# require-env: shared guard for bootstrap/deploy — the env file must exist and
+# declare OFFBOOK_PROJECT. Keeps an empty $(COMPOSE) (missing -p/-f) from running.
+require-env:
+	@test -f "$(ENV_FILE)" || { echo "Env file '$(ENV_FILE)' not found — copy .env.example to .env (or .env.prod.example to .env.prod) and fill it in." >&2; exit 2; }
+	@test -n "$(OFFBOOK_PROJECT)" || { echo "OFFBOOK_PROJECT missing from $(ENV_FILE) — add OFFBOOK_PROJECT and OFFBOOK_COMPOSE_FILES (see .env.example)." >&2; exit 2; }
 
-# deploy-dev redeploys the local offbook-dev stack from whatever is checked out.
-# It stamps the binary with the current short SHA (surfaced at GET /health and
-# Settings → About, #310), recreates only backend + frontend (--no-deps leaves
-# postgres + the Tailscale sidecar running), and prints the new /health version.
-# Migrations run on backend boot. There is no CD — this is the manual deploy.
-#
-# After recreating it prunes DANGLING images — the untagged layers orphaned when
-# the :latest tag moved to the new build — so repeated deploys don't fill the
-# disk (matters on the Pi's SD card). Dangling-only: it never removes tagged or
-# in-use images, so the running stack is safe.
-deploy-dev:
+# bootstrap is the ONE-TIME first boot for an instance: it brings up the full
+# stack — postgres + backend + frontend + the Tailscale sidecar — as declared by
+# the env file's OFFBOOK_COMPOSE_FILES, stamped with the current SHA so /health
+# reports a real commit from the start (not "dev"). Compose fail-fasts if the
+# env file is missing TS_AUTHKEY/TS_HOSTNAME/SESSION_SECRET. After this, use
+# deploy (or the auto-deploy timer) for updates.
+#   command make bootstrap                    # dev   (.env)
+#   command make bootstrap ENV_FILE=.env.prod # prod
+bootstrap: require-env
 	@SHA="$$(git rev-parse --short HEAD)"; \
-		echo "Building offbook-dev at $$SHA…"; \
-		GIT_SHA="$$SHA" $(DEV_COMPOSE) build backend frontend
-	@$(DEV_COMPOSE) up -d --no-deps backend frontend
+		echo "Bootstrapping $(OFFBOOK_PROJECT) @ $$SHA from $(ENV_FILE)…"; \
+		GIT_SHA="$$SHA" $(COMPOSE) up -d --build
+	@printf 'Bootstrapped $(OFFBOOK_PROJECT) → '; \
+		$(COMPOSE) exec -T backend wget -qO- http://localhost:8000/api/v1/health 2>/dev/null && echo \
+		|| echo '(backend still starting — check /health shortly)'
+
+# deploy updates an already-bootstrapped instance from whatever is checked out:
+# it stamps the binary with the current short SHA (surfaced at GET /health and
+# Settings → About, #310) and recreates only backend + frontend (--no-deps leaves
+# postgres + the sidecar running). Migrations run on backend boot.
+#
+# It then prunes DANGLING images — the untagged layers orphaned when the :latest
+# tag moved to the new build — so repeated deploys don't fill the disk (matters
+# on the Pi's SD card). Dangling-only: tagged / in-use images are never touched.
+#
+# Env-agnostic — the env file picks the instance:
+#   command make deploy                    # dev   (.env)
+#   command make deploy ENV_FILE=.env.prod # prod
+deploy: require-env
+	@SHA="$$(git rev-parse --short HEAD)"; \
+		echo "Deploying $(OFFBOOK_PROJECT) @ $$SHA from $(ENV_FILE)…"; \
+		GIT_SHA="$$SHA" $(COMPOSE) up -d --no-deps --build backend frontend
 	@printf 'Pruning dangling images… '; docker image prune -f | tail -1
-	@printf 'Deployed offbook-dev → '; curl -fsS http://localhost:8000/api/v1/health && echo
-
-# deploy redeploys a REMOTE host over SSH by running deploy-dev *on* that host,
-# not by driving a remote Docker socket. Running it remotely means the deploy
-# uses the remote's own .env, named volumes, and Docker daemon — so no secrets
-# or config from your machine leak into the remote (which DOCKER_HOST=ssh:// +
-# `env_file: .env` would cause). It deploys whatever commit YOU have checked out
-# locally (parity with deploy-dev), so push it to origin first.
-#
-# Remote prerequisites (an ADR-0016 self-host box already meets these): the repo
-# checked out at DEPLOY_PATH, Docker + make installed, and the offbook-dev stack
-# provisioned once (postgres volume + authenticated Tailscale sidecar).
-#
-#   command make deploy DEPLOY_HOST=user@host [DEPLOY_PATH=/srv/offbook]
-deploy:
-	@test -n "$(DEPLOY_HOST)" || { echo 'Set DEPLOY_HOST=user@host — e.g. command make deploy DEPLOY_HOST=greg@offbook-host' >&2; exit 2; }
-	@SHA="$$(git rev-parse --short HEAD)"; \
-		echo "Deploying $$SHA → $(DEPLOY_HOST):$(DEPLOY_PATH) over ssh…"; \
-		ssh "$(DEPLOY_HOST)" "set -e; cd $(DEPLOY_PATH) && git fetch --quiet origin && git checkout --quiet $$SHA && make deploy-dev"
+	@printf 'Deployed $(OFFBOOK_PROJECT) → '; \
+		$(COMPOSE) exec -T backend wget -qO- http://localhost:8000/api/v1/health 2>/dev/null && echo \
+		|| echo '(backend still starting — check /health shortly)'
 
 acceptance:
 	@./scripts/qa-assert-role.sh
