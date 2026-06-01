@@ -50,6 +50,48 @@ Concretely:
 - **Package as a single binary / `.app`.** Discussed and deferred — Postgres dependency makes this a real project (SQLite migration or bundled Postgres process). Not blocked by this ADR; orthogonal.
 
 ## Follow-up
-- **Backlog: `docker-compose.prod.yml`** — separate DB name (`offbook_prod`), separate named volume, no init scripts that create dev/test DBs, prod env defaults (e.g. fail-fast on missing `SESSION_SECRET`, `PLAID_TOKEN_KEY`).
 - **Backlog: ACL template** under `infra/tailscale/` showing the tag scheme (`tag:offbook`, `tag:offbook-prod`, `tag:offbook-dev`) and a sample ACL granting the operator's tag access to both.
 - **Backlog: Funnel exposure** (`tailscale funnel`) for instances the operator wants reachable from the public internet. Not in scope for this ADR — Funnel changes the threat model significantly and deserves its own decision.
+
+## Addendum (#328): near-zero-config deploy
+
+The first cut of `make deploy` was "env-agnostic": a single generic target whose
+entire shape came from the env file, which therefore had to declare
+`OFFBOOK_PROJECT` and `OFFBOOK_COMPOSE_FILES` (the compose project name and
+overlay list) alongside its secrets. That conflated three different kinds of
+input and made every operator hand-write compose plumbing for the common
+one-instance case. We tightened it to **convention over configuration**:
+
+1. **Compose plumbing is convention, selected by `FLAVOR`.** `make deploy`
+   (FLAVOR=dev) → project `offbook`, overlays `base + tailscale`, env `.env`;
+   `make deploy FLAVOR=prod` → `offbook-prod`, `base + prod + tailscale`,
+   `.env.prod`. `OFFBOOK_PROJECT`/`OFFBOOK_COMPOSE_FILES` remain honored as an
+   env-file **escape hatch** for exotic multi-instance hosts, but are no longer
+   required and are gone from the standard examples.
+2. **The env file holds secrets only, and `make deploy` bootstraps it.** On
+   first boot it creates the file from `<env>.example` and generates a
+   `SESSION_SECRET` if absent — never rotating an existing one (rotation
+   invalidates sessions and stored Claude keys; see `.env.example`).
+3. **Tailscale identity is bootstrap-only, like the auth key already was.**
+   `TS_HOSTNAME` joins `TS_AUTHKEY` as a command-line-only, first-boot value —
+   both are read only when the sidecar registers. After first boot, deploys
+   recreate only `backend`+`frontend` (`--no-deps`), so the sidecar (and its
+   `TS_HOSTNAME`) is never touched; identity lives in the `tailscale_state`
+   volume. Neither value is ever stored in the repo or env file.
+4. **Auto-deploy and teardown are no-edit make targets.** Auto-deploy moved from
+   a system-level unit requiring hand-edited `User=`/paths to a **user-level**,
+   FLAVOR-templated systemd unit (`offbook-deploy@<flavor>`) installed by
+   `make auto-deploy-install` (renders the unit from a checked-in template,
+   enables the timer, turns on lingering — no sudo, no editing).
+   `make auto-deploy-uninstall`, `make down` (stop), and `make teardown`
+   (drop volumes, de-register the node) round out a symmetric lifecycle. The
+   timer reads "what's deployed" via `make deployed-sha` (a container exec), so
+   it works for prod too, which publishes no host ports.
+
+Net operator surface for the common case: `make deploy TS_AUTHKEY=... TS_HOSTNAME=...`
+once, `make deploy` thereafter, `make auto-deploy-install` to automate — no file
+editing at any step.
+
+Also in #328: a real `docker-compose.prod.yml` landed (separate DB name,
+named volume, no host ports, fail-fast on missing `SESSION_SECRET`), closing the
+earlier "Backlog: `docker-compose.prod.yml`" follow-up.

@@ -1,5 +1,7 @@
+# User-level templated timer. Enabled per FLAVOR by install.sh, e.g.
+#   systemctl --user enable --now offbook-deploy@dev.timer
 [Unit]
-Description=Poll origin/main and redeploy offbook-dev every 2 minutes
+Description=Poll origin/main and redeploy offbook (%i) every 2 minutes
 
 [Timer]
 # First check shortly after boot, then every 2 minutes while the host is up.
@@ -8,6 +10,7 @@ OnUnitActiveSec=2min
 AccuracySec=15s
 # Catch up with a single run if the host was asleep/off across a tick.
 Persistent=true
+Unit=offbook-deploy@%i.service
 
 [Install]
 WantedBy=timers.target

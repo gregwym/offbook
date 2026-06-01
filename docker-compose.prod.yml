@@ -3,7 +3,10 @@
 # collisions, no shared Postgres volume). Tailscale-fronted only — the
 # expected ingress is docker-compose.tailscale.yml; no host ports are bound.
 #
-# Usage (with Tailscale sidecar):
+# Usage (with Tailscale sidecar) — selected by FLAVOR=prod:
+#   make deploy FLAVOR=prod TS_AUTHKEY=tskey-... TS_HOSTNAME=offbook-prod  # first boot
+#   make deploy FLAVOR=prod                                                # updates
+# which expands to:
 #   docker compose -p offbook-prod \
 #     --env-file .env.prod \
 #     -f docker-compose.yml \
@@ -11,8 +14,9 @@
 #     -f docker-compose.tailscale.yml \
 #     up -d
 #
-# Required env (in .env.prod): SESSION_SECRET, TS_AUTHKEY, TS_HOSTNAME.
-# See .env.prod.example for the full set. See ADR-0016 for the deployment pattern.
+# Secrets (in .env.prod): SESSION_SECRET (auto-generated on first boot),
+# FRONTEND_URL. Tailscale identity (TS_AUTHKEY, TS_HOSTNAME) is passed once on
+# the command line, not stored. See .env.prod.example and ADR-0016.
 services:
   postgres:
     environment:
