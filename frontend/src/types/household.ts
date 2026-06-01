@@ -55,9 +55,11 @@ export type CreateInviteResult = {
   token: string
 }
 
-// SharedBudget mirrors backend model.SharedBudget.
+// SharedBudget is a household-owned row of the unified budgets table
+// (ADR-0018): user_id is null, household_id is set.
 export type SharedBudget = {
   id: number
+  user_id: number | null
   household_id: number
   category_id: number
   period: 'monthly' | 'weekly' | 'annual'
@@ -84,9 +86,11 @@ export type UpdateSharedBudgetInput = {
   is_active?: boolean
 }
 
-// SharedGoal mirrors backend model.SharedGoal.
+// SharedGoal is a household-owned row of the unified savings_goals table
+// (ADR-0018): user_id is null, household_id is set, no account link.
 export type SharedGoal = {
   id: number
+  user_id: number | null
   household_id: number
   name: string
   target_amount: string

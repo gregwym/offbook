@@ -3,7 +3,6 @@ package model
 import (
 	"time"
 
-	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -77,33 +76,6 @@ type AccountShare struct {
 
 func (AccountShare) TableName() string { return "account_shares" }
 
-// SharedBudget mirrors Budget but is owned by a household. No CRUD in M2.5.
-type SharedBudget struct {
-	ID          int64           `gorm:"primaryKey" json:"id"`
-	HouseholdID int64           `gorm:"not null" json:"household_id"`
-	CategoryID  int64           `gorm:"not null" json:"category_id"`
-	Period      string          `gorm:"not null" json:"period"`
-	Amount      decimal.Decimal `gorm:"type:numeric(30,18);not null" json:"amount"`
-	Rollover    bool            `gorm:"not null;default:false" json:"rollover"`
-	IsActive    bool            `gorm:"not null;default:true" json:"is_active"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt  `gorm:"index" json:"-"`
-}
-
-func (SharedBudget) TableName() string { return "shared_budgets" }
-
-// SharedGoal mirrors SavingsGoal but is owned by a household. No CRUD in M2.5.
-type SharedGoal struct {
-	ID            int64           `gorm:"primaryKey" json:"id"`
-	HouseholdID   int64           `gorm:"not null" json:"household_id"`
-	Name          string          `gorm:"not null" json:"name"`
-	TargetAmount  decimal.Decimal `gorm:"type:numeric(30,18);not null" json:"target_amount"`
-	CurrentAmount decimal.Decimal `gorm:"type:numeric(30,18);not null;default:0" json:"current_amount"`
-	TargetDate    *time.Time      `gorm:"type:date" json:"target_date,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
-	DeletedAt     gorm.DeletedAt  `gorm:"index" json:"-"`
-}
-
-func (SharedGoal) TableName() string { return "shared_goals" }
+// Household-owned budgets and goals are no longer separate models: ADR-0018
+// folded shared_budgets/shared_goals into the unified Budget / SavingsGoal
+// tables, owned via HouseholdID. See repository.PlanOwner.

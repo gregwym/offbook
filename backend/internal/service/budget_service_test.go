@@ -82,7 +82,7 @@ func TestBudgetService_Create_Validation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			b, err := svc.Create(ctx, userID, tc.in)
+			b, err := svc.Create(ctx, repository.UserOwner(userID), tc.in)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Errorf("err = %v, want %v", err, tc.wantErr)
@@ -95,7 +95,7 @@ func TestBudgetService_Create_Validation(t *testing.T) {
 			if b == nil || b.ID == 0 {
 				t.Fatalf("got %+v, want created budget", b)
 			}
-			t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, b.ID) })
+			t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userID), b.ID) })
 		})
 	}
 }
@@ -107,15 +107,15 @@ func TestBudgetService_Create_DuplicateActiveConflicts(t *testing.T) {
 	svc, userID, categoryID, _ := newBudgetSvc(t)
 	ctx := context.Background()
 
-	first, err := svc.Create(ctx, userID, service.CreateBudgetInput{
+	first, err := svc.Create(ctx, repository.UserOwner(userID), service.CreateBudgetInput{
 		CategoryID: categoryID, Period: "monthly", Amount: decimal.NewFromInt(500),
 	})
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, first.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userID), first.ID) })
 
-	_, err = svc.Create(ctx, userID, service.CreateBudgetInput{
+	_, err = svc.Create(ctx, repository.UserOwner(userID), service.CreateBudgetInput{
 		CategoryID: categoryID, Period: "monthly", Amount: decimal.NewFromInt(900),
 	})
 	if !errors.Is(err, service.ErrDuplicateActiveBudget) {
@@ -129,23 +129,23 @@ func TestBudgetService_TenantIsolation(t *testing.T) {
 	svc, userA, categoryID, g := newBudgetSvc(t)
 	ctx := context.Background()
 
-	b, err := svc.Create(ctx, userA, service.CreateBudgetInput{
+	b, err := svc.Create(ctx, repository.UserOwner(userA), service.CreateBudgetInput{
 		CategoryID: categoryID, Period: "monthly", Amount: decimal.NewFromInt(300),
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userA, b.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userA), b.ID) })
 
 	userB := seedTestUser(t, g)
-	if _, err := svc.Get(ctx, userB, b.ID); !errors.Is(err, service.ErrBudgetNotFound) {
+	if _, err := svc.Get(ctx, repository.UserOwner(userB), b.ID); !errors.Is(err, service.ErrBudgetNotFound) {
 		t.Errorf("cross-tenant Get err = %v, want ErrBudgetNotFound", err)
 	}
-	if err := svc.SoftDelete(ctx, userB, b.ID); !errors.Is(err, service.ErrBudgetNotFound) {
+	if err := svc.SoftDelete(ctx, repository.UserOwner(userB), b.ID); !errors.Is(err, service.ErrBudgetNotFound) {
 		t.Errorf("cross-tenant SoftDelete err = %v, want ErrBudgetNotFound", err)
 	}
 	newAmt := decimal.NewFromInt(1)
-	if _, err := svc.Update(ctx, userB, b.ID, service.UpdateBudgetInput{Amount: &newAmt}); !errors.Is(err, service.ErrBudgetNotFound) {
+	if _, err := svc.Update(ctx, repository.UserOwner(userB), b.ID, service.UpdateBudgetInput{Amount: &newAmt}); !errors.Is(err, service.ErrBudgetNotFound) {
 		t.Errorf("cross-tenant Update err = %v, want ErrBudgetNotFound", err)
 	}
 }
@@ -191,13 +191,13 @@ func TestBudgetService_Spend_PeriodBoundary(t *testing.T) {
 	mkSpend(time.Date(2026, 5, 14, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(200))  // inflow — not spend
 	mkSpend(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-999))  // out of period
 
-	b, err := svc.Create(ctx, userID, service.CreateBudgetInput{
+	b, err := svc.Create(ctx, repository.UserOwner(userID), service.CreateBudgetInput{
 		CategoryID: categoryID, Period: "monthly", Amount: decimal.NewFromInt(700),
 	})
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, b.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userID), b.ID) })
 
 	view, err := svc.Spend(ctx, userID, b.ID)
 	if err != nil {
@@ -261,13 +261,13 @@ func TestBudgetService_Spend_TransfersExcluded(t *testing.T) {
 		t.Fatalf("seed spend: %v", err)
 	}
 
-	b, err := svc.Create(ctx, userID, service.CreateBudgetInput{
+	b, err := svc.Create(ctx, repository.UserOwner(userID), service.CreateBudgetInput{
 		CategoryID: categoryID, Period: "monthly", Amount: decimal.NewFromInt(100),
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, b.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userID), b.ID) })
 
 	view, err := svc.Spend(ctx, userID, b.ID)
 	if err != nil {
@@ -306,13 +306,13 @@ func TestBudgetService_Spend_OnlyOwnUserCounted(t *testing.T) {
 		t.Fatalf("seed B txn: %v", err)
 	}
 
-	b, err := svc.Create(ctx, userA, service.CreateBudgetInput{
+	b, err := svc.Create(ctx, repository.UserOwner(userA), service.CreateBudgetInput{
 		CategoryID: categoryID, Period: "monthly", Amount: decimal.NewFromInt(100),
 	})
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userA, b.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userA), b.ID) })
 
 	view, err := svc.Spend(ctx, userA, b.ID)
 	if err != nil {
@@ -357,13 +357,13 @@ func TestBudgetService_Spend_WeeklyMondayStart(t *testing.T) {
 	mk(time.Date(2026, 5, 17, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-30))   // Sunday May 17 — in week
 	mk(time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-9999)) // Monday May 18 — next week
 
-	b, err := svc.Create(ctx, userID, service.CreateBudgetInput{
+	b, err := svc.Create(ctx, repository.UserOwner(userID), service.CreateBudgetInput{
 		CategoryID: categoryID, Period: "weekly", Amount: decimal.NewFromInt(200),
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, b.ID) })
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userID), b.ID) })
 
 	view, err := svc.Spend(ctx, userID, b.ID)
 	if err != nil {

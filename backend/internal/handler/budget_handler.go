@@ -7,12 +7,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 
+	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/auth"
 )
 
 type BudgetHandler struct {
 	svc *service.BudgetService
+}
+
+// personalOwner is the session user's personal scope. Budgets created through
+// this handler are always personal; household budgets go through the household
+// handler (ADR-0018).
+func personalOwner(c *gin.Context) repository.PlanOwner {
+	return repository.UserOwner(auth.MustUserID(c.Request.Context()))
 }
 
 func NewBudgetHandler(s *service.BudgetService) *BudgetHandler {
@@ -42,7 +50,7 @@ func (h *BudgetHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
 		return
 	}
-	b, err := h.svc.Create(c.Request.Context(), auth.MustUserID(c.Request.Context()), service.CreateBudgetInput{
+	b, err := h.svc.Create(c.Request.Context(), personalOwner(c), service.CreateBudgetInput{
 		CategoryID: req.CategoryID,
 		Period:     req.Period,
 		Amount:     req.Amount,
@@ -61,7 +69,7 @@ func (h *BudgetHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	b, err := h.svc.Get(c.Request.Context(), auth.MustUserID(c.Request.Context()), id)
+	b, err := h.svc.Get(c.Request.Context(), personalOwner(c), id)
 	if err != nil {
 		h.writeServiceError(c, err)
 		return
@@ -70,7 +78,7 @@ func (h *BudgetHandler) Get(c *gin.Context) {
 }
 
 func (h *BudgetHandler) List(c *gin.Context) {
-	items, err := h.svc.List(c.Request.Context(), auth.MustUserID(c.Request.Context()))
+	items, err := h.svc.List(c.Request.Context(), personalOwner(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
 		return
@@ -96,7 +104,7 @@ func (h *BudgetHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
 		return
 	}
-	b, err := h.svc.Update(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, service.UpdateBudgetInput(req))
+	b, err := h.svc.Update(c.Request.Context(), personalOwner(c), id, service.UpdateBudgetInput(req))
 	if err != nil {
 		h.writeServiceError(c, err)
 		return
@@ -109,7 +117,7 @@ func (h *BudgetHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.SoftDelete(c.Request.Context(), auth.MustUserID(c.Request.Context()), id); err != nil {
+	if err := h.svc.SoftDelete(c.Request.Context(), personalOwner(c), id); err != nil {
 		h.writeServiceError(c, err)
 		return
 	}

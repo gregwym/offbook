@@ -12,6 +12,7 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
+	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/household"
 )
 
@@ -21,10 +22,11 @@ import (
 func withSharedBudgets(t *testing.T) (*household.Service, *gorm.DB, *model.Category) {
 	t.Helper()
 	svc, _, g := newSvc(t)
-	svc.WithSharedBudgets(
-		repository.NewSharedBudgetRepository(g),
+	budgetSvc := service.NewBudgetService(
+		repository.NewBudgetRepository(g),
 		repository.NewCategoryRepository(g),
 	)
+	svc.WithSharedBudgets(budgetSvc)
 	cat := &model.Category{
 		Name: "SB Test Cat",
 		Slug: fmt.Sprintf("sb-test-%d", time.Now().UnixNano()),
@@ -33,7 +35,7 @@ func withSharedBudgets(t *testing.T) (*household.Service, *gorm.DB, *model.Categ
 		t.Fatalf("seed category: %v", err)
 	}
 	t.Cleanup(func() {
-		g.Unscoped().Where("category_id = ?", cat.ID).Delete(&model.SharedBudget{})
+		g.Unscoped().Where("category_id = ?", cat.ID).Delete(&model.Budget{})
 		g.Unscoped().Delete(&model.Category{}, cat.ID)
 	})
 	return svc, g, cat
@@ -83,8 +85,11 @@ func TestCreateSharedBudget_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSharedBudget: %v", err)
 	}
-	if b.HouseholdID != hhID {
-		t.Errorf("HouseholdID = %d, want %d", b.HouseholdID, hhID)
+	if b.HouseholdID == nil || *b.HouseholdID != hhID {
+		t.Errorf("HouseholdID = %v, want %d", b.HouseholdID, hhID)
+	}
+	if b.UserID != nil {
+		t.Errorf("UserID = %v, want nil for a household budget", b.UserID)
 	}
 	if b.CategoryID != cat.ID || b.Period != "monthly" || !b.Amount.Equal(decimal.NewFromInt(500)) {
 		t.Errorf("budget = %+v, want monthly $500 in cat %d", b, cat.ID)

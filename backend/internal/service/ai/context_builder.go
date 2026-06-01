@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
 )
 
@@ -192,7 +193,7 @@ func (b *ContextBuilder) Build(ctx context.Context, userID int64) (*Context, err
 	}
 
 	if b.budgets != nil {
-		list, err := b.budgets.List(ctx, userID)
+		list, err := b.budgets.List(ctx, repository.UserOwner(userID))
 		if err != nil {
 			return nil, fmt.Errorf("ai: list budgets: %w", err)
 		}
@@ -219,7 +220,7 @@ func (b *ContextBuilder) Build(ctx context.Context, userID int64) (*Context, err
 	}
 
 	if b.goals != nil {
-		gs, err := b.goals.List(ctx, userID)
+		gs, err := b.goals.List(ctx, repository.UserOwner(userID))
 		if err != nil {
 			return nil, fmt.Errorf("ai: list goals: %w", err)
 		}

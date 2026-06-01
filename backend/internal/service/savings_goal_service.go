@@ -57,9 +57,10 @@ func NewSavingsGoalService(repo repository.SavingsGoalRepository, acctRepo repos
 	return &SavingsGoalService{repo: repo, acctRepo: acctRepo}
 }
 
-func (s *SavingsGoalService) Create(ctx context.Context, userID int64, in CreateGoalInput) (*model.SavingsGoal, error) {
+func (s *SavingsGoalService) Create(ctx context.Context, owner repository.PlanOwner, in CreateGoalInput) (*model.SavingsGoal, error) {
 	g := &model.SavingsGoal{
-		UserID:        userID,
+		UserID:        owner.UserID,
+		HouseholdID:   owner.HouseholdID,
 		Name:          strings.TrimSpace(in.Name),
 		TargetAmount:  in.TargetAmount,
 		CurrentAmount: decimal.Zero,
@@ -75,8 +76,8 @@ func (s *SavingsGoalService) Create(ctx context.Context, userID int64, in Create
 	return g, nil
 }
 
-func (s *SavingsGoalService) Get(ctx context.Context, userID, id int64) (*model.SavingsGoal, error) {
-	g, err := s.repo.GetByID(ctx, userID, id)
+func (s *SavingsGoalService) Get(ctx context.Context, owner repository.PlanOwner, id int64) (*model.SavingsGoal, error) {
+	g, err := s.repo.GetByID(ctx, owner, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrSavingsGoalNotFound
@@ -86,12 +87,12 @@ func (s *SavingsGoalService) Get(ctx context.Context, userID, id int64) (*model.
 	return g, nil
 }
 
-func (s *SavingsGoalService) List(ctx context.Context, userID int64) ([]model.SavingsGoal, error) {
-	return s.repo.List(ctx, userID)
+func (s *SavingsGoalService) List(ctx context.Context, owner repository.PlanOwner) ([]model.SavingsGoal, error) {
+	return s.repo.List(ctx, owner)
 }
 
-func (s *SavingsGoalService) Update(ctx context.Context, userID, id int64, in UpdateGoalInput) (*model.SavingsGoal, error) {
-	g, err := s.Get(ctx, userID, id)
+func (s *SavingsGoalService) Update(ctx context.Context, owner repository.PlanOwner, id int64, in UpdateGoalInput) (*model.SavingsGoal, error) {
+	g, err := s.Get(ctx, owner, id)
 	if err != nil {
 		return nil, err
 	}
@@ -125,8 +126,8 @@ func (s *SavingsGoalService) Update(ctx context.Context, userID, id int64, in Up
 	return g, nil
 }
 
-func (s *SavingsGoalService) SoftDelete(ctx context.Context, userID, id int64) error {
-	if err := s.repo.SoftDelete(ctx, userID, id); err != nil {
+func (s *SavingsGoalService) SoftDelete(ctx context.Context, owner repository.PlanOwner, id int64) error {
+	if err := s.repo.SoftDelete(ctx, owner, id); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return ErrSavingsGoalNotFound
 		}
@@ -138,11 +139,11 @@ func (s *SavingsGoalService) SoftDelete(ctx context.Context, userID, id int64) e
 // Contribute applies delta (positive = deposit, negative = withdrawal)
 // atomically. Returns the post-update row. delta=0 is rejected because
 // it's almost always a bug in the caller.
-func (s *SavingsGoalService) Contribute(ctx context.Context, userID, id int64, delta decimal.Decimal) (*model.SavingsGoal, error) {
+func (s *SavingsGoalService) Contribute(ctx context.Context, owner repository.PlanOwner, id int64, delta decimal.Decimal) (*model.SavingsGoal, error) {
 	if delta.IsZero() {
 		return nil, ErrZeroContribution
 	}
-	g, err := s.repo.AddContribution(ctx, userID, id, delta)
+	g, err := s.repo.AddContribution(ctx, owner, id, delta)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrSavingsGoalNotFound
@@ -184,8 +185,14 @@ func (s *SavingsGoalService) validate(ctx context.Context, g *model.SavingsGoal)
 		return ErrInvalidTargetAmount
 	}
 	if g.AccountID != nil {
+		// account_id is only meaningful for a personal goal (DB CHECK
+		// savings_goals_account_personal_chk). A household goal with an
+		// account link is a caller bug.
+		if g.UserID == nil {
+			return ErrGoalAccountMismatch
+		}
 		// Owning user must match — block cross-user account linkage.
-		if _, err := s.acctRepo.GetByID(ctx, g.UserID, *g.AccountID); err != nil {
+		if _, err := s.acctRepo.GetByID(ctx, *g.UserID, *g.AccountID); err != nil {
 			if errors.Is(err, repository.ErrNotFound) {
 				return ErrGoalAccountMismatch
 			}

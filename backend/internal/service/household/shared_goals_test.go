@@ -11,14 +11,19 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
+	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/household"
 )
 
-// withSharedGoals wires the SharedGoal repo on top of newSvc's defaults.
+// withSharedGoals wires the unified goal service on top of newSvc's defaults.
 func withSharedGoals(t *testing.T) (*household.Service, *gorm.DB) {
 	t.Helper()
 	svc, _, g := newSvc(t)
-	svc.WithSharedGoals(repository.NewSharedGoalRepository(g))
+	goalSvc := service.NewSavingsGoalService(
+		repository.NewSavingsGoalRepository(g),
+		repository.NewAccountRepository(g),
+	)
+	svc.WithSharedGoals(goalSvc)
 	return svc, g
 }
 
@@ -36,7 +41,7 @@ func seedSharedGoalHousehold(t *testing.T, svc *household.Service, g *gorm.DB) (
 	}
 	cleanupHousehold(t, g, hh.ID)
 	t.Cleanup(func() {
-		g.Unscoped().Where("household_id = ?", hh.ID).Delete(&model.SharedGoal{})
+		g.Unscoped().Where("household_id = ?", hh.ID).Delete(&model.SavingsGoal{})
 	})
 
 	ci, err := svc.CreateInvite(ctx, ownerID, hh.ID, household.CreateInviteInput{Role: model.RoleContributor})
@@ -66,8 +71,11 @@ func TestCreateSharedGoal_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSharedGoal: %v", err)
 	}
-	if g_.HouseholdID != hhID || g_.Name != "Vacation Fund" {
+	if g_.HouseholdID == nil || *g_.HouseholdID != hhID || g_.Name != "Vacation Fund" {
 		t.Errorf("goal = %+v, want hhID=%d name=Vacation Fund", g_, hhID)
+	}
+	if g_.UserID != nil {
+		t.Errorf("UserID = %v, want nil for a household goal", g_.UserID)
 	}
 	if !g_.CurrentAmount.IsZero() {
 		t.Errorf("CurrentAmount = %s, want 0 at creation", g_.CurrentAmount)
@@ -254,7 +262,7 @@ func TestSharedGoal_TenantIsolation(t *testing.T) {
 	}
 	cleanupHousehold(t, g, hhB.ID)
 	t.Cleanup(func() {
-		g.Unscoped().Where("household_id = ?", hhB.ID).Delete(&model.SharedGoal{})
+		g.Unscoped().Where("household_id = ?", hhB.ID).Delete(&model.SavingsGoal{})
 	})
 
 	gA, err := svc.CreateSharedGoal(ctx, ownerA, hhA, household.SharedGoalInput{
