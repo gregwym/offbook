@@ -10,7 +10,8 @@
 # the checkout, so a failed build is retried on the next tick (the running
 # version stays behind until a build actually succeeds).
 #
-# Reuses `make deploy-dev` for the actual build + recreate.
+# Reuses `make deploy` for the actual build + recreate (sidecar already up, so
+# no TS_AUTHKEY needed — the timer only runs after first boot).
 #
 # Env overrides:
 #   OFFBOOK_REPO           repo checkout path        (default: $HOME/offbook)
