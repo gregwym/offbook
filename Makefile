@@ -57,11 +57,17 @@ bootstrap-dev:
 # Settings → About, #310), recreates only backend + frontend (--no-deps leaves
 # postgres + the Tailscale sidecar running), and prints the new /health version.
 # Migrations run on backend boot. There is no CD — this is the manual deploy.
+#
+# After recreating it prunes DANGLING images — the untagged layers orphaned when
+# the :latest tag moved to the new build — so repeated deploys don't fill the
+# disk (matters on the Pi's SD card). Dangling-only: it never removes tagged or
+# in-use images, so the running stack is safe.
 deploy-dev:
 	@SHA="$$(git rev-parse --short HEAD)"; \
 		echo "Building offbook-dev at $$SHA…"; \
 		GIT_SHA="$$SHA" $(DEV_COMPOSE) build backend frontend
 	@$(DEV_COMPOSE) up -d --no-deps backend frontend
+	@printf 'Pruning dangling images… '; docker image prune -f | tail -1
 	@printf 'Deployed offbook-dev → '; curl -fsS http://localhost:8000/api/v1/health && echo
 
 # deploy redeploys a REMOTE host over SSH by running deploy-dev *on* that host,
