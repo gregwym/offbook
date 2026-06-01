@@ -2,19 +2,20 @@
 # https://${TS_HOSTNAME}.<tailnet>.ts.net. Instance-agnostic: compose with any
 # base stack; instance identity comes from the compose project name.
 #
-# Env (soft defaults — see below):
+# Env (soft defaults — see below). Both are Tailscale IDENTITY: consumed ONLY
+# when the sidecar is first created/registered, never stored in the env file —
+# pass them once on the first-boot command line.
 #   TS_AUTHKEY   Tailscale auth key (tskey-...). Prefer per-instance, tagged.
-#                ONLY consumed when the sidecar is first created/recreated.
-#   TS_HOSTNAME  MagicDNS name for this node (e.g. offbook-dev, offbook-prod).
+#   TS_HOSTNAME  MagicDNS name for this node (e.g. offbook, offbook-prod).
 #
 # These use `:-` (default empty) rather than `:?` (fail-fast) so an app-only
 # `up --no-deps backend frontend` — which parses this file but doesn't touch the
-# sidecar — doesn't demand them. `make deploy` guards TS_AUTHKEY at first boot
-# (when the sidecar is actually created); after that the sidecar runs from its
-# state volume and needs neither value again.
+# sidecar — doesn't demand them. `make deploy` guards BOTH at first boot (when
+# the sidecar is actually created); after that the sidecar runs from its state
+# volume and needs neither value again.
 #
 # Example (first boot):
-#   command make deploy TS_AUTHKEY=tskey-...   # TS_HOSTNAME comes from the env file
+#   command make deploy TS_AUTHKEY=tskey-... TS_HOSTNAME=offbook
 #
 # See ADR-0016 for rationale.
 services:

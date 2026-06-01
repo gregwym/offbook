@@ -75,7 +75,10 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 
 ## Tailscale Deployment
 - Multi-instance deployment on one host runs **one Compose project per instance, each with its own Tailscale sidecar** — see [ADR-0016](docs/ADR/0016-tailscale-per-instance-deployment.md).
-- Sidecar override is `docker-compose.tailscale.yml`. Instance-agnostic; composes with any base stack. Required env: `TS_AUTHKEY`, `TS_HOSTNAME`. Walkthrough in `infra/tailscale/README.md`.
+- **Deploy is convention-driven (`make deploy`).** The compose project name + overlay list come from `FLAVOR` (default `dev` → project `offbook`, base + tailscale sidecar; `FLAVOR=prod` → `offbook-prod`, base + prod + sidecar, `.env.prod`). The env file holds **secrets only**; `make deploy` creates it and generates `SESSION_SECRET` on first boot (never rotates an existing one). Don't reintroduce `OFFBOOK_PROJECT`/`OFFBOOK_COMPOSE_FILES` as *required* config — they remain an env-file escape hatch only.
+- **Tailscale identity is bootstrap-only.** `TS_AUTHKEY` and `TS_HOSTNAME` are read only when the sidecar is first registered; pass both once on the first-boot command line (`make deploy TS_AUTHKEY=... TS_HOSTNAME=...`), never store them. Later deploys recreate only backend+frontend (`--no-deps`) and need neither.
+- Sidecar override is `docker-compose.tailscale.yml`. Instance-agnostic; composes with any base stack. Walkthrough in `infra/tailscale/README.md`.
+- **Auto-deploy + teardown have no-edit make targets:** `make auto-deploy-install` / `auto-deploy-uninstall` (user-level systemd timer, per `FLAVOR`), `make down` (stop), `make teardown` (drop volumes). See `infra/auto-deploy/README.md`. Don't hand-edit the systemd units — `install.sh` renders them from the templated `offbook-deploy@.{service,timer}`.
 - Do not multiplex multiple instances behind a single Tailscale node (path-based or port-based). One node per instance = one MagicDNS hostname per instance, which is the only configuration the React app and cookie scoping don't have to know about.
 
 ## Backlog Discipline

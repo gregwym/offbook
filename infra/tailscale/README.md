@@ -12,33 +12,35 @@ Pattern for exposing an Offbook instance over HTTPS at a `*.ts.net` MagicDNS hos
 
 ## Bring up an instance
 
+The supported path is `make deploy`, which picks the project name + overlays by
+convention and passes the Tailscale identity through to the sidecar on first
+boot:
+
 ```sh
-TS_AUTHKEY=tskey-auth-... TS_HOSTNAME=offbook-dev \
-  docker compose -p offbook-dev \
+make deploy TS_AUTHKEY=tskey-auth-... TS_HOSTNAME=offbook   # first boot
+make deploy                                                 # later updates
+```
+
+The node appears in the tailnet as `offbook.<tailnet>.ts.net` once Tailscale has fetched a cert (first boot takes ~30s). Under the hood this is just:
+
+```sh
+TS_AUTHKEY=tskey-auth-... TS_HOSTNAME=offbook \
+  docker compose -p offbook \
     -f docker-compose.yml \
     -f docker-compose.tailscale.yml \
     up -d
 ```
 
-The node appears in the tailnet as `offbook-dev.<tailnet>.ts.net` once Tailscale has fetched a cert (first boot takes ~30s).
-
 ## Bring up a second (prod-flavored) instance on the same host
 
-Same command, but compose in `docker-compose.prod.yml` and pass a prod env file. Compose project name namespaces containers, networks, and named volumes (including `prod_postgres_data` and `tailscale_state`), so there's no collision with the dev stack:
+Add `FLAVOR=prod`. It composes in `docker-compose.prod.yml`, uses the `offbook-prod` project name, and reads `.env.prod`. Compose project name namespaces containers, networks, and named volumes (including `prod_postgres_data` and `tailscale_state`), so there's no collision with the dev stack:
 
 ```sh
-cp .env.prod.example .env.prod
-# Fill in SESSION_SECRET (openssl rand -hex 32), TS_AUTHKEY, FRONTEND_URL
-
-docker compose -p offbook-prod \
-  --env-file .env.prod \
-  -f docker-compose.yml \
-  -f docker-compose.prod.yml \
-  -f docker-compose.tailscale.yml \
-  up -d
+make deploy FLAVOR=prod TS_AUTHKEY=tskey-... TS_HOSTNAME=offbook-prod   # first boot
+make deploy FLAVOR=prod                                                  # updates
 ```
 
-The prod override swaps `POSTGRES_DB` to `offbook_prod`, uses a named volume (no collision with the dev stack's `./data/postgres` bind mount), unbinds all host ports (only the Tailscale sidecar is reachable), and refuses to start without `SESSION_SECRET`.
+`deploy` creates `.env.prod` and fills `SESSION_SECRET` on first boot; set `FRONTEND_URL` in it by hand. The prod override swaps `POSTGRES_DB` to `offbook_prod`, uses a named volume (no collision with the dev stack's `./data/postgres` bind mount), unbinds all host ports (only the Tailscale sidecar is reachable), and refuses to start without `SESSION_SECRET`.
 
 ## Notes
 

@@ -1,0 +1,18 @@
+# User-level templated unit. The instance name (%i) is the FLAVOR, e.g.
+#   offbook-deploy@dev    offbook-deploy@prod
+#
+# Installed (not run) from the repo by infra/auto-deploy/install.sh, which
+# substitutes __OFFBOOK_REPO__ with this checkout's absolute path. Don't edit by
+# hand — re-run `command make auto-deploy-install` to regenerate.
+[Unit]
+Description=Offbook auto-deploy (%i): poll origin/main, redeploy on change
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=OFFBOOK_FLAVOR=%i
+WorkingDirectory=__OFFBOOK_REPO__
+ExecStart=__OFFBOOK_REPO__/infra/auto-deploy/auto-deploy.sh
+# Don't hammer on repeated failures; the timer retries next interval.
+TimeoutStartSec=1800
