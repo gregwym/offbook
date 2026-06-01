@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, Bot, Check, Landmark, Plug, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Bot, Check, Info, Landmark, Plug, RefreshCw, Trash2, X } from 'lucide-react'
 import { TimeAgo } from '../components/TimeAgo'
 import {
   disconnectItem,
@@ -8,7 +8,10 @@ import {
   listItems,
   listSyncErrors,
   retrySyncError,
+  syncAccounts,
+  syncTransactions,
 } from '../api/plaid'
+import { getHealth } from '../api/health'
 import { getUserSettings, updateUserSettings } from '../api/userSettings'
 import type { PlaidItem, PlaidSyncError } from '../types/plaid'
 import type { UpdateUserSettingsInput, UserSettingsView } from '../types/userSettings'
@@ -22,7 +25,41 @@ export function SettingsPage() {
       </div>
       <AISettingsSection />
       <LinkedInstitutionsSection />
+      <AboutSection />
     </div>
+  )
+}
+
+// AboutSection surfaces the running build's git SHA (from GET /health) so
+// deploy freshness is verifiable from the UI without shell access (#310).
+function AboutSection() {
+  const [version, setVersion] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void getHealth()
+      .then((h) => { if (!cancelled) setVersion(h.version ?? 'unknown') })
+      .catch(() => { if (!cancelled) setVersion('unknown') })
+    return () => { cancelled = true }
+  }, [])
+
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white">
+      <div className="flex items-center gap-2 border-b border-gray-200 px-5 py-3">
+        <Info size={16} className="text-gray-500" />
+        <h2 className="text-base font-medium text-gray-900">About</h2>
+      </div>
+      <div className="px-5 py-4">
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-gray-500">Build version</span>
+          <span className="font-mono text-gray-900">{version ?? '…'}</span>
+        </div>
+        <p className="mt-1 text-xs text-gray-500">
+          Short git SHA of the running server build. Compare against{' '}
+          <span className="font-mono">main</span> to confirm the deploy is current.
+        </p>
+      </div>
+    </section>
   )
 }
 
@@ -206,6 +243,7 @@ function LinkedInstitutionsSection() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [disconnecting, setDisconnecting] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState<string | null>(null)
   const [errorModalItem, setErrorModalItem] = useState<PlaidItem | null>(null)
 
   const refresh = useCallback(() => {
@@ -223,6 +261,22 @@ function LinkedInstitutionsSection() {
     // itself is sync-pure, satisfying react-hooks/set-state-in-effect.
     void refresh()
   }, [refresh])
+
+  // Re-sync mirrors the initial connect flow (sync-accounts → sync-transactions)
+  // so a user can pull fresh data on demand, not only at link time (#311).
+  const onSync = async (item: PlaidItem) => {
+    setSyncing(item.plaid_item_id)
+    setError(null)
+    try {
+      await syncAccounts(item.plaid_item_id)
+      await syncTransactions(item.plaid_item_id)
+      await refresh()
+    } catch (e) {
+      setError(errMsg(e))
+    } finally {
+      setSyncing(null)
+    }
+  }
 
   const onDisconnect = async (item: PlaidItem) => {
     const label = item.institution_name ?? item.plaid_item_id
@@ -301,8 +355,18 @@ function LinkedInstitutionsSection() {
               </div>
               <button
                 type="button"
+                onClick={() => onSync(it)}
+                disabled={syncing === it.plaid_item_id || disconnecting === it.plaid_item_id}
+                className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                aria-label={`Sync ${it.institution_name ?? it.plaid_item_id}`}
+              >
+                <RefreshCw size={14} className={syncing === it.plaid_item_id ? 'animate-spin' : ''} />
+                {syncing === it.plaid_item_id ? 'Syncing…' : 'Sync'}
+              </button>
+              <button
+                type="button"
                 onClick={() => onDisconnect(it)}
-                disabled={disconnecting === it.plaid_item_id}
+                disabled={disconnecting === it.plaid_item_id || syncing === it.plaid_item_id}
                 className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 aria-label={`Disconnect ${it.institution_name ?? it.plaid_item_id}`}
               >
