@@ -2,23 +2,28 @@
 # https://${TS_HOSTNAME}.<tailnet>.ts.net. Instance-agnostic: compose with any
 # base stack; instance identity comes from the compose project name.
 #
-# Required env (no defaults — intentional, fail-fast):
+# Env (soft defaults — see below):
 #   TS_AUTHKEY   Tailscale auth key (tskey-...). Prefer per-instance, tagged.
+#                ONLY consumed when the sidecar is first created/recreated.
 #   TS_HOSTNAME  MagicDNS name for this node (e.g. offbook-dev, offbook-prod).
 #
-# Example:
-#   TS_AUTHKEY=tskey-... TS_HOSTNAME=offbook-dev \
-#     docker compose -p offbook-dev \
-#       -f docker-compose.yml -f docker-compose.tailscale.yml up -d
+# These use `:-` (default empty) rather than `:?` (fail-fast) so an app-only
+# `up --no-deps backend frontend` — which parses this file but doesn't touch the
+# sidecar — doesn't demand them. `make deploy` guards TS_AUTHKEY at first boot
+# (when the sidecar is actually created); after that the sidecar runs from its
+# state volume and needs neither value again.
+#
+# Example (first boot):
+#   command make deploy TS_AUTHKEY=tskey-...   # TS_HOSTNAME comes from the env file
 #
 # See ADR-0016 for rationale.
 services:
   tailscale:
     image: tailscale/tailscale:latest
-    hostname: ${TS_HOSTNAME:?TS_HOSTNAME required (the MagicDNS name for this instance)}
+    hostname: ${TS_HOSTNAME:-}
     environment:
-      TS_AUTHKEY: ${TS_AUTHKEY:?TS_AUTHKEY required (per-instance Tailscale auth key)}
-      TS_HOSTNAME: ${TS_HOSTNAME}
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: ${TS_HOSTNAME:-}
       TS_STATE_DIR: /var/lib/tailscale
       TS_USERSPACE: "true"
       # Optional. Pass extra `tailscaled` flags here, e.g. --advertise-tags=tag:X.

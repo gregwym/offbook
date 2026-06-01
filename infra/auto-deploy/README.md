@@ -28,29 +28,27 @@ repo.
    ```
 
 3. **Env.** Create `.env` (gitignored) — the single source of truth for this
-   instance. Fill in `SESSION_SECRET`, `TS_AUTHKEY` (and `TS_HOSTNAME`), and any
-   Plaid / Claude keys. The `OFFBOOK_PROJECT` + `OFFBOOK_COMPOSE_FILES` defaults
-   from the example already select the dev stack + sidecar:
+   instance. Fill in `SESSION_SECRET`, `TS_HOSTNAME`, and any Plaid / Claude
+   keys. The `OFFBOOK_PROJECT` + `OFFBOOK_COMPOSE_FILES` defaults from the example
+   already select the dev stack + sidecar. **`TS_AUTHKEY` is not stored here** —
+   it's passed once at first boot (next step):
 
    ```sh
    cp .env.example .env
-   # edit .env: SESSION_SECRET=$(openssl rand -hex 32), TS_AUTHKEY=tskey-..., etc.
+   # edit .env: SESSION_SECRET=$(openssl rand -hex 32), TS_HOSTNAME=offbook-dev, etc.
    ```
 
-4. **Bring the full stack up once** with `bootstrap` — this creates postgres +
-   backend + frontend + the Tailscale sidecar (per `OFFBOOK_COMPOSE_FILES`).
-   (`deploy` can't do first boot: it runs `--no-deps`, so postgres and Tailscale
-   must already exist.) `bootstrap` stamps the build with the current SHA, just
-   like `deploy`, so `/health` reports a real commit from the start instead of
-   `dev`:
+4. **First boot.** Run `deploy` with the Tailscale auth key once — `deploy`
+   sees the sidecar isn't up yet, so it brings up the full stack (postgres +
+   backend + frontend + sidecar), stamped with the current SHA:
 
    ```sh
-   make bootstrap          # reads .env (ENV_FILE defaults to .env)
+   make deploy TS_AUTHKEY=tskey-...      # reads .env (ENV_FILE defaults to .env)
    ```
 
    The node comes up at `offbook-dev.<tailnet>.ts.net` (first cert ~30s). See
-   `infra/tailscale/README.md`. The sidecar is only created here; the timer
-   (and `deploy`) never recreate it.
+   `infra/tailscale/README.md`. Every later `make deploy` detects the sidecar is
+   already up and recreates only backend+frontend — no `TS_AUTHKEY` needed.
 
 5. **Install the timer.** Edit `User=` and the two paths in the unit if you're
    not using `pi` / `~/offbook`, then:
