@@ -24,7 +24,13 @@ export function DateDisplay({
 }: Props): ReactElement {
   if (!value) return <span className={className}>—</span>
 
-  const parts = value.split('-')
+  // The backend serializes DATE columns as Go time.Time → RFC3339
+  // ("2026-05-19T00:00:00Z") rather than the documented bare "2026-05-19".
+  // Take the date portion before parsing so we render a calendar date, not
+  // the raw ISO string (see #312). This is a textual slice, not a Date()
+  // parse, so it stays timezone-stable. A plain "YYYY-MM-DD" is unaffected.
+  const dateOnly = value.split('T')[0]
+  const parts = dateOnly.split('-')
   if (parts.length !== 3) return <span className={className}>{value}</span>
 
   const year = Number(parts[0])
@@ -57,7 +63,7 @@ export function DateDisplay({
   }).format(dt)
 
   return (
-    <time dateTime={value} title={value} className={className}>
+    <time dateTime={dateOnly} title={dateOnly} className={className}>
       {label}
     </time>
   )

@@ -23,6 +23,11 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        # Stamp the build with the deploying commit so GET /health reports it
+        # (#310). Pass on deploy: GIT_SHA=$(git rev-parse --short HEAD) docker
+        # compose ... build. Falls back to "dev" when unset.
+        GIT_SHA: ${GIT_SHA:-dev}
     ports:
       - "8000:8000"
     environment:

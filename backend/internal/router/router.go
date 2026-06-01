@@ -146,7 +146,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	v1 := r.Group("/api/v1")
 	{
 		// Open routes — no session required.
-		v1.GET("/health", health.Get)
+		health.Register(v1)
 		authHandler.RegisterPublic(v1)
 
 		// Authenticated routes — session middleware gates everything below.
