@@ -1,0 +1,13 @@
+[Unit]
+Description=Poll origin/main and redeploy offbook-dev every 2 minutes
+
+[Timer]
+# First check shortly after boot, then every 2 minutes while the host is up.
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+# Catch up with a single run if the host was asleep/off across a tick.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
