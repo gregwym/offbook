@@ -35,22 +35,20 @@ repo.
    # edit .env: SESSION_SECRET=$(openssl rand -hex 32), etc.
    ```
 
-4. **Bring the full stack up once** — including postgres and the Tailscale
-   sidecar. `make deploy-dev` only rebuilds backend+frontend (`--no-deps`,
-   sidecar omitted), so postgres and Tailscale must already be running under
-   the `offbook-dev` project first:
+4. **Bring the full stack up once** with `bootstrap-dev` — this creates
+   postgres + backend + frontend + the Tailscale sidecar. (`deploy-dev` can't
+   do first boot: it runs `--no-deps` without the sidecar override, so postgres
+   and Tailscale must already exist.) `bootstrap-dev` stamps the build with the
+   current SHA, exactly like `deploy-dev`, so `/health` reports a real commit
+   from the start instead of `dev`:
 
    ```sh
-   TS_AUTHKEY=tskey-auth-... TS_HOSTNAME=offbook-dev \
-     docker compose -p offbook-dev \
-       -f docker-compose.yml \
-       -f docker-compose.tailscale.yml \
-       up -d --build
+   TS_AUTHKEY=tskey-auth-... make bootstrap-dev      # TS_HOSTNAME defaults to offbook-dev
    ```
 
    The node comes up at `offbook-dev.<tailnet>.ts.net` (first cert ~30s). See
-   `infra/tailscale/README.md`. `TS_*` are only needed for this one-time boot;
-   the timer never touches the sidecar again.
+   `infra/tailscale/README.md`. `TS_AUTHKEY` is only needed for this one-time
+   boot; the timer (and `deploy-dev`) never touch the sidecar again.
 
 5. **Install the timer.** Edit `User=` and the two paths in the unit if you're
    not using `pi` / `~/offbook`, then:

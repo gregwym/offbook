@@ -1,11 +1,14 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help verify acceptance qa-smoke qa-suite deploy-dev deploy
+.PHONY: help verify acceptance qa-smoke qa-suite bootstrap-dev deploy-dev deploy
 
 # Local Tailscale dev stack (ADR-0016). Omits docker-compose.tailscale.yml on
 # purpose: the sidecar is authenticated and long-lived, so deploy-dev rebuilds
 # only the app images and never touches the sidecar or postgres.
 DEV_COMPOSE := docker compose -p offbook-dev -f docker-compose.yml
+# Full stack incl. the Tailscale sidecar — used by bootstrap-dev for first boot,
+# when postgres + the sidecar don't exist yet.
+DEV_COMPOSE_FULL := docker compose -p offbook-dev -f docker-compose.yml -f docker-compose.tailscale.yml
 
 # Remote deploy target (see the `deploy` target below). DEPLOY_HOST is required;
 # DEPLOY_PATH is where the repo is checked out on that host.
@@ -24,6 +27,7 @@ help:
 	@printf '%s\n' '  command make qa-smoke            Run the baseline acceptance smoke suite'
 	@printf '%s\n' '  command make qa-suite QA_SUITE=plaid  Run one acceptance suite or spec pattern'
 	@printf '%s\n' '  command make verify              Run the backend CI mirror from backend/'
+	@printf '%s\n' '  command make bootstrap-dev TS_AUTHKEY=tskey-...  First boot: bring up the FULL stack (postgres + sidecar), stamped'
 	@printf '%s\n' '  command make deploy-dev          Rebuild + recreate the local offbook-dev stack at the current HEAD'
 	@printf '%s\n' '  command make deploy DEPLOY_HOST=user@host  Redeploy a remote host over SSH (current HEAD; push first)'
 	@printf '%s\n' ''
@@ -31,6 +35,22 @@ help:
 
 verify:
 	@$(MAKE) -C backend verify
+
+# bootstrap-dev is the ONE-TIME first boot: it brings up the full stack —
+# postgres + backend + frontend + the Tailscale sidecar — because deploy-dev
+# (--no-deps, no tailscale override) can't create those. Crucially it stamps
+# the build with the current SHA (GIT_SHA), same as deploy-dev, so /health
+# reports a real commit from the very first boot instead of "dev". After this,
+# use deploy-dev (or the auto-deploy timer) for updates.
+#   command make bootstrap-dev TS_AUTHKEY=tskey-auth-... [TS_HOSTNAME=offbook-dev]
+bootstrap-dev:
+	@test -n "$${TS_AUTHKEY:-}" || { echo 'Set TS_AUTHKEY=tskey-... — first boot registers the Tailscale sidecar. TS_HOSTNAME defaults to offbook-dev.' >&2; exit 2; }
+	@SHA="$$(git rev-parse --short HEAD)"; \
+		echo "Bootstrapping offbook-dev @ $$SHA (postgres + backend + frontend + tailscale)…"; \
+		GIT_SHA="$$SHA" TS_HOSTNAME="$${TS_HOSTNAME:-offbook-dev}" $(DEV_COMPOSE_FULL) up -d --build
+	@printf 'Bootstrapped offbook-dev → '; \
+		curl -fsS http://localhost:8000/api/v1/health 2>/dev/null && echo \
+		|| echo '(backend still starting — check GET /health in a few seconds)'
 
 # deploy-dev redeploys the local offbook-dev stack from whatever is checked out.
 # It stamps the binary with the current short SHA (surfaced at GET /health and
