@@ -3,7 +3,20 @@ package ingestion
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
+)
+
+// Errors an Extractor may return; handlers map them to HTTP codes. CSV's
+// parser returns its own (ErrEmptyFile, *UnmappableError); these cover the AI
+// document extractor.
+var (
+	// ErrUnsupportedMediaType: the document's MIME is one the extractor cannot
+	// process (e.g. a zip). → 415.
+	ErrUnsupportedMediaType = errors.New("ingestion: unsupported document media type")
+	// ErrEmptyExtraction: the extractor returned no usable rows (blank scan,
+	// non-statement document). → 422, "try a clearer file".
+	ErrEmptyExtraction = errors.New("ingestion: extractor returned no rows")
 )
 
 // Document is a raw uploaded statement awaiting extraction. Data holds the
@@ -24,8 +37,11 @@ type Document struct {
 // the rows to import plus optional CSV echo metadata for the column-mapping
 // fallback UI. Source is the value written to transactions.source.
 type Extraction struct {
-	Source  string        `json:"source"`
-	Rows    []ParsedRow   `json:"-"`
+	Source string `json:"source"`
+	// Rows serializes: the AI import path stages an Extraction as JSONB in
+	// ingestion_jobs and rehydrates it on commit (ADR-0019 §7). Extraction is
+	// an internal type — the API surface is ImportResult, not this.
+	Rows    []ParsedRow   `json:"rows"`
 	Mapping ColumnMapping `json:"mapping"`
 	Headers []string      `json:"headers"`
 	// DocTotals are statement totals an extractor detected (e.g. a closing

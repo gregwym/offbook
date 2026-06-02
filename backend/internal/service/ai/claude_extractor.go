@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/gregwym/offbook/backend/internal/service/ingestion"
 )
 
 // DefaultExtractMaxTokens is generous — a dense statement page can hold dozens
@@ -16,13 +18,13 @@ import (
 // unboundedly.
 const DefaultExtractMaxTokens = 8192
 
-// extractSystemPrompt steers the model to emit ONLY the JSON object. The
-// import layer is the trust boundary, so the prompt optimizes for parseability,
-// not for the model to do validation we re-do deterministically anyway.
+// extractSystemPrompt steers the model to emit ONLY the JSON object. The import
+// layer is the trust boundary, so the prompt optimizes for parseability, not
+// for the model to do validation we re-do deterministically anyway.
 const extractSystemPrompt = `You extract transactions from financial statements (bank, credit card, or brokerage) into strict JSON.
 Rules:
 - Output ONLY a single JSON object. No prose, no markdown code fences.
-- Schema: {"rows":[{"date":"YYYY-MM-DD","amount":"-12.34","description":"...","confidence":0.0}],"doc_totals":["-1234.56"],"confidence":0.0,"notes":""}
+- Schema: {"rows":[{"date":"YYYY-MM-DD","amount":"-12.34","description":"...","confidence":0.0}],"doc_totals":["-1234.56"],"notes":""}
 - amount: a decimal string. Negative = money out (debit/withdrawal/purchase); positive = money in (credit/deposit). Keep full precision; no currency symbols or thousands separators.
 - date: the transaction date as YYYY-MM-DD. If only a posting date is shown, use it.
 - description: the merchant or memo text, cleaned of statement noise.
@@ -32,9 +34,11 @@ Rules:
 
 const extractUserPrompt = `Extract all transactions from this statement as the JSON object described. Output only the JSON.`
 
-// ClaudeExtractor implements DocumentExtractor against the Anthropic Messages
+// ClaudeExtractor implements ingestion.Extractor against the Anthropic Messages
 // API (non-streaming) using document/image content blocks. No SDK — net/http,
-// matching ClaudeProvider's house style.
+// matching ClaudeProvider's house style. It re-parses every model-proposed row
+// through ingestion.NewRow so the deterministic validators (not the LLM) decide
+// admissibility.
 type ClaudeExtractor struct {
 	apiKey    string
 	endpoint  string
@@ -69,10 +73,24 @@ func NewClaudeExtractor(cfg ClaudeConfig) (*ClaudeExtractor, error) {
 // Name is persisted in ingestion_jobs.provider.
 func (e *ClaudeExtractor) Name() string { return "claude" }
 
-// ExtractDocument sends the document plus the extraction instruction in one
-// non-streaming Messages call and parses the JSON object the model returns.
-func (e *ClaudeExtractor) ExtractDocument(ctx context.Context, doc StatementDocument) (*DocumentExtraction, error) {
-	docBlock, err := contentBlockFor(doc)
+// Handles reports the document types this extractor can send to Claude: PDFs,
+// common image formats, and CSV/text (the unmappable-CSV→AI fallback).
+func (e *ClaudeExtractor) Handles(mime string) bool {
+	switch normalizeMediaType(mime) {
+	case "application/pdf",
+		"image/png", "image/jpeg", "image/gif", "image/webp",
+		"text/csv", "application/csv", "text/plain":
+		return true
+	default:
+		return false
+	}
+}
+
+// Extract sends the document plus the extraction instruction in one
+// non-streaming Messages call, parses the JSON object, and re-validates each
+// row through ingestion.NewRow into a neutral *ingestion.Extraction.
+func (e *ClaudeExtractor) Extract(ctx context.Context, doc ingestion.Document) (*ingestion.Extraction, error) {
+	docBlock, source, err := blockAndSource(doc)
 	if err != nil {
 		return nil, err
 	}
@@ -117,35 +135,40 @@ func (e *ClaudeExtractor) ExtractDocument(ctx context.Context, doc StatementDocu
 	if err := json.Unmarshal(body, &apiResp); err != nil {
 		return nil, fmt.Errorf("ai: parse claude extract response: %w", err)
 	}
-
 	text := apiResp.text()
 	if strings.TrimSpace(text) == "" {
-		return nil, ErrEmptyExtraction
+		return nil, ingestion.ErrEmptyExtraction
 	}
-	out, err := parseExtractionJSON(text)
+	parsed, err := parseExtractionJSON(text)
 	if err != nil {
 		return nil, err
 	}
-	if len(out.Rows) == 0 {
-		return nil, ErrEmptyExtraction
+	if len(parsed.Rows) == 0 {
+		return nil, ingestion.ErrEmptyExtraction
 	}
-	return out, nil
+
+	// Re-validate every proposed row through the shared deterministic parser —
+	// a hallucinated date/amount becomes an error row, never a transaction.
+	ext := &ingestion.Extraction{Source: source, DocTotals: parsed.DocTotals}
+	for i, r := range parsed.Rows {
+		ext.Rows = append(ext.Rows, ingestion.NewRow(i+1, r.Date, r.Amount, r.Description, r.Confidence))
+	}
+	return ext, nil
 }
 
-// contentBlockFor maps a document to the Anthropic content block its MIME
-// requires: PDFs → document, images → image, CSV/text → an inline text block
-// (the unmappable-CSV→AI fallback path).
-func contentBlockFor(doc StatementDocument) (claudeContentBlock, error) {
+// blockAndSource maps a document to its Anthropic content block and the
+// transactions.source value the extracted rows carry.
+func blockAndSource(doc ingestion.Document) (claudeContentBlock, string, error) {
 	mt := normalizeMediaType(doc.MIME)
 	switch mt {
 	case "application/pdf":
-		return base64Block("document", mt, doc.Data), nil
+		return base64Block("document", mt, doc.Data), "pdf", nil
 	case "image/png", "image/jpeg", "image/gif", "image/webp":
-		return base64Block("image", mt, doc.Data), nil
+		return base64Block("image", mt, doc.Data), "photo", nil
 	case "text/csv", "application/csv", "text/plain":
-		return claudeContentBlock{Type: "text", Text: string(doc.Data)}, nil
+		return claudeContentBlock{Type: "text", Text: string(doc.Data)}, "csv", nil
 	default:
-		return claudeContentBlock{}, fmt.Errorf("%w: %q", ErrUnsupportedMediaType, doc.MIME)
+		return claudeContentBlock{}, "", fmt.Errorf("%w: %q", ingestion.ErrUnsupportedMediaType, doc.MIME)
 	}
 }
 
@@ -171,7 +194,7 @@ func normalizeMediaType(mime string) string {
 
 // parseExtractionJSON tolerates a leading/trailing markdown fence or stray
 // prose by extracting the outermost {...} object before unmarshaling.
-func parseExtractionJSON(text string) (*DocumentExtraction, error) {
+func parseExtractionJSON(text string) (*documentExtraction, error) {
 	s := strings.TrimSpace(text)
 	s = strings.TrimPrefix(s, "```json")
 	s = strings.TrimPrefix(s, "```")
@@ -182,7 +205,7 @@ func parseExtractionJSON(text string) (*DocumentExtraction, error) {
 			s = s[start : end+1]
 		}
 	}
-	var out DocumentExtraction
+	var out documentExtraction
 	if err := json.Unmarshal([]byte(s), &out); err != nil {
 		return nil, fmt.Errorf("ai: extractor returned non-JSON: %w", err)
 	}
@@ -234,4 +257,4 @@ func (r claudeExtractResponse) text() string {
 	return b.String()
 }
 
-var _ DocumentExtractor = (*ClaudeExtractor)(nil)
+var _ ingestion.Extractor = (*ClaudeExtractor)(nil)

@@ -23,12 +23,15 @@ var (
 	ErrMissingDate         = errors.New("transaction_date is required")
 )
 
-// validSources mirrors the CHECK constraint in migration 000001.
+// validSources mirrors the transactions.source CHECK constraint (migration
+// 000023). 'system' is reconciliation-only (written by ReconcilePosition, never
+// via Create) so it is intentionally absent here.
 var validSources = map[string]struct{}{
 	"manual": {},
 	"plaid":  {},
 	"csv":    {},
 	"pdf":    {},
+	"photo":  {},
 }
 
 // CreateTransactionInput is the validated, decoded create payload.
@@ -71,6 +74,9 @@ type TransactionService struct {
 	// caller didn't supply a CategoryID. Optional — when nil, manual rows
 	// land uncategorized (the M2-era behavior).
 	ruleRepo repository.CategorizationRuleRepository
+	// jobRepo backs the AI import staging store (ADR-0019 §7). Optional — when
+	// nil, ExtractAndStage/CommitJob return ErrImportStagingUnavailable.
+	jobRepo repository.IngestionJobRepository
 }
 
 func NewTransactionService(
@@ -85,6 +91,13 @@ func NewTransactionService(
 // uncategorized inserts. Returns the receiver for one-liner construction.
 func (s *TransactionService) WithRuleRepo(r repository.CategorizationRuleRepository) *TransactionService {
 	s.ruleRepo = r
+	return s
+}
+
+// WithJobRepo wires the ingestion_jobs repository, enabling AI extract/stage/
+// commit (ADR-0019 §7). Returns the receiver for one-liner construction.
+func (s *TransactionService) WithJobRepo(r repository.IngestionJobRepository) *TransactionService {
+	s.jobRepo = r
 	return s
 }
 
