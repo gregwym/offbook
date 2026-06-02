@@ -121,8 +121,8 @@ export function AccountsPage() {
                     type="button"
                     onClick={() => setImportingInto(a)}
                     className="mr-2 text-gray-500 hover:text-indigo-700"
-                    aria-label="Import transactions from CSV"
-                    title="Import CSV"
+                    aria-label="Import transactions"
+                    title="Import transactions (CSV, PDF, or photo)"
                   >
                     <Upload size={16} />
                   </button>

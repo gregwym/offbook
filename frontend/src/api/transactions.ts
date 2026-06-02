@@ -69,6 +69,60 @@ export class ImportUnmappableError extends Error {
   }
 }
 
+// ImportError carries the backend machine code (e.g. AI_IMPORT_UNAVAILABLE,
+// IMPORT_UNSUPPORTED_TYPE) so the modal can branch — e.g. prompt the user to
+// add a provider key in Settings rather than just showing a raw message.
+export class ImportError extends Error {
+  code: string
+  constructor(message: string, code: string) {
+    super(message)
+    this.name = 'ImportError'
+    this.code = code
+  }
+}
+
+function asImportError(err: unknown): never {
+  const body = (err as { response?: { data?: { code?: string; error?: string } } })?.response?.data
+  if (body?.code) {
+    throw new ImportError(body.error ?? 'Import failed', body.code)
+  }
+  throw err
+}
+
+// extractStatement uploads a PDF or photo (or CSV) to the user's configured AI
+// provider for extraction. This is a real egress, so it always sends
+// consent=true — callers MUST obtain explicit user consent first. The backend
+// extracts once and stages the rows, returning a preview with a job_id; review,
+// then call commitImportJob to apply. Nothing is written until commit.
+export async function extractStatement(accountID: number, file: File): Promise<ImportResult> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('consent', 'true')
+  try {
+    const res = await apiClient.post<ApiItem<ImportResult>>(
+      `/accounts/${accountID}/transactions/import/extract`,
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    return res.data.data
+  } catch (err) {
+    return asImportError(err)
+  }
+}
+
+// commitImportJob applies the rows staged by a prior extractStatement call.
+// No second egress — the staged rows are re-validated and inserted server-side.
+export async function commitImportJob(jobID: number): Promise<ImportResult> {
+  try {
+    const res = await apiClient.post<ApiItem<ImportResult>>(
+      `/transactions/import/jobs/${jobID}/commit`,
+    )
+    return res.data.data
+  } catch (err) {
+    return asImportError(err)
+  }
+}
+
 // importTransactions uploads a CSV statement into an account. commit=false
 // (default) previews — the backend classifies rows and writes nothing; pass
 // commit=true to insert the new rows. Optional mapping overrides the
