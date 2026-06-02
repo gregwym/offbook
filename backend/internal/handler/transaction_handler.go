@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -16,11 +17,14 @@ import (
 )
 
 type TransactionHandler struct {
-	svc *service.TransactionService
+	svc      *service.TransactionService
+	registry *ingestion.Registry
 }
 
 func NewTransactionHandler(s *service.TransactionService) *TransactionHandler {
-	return &TransactionHandler{svc: s}
+	// Phase-1 registry: CSV only. ADR-0019 phase 2 swaps in a registry that
+	// also routes application/pdf and image/* to the AI extractor.
+	return &TransactionHandler{svc: s, registry: ingestion.NewDefaultRegistry()}
 }
 
 func (h *TransactionHandler) Register(g *gin.RouterGroup) {
@@ -264,17 +268,18 @@ func (h *TransactionHandler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// Import ingests a CSV statement into the path account. Multipart form fields:
+// Import ingests a statement file into the path account. Multipart form fields:
 //
-//	file            — the CSV file (required)
+//	file            — the statement file (required); CSV today, PDF/photo later
 //	commit          — "true" writes new rows; otherwise (default) preview only
-//	date_col        — optional header-name override for the date column
-//	amount_col      — optional header-name override for the amount column
-//	description_col — optional header-name override for the description column
+//	date_col        — optional header-name override for the date column (CSV)
+//	amount_col      — optional header-name override for the amount column (CSV)
+//	description_col — optional header-name override for the description (CSV)
 //
-// Omitted *_col fields are auto-detected from common header aliases. The
-// response is an ImportResult: per-row new/duplicate/error classification plus
-// totals. A preview run writes nothing.
+// The registry selects an extractor by the upload's MIME type (CSV-only in
+// phase 1). Omitted *_col fields are auto-detected from common header aliases.
+// The response is an ImportResult: per-row new/duplicate/error classification
+// plus totals. A preview run writes nothing.
 func (h *TransactionHandler) Import(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {
@@ -291,19 +296,29 @@ func (h *TransactionHandler) Import(c *gin.Context) {
 		return
 	}
 	defer func() { _ = f.Close() }()
-
-	mapping := ingestion.ColumnMapping{
-		Date:        c.PostForm("date_col"),
-		Amount:      c.PostForm("amount_col"),
-		Description: c.PostForm("description_col"),
+	data, err := io.ReadAll(f)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot read uploaded file", "code": "INVALID_REQUEST"})
+		return
 	}
-	parsed, err := ingestion.Parse(f, mapping)
+
+	doc := ingestion.Document{
+		Filename: fileHeader.Filename,
+		MIME:     fileHeader.Header.Get("Content-Type"),
+		Data:     data,
+		CSVMapping: ingestion.ColumnMapping{
+			Date:        c.PostForm("date_col"),
+			Amount:      c.PostForm("amount_col"),
+			Description: c.PostForm("description_col"),
+		},
+	}
+	ext, err := h.registry.For(doc.MIME).Extract(c.Request.Context(), doc)
 	if err != nil {
 		h.writeImportParseError(c, err)
 		return
 	}
 	commit := c.PostForm("commit") == "true"
-	res, err := h.svc.ImportCSV(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, parsed, commit)
+	res, err := h.svc.ImportStatement(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, ext, commit)
 	if err != nil {
 		h.writeServiceError(c, err)
 		return

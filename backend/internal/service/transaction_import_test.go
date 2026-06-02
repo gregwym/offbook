@@ -2,7 +2,6 @@ package service_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -45,13 +44,16 @@ func newImportSvc(t *testing.T) (svc *service.TransactionService, userID, accoun
 	return svc, userID, acc.ID, g
 }
 
-func mustParse(t *testing.T, csv string) *ingestion.ParseResult {
+// mustExtract runs the fixture CSV through the CSV extractor, producing the
+// neutral Extraction that ImportStatement consumes.
+func mustExtract(t *testing.T, csv string) *ingestion.Extraction {
 	t.Helper()
-	res, err := ingestion.Parse(strings.NewReader(csv), ingestion.ColumnMapping{})
+	doc := ingestion.Document{MIME: "text/csv", Data: []byte(csv)}
+	ext, err := ingestion.CSVExtractor{}.Extract(context.Background(), doc)
 	if err != nil {
-		t.Fatalf("parse fixture: %v", err)
+		t.Fatalf("extract fixture: %v", err)
 	}
-	return res
+	return ext
 }
 
 func liveTxnCount(t *testing.T, g *gorm.DB, accountID int64) int64 {
@@ -63,14 +65,14 @@ func liveTxnCount(t *testing.T, g *gorm.DB, accountID int64) int64 {
 	return n
 }
 
-func TestImportCSV_PreviewWritesNothing(t *testing.T) {
+func TestImportStatement_PreviewWritesNothing(t *testing.T) {
 	svc, userID, accountID, g := newImportSvc(t)
 	ctx := context.Background()
 	csv := "Date,Description,Amount\n2026-05-15,Coffee,-4.50\n2026-05-16,Paycheck,2000.00\n"
 
-	res, err := svc.ImportCSV(ctx, userID, accountID, mustParse(t, csv), false)
+	res, err := svc.ImportStatement(ctx, userID, accountID, mustExtract(t, csv), false)
 	if err != nil {
-		t.Fatalf("ImportCSV preview: %v", err)
+		t.Fatalf("ImportStatement preview: %v", err)
 	}
 	if res.Committed {
 		t.Error("preview marked committed")
@@ -81,17 +83,29 @@ func TestImportCSV_PreviewWritesNothing(t *testing.T) {
 	if res.InsertedCount != 0 {
 		t.Errorf("preview inserted %d rows, want 0", res.InsertedCount)
 	}
+	// Deterministic CSV rows are fully trusted: confidence 1.0, never flagged.
+	if res.ReviewCount != 0 {
+		t.Errorf("review_count = %d, want 0 for deterministic CSV", res.ReviewCount)
+	}
+	if res.Source != "csv" {
+		t.Errorf("source = %q, want csv", res.Source)
+	}
+	for _, r := range res.Rows {
+		if r.Confidence != 1.0 || r.NeedsReview {
+			t.Errorf("row line %d: confidence=%v needs_review=%v, want 1.0/false", r.Line, r.Confidence, r.NeedsReview)
+		}
+	}
 	if n := liveTxnCount(t, g, accountID); n != 0 {
 		t.Errorf("preview persisted %d rows, want 0", n)
 	}
 }
 
-func TestImportCSV_CommitThenReimportIsIdempotent(t *testing.T) {
+func TestImportStatement_CommitThenReimportIsIdempotent(t *testing.T) {
 	svc, userID, accountID, g := newImportSvc(t)
 	ctx := context.Background()
 	csv := "Date,Description,Amount\n2026-05-15,Coffee,-4.50\n2026-05-16,Paycheck,2000.00\n"
 
-	first, err := svc.ImportCSV(ctx, userID, accountID, mustParse(t, csv), true)
+	first, err := svc.ImportStatement(ctx, userID, accountID, mustExtract(t, csv), true)
 	if err != nil {
 		t.Fatalf("first commit: %v", err)
 	}
@@ -104,7 +118,7 @@ func TestImportCSV_CommitThenReimportIsIdempotent(t *testing.T) {
 
 	// Re-import the identical file: every row should now be a duplicate and
 	// nothing new is written.
-	second, err := svc.ImportCSV(ctx, userID, accountID, mustParse(t, csv), true)
+	second, err := svc.ImportStatement(ctx, userID, accountID, mustExtract(t, csv), true)
 	if err != nil {
 		t.Fatalf("second commit: %v", err)
 	}
@@ -117,16 +131,16 @@ func TestImportCSV_CommitThenReimportIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestImportCSV_IdenticalRowsInFileBothSurvive(t *testing.T) {
+func TestImportStatement_IdenticalRowsInFileBothSurvive(t *testing.T) {
 	svc, userID, accountID, g := newImportSvc(t)
 	ctx := context.Background()
 	// Two genuinely identical lines (e.g. two $4.50 coffees same day) must both
 	// import — the per-file occurrence index disambiguates their external_ids.
 	csv := "Date,Description,Amount\n2026-05-15,Coffee,-4.50\n2026-05-15,Coffee,-4.50\n"
 
-	res, err := svc.ImportCSV(ctx, userID, accountID, mustParse(t, csv), true)
+	res, err := svc.ImportStatement(ctx, userID, accountID, mustExtract(t, csv), true)
 	if err != nil {
-		t.Fatalf("ImportCSV: %v", err)
+		t.Fatalf("ImportStatement: %v", err)
 	}
 	if res.NewCount != 2 || res.InsertedCount != 2 {
 		t.Errorf("new=%d inserted=%d, want 2/2 (identical rows both kept)", res.NewCount, res.InsertedCount)
@@ -136,7 +150,7 @@ func TestImportCSV_IdenticalRowsInFileBothSurvive(t *testing.T) {
 	}
 
 	// And re-importing that same two-line file stays idempotent.
-	again, err := svc.ImportCSV(ctx, userID, accountID, mustParse(t, csv), true)
+	again, err := svc.ImportStatement(ctx, userID, accountID, mustExtract(t, csv), true)
 	if err != nil {
 		t.Fatalf("re-import: %v", err)
 	}
@@ -145,14 +159,14 @@ func TestImportCSV_IdenticalRowsInFileBothSurvive(t *testing.T) {
 	}
 }
 
-func TestImportCSV_ErrorRowsSkipped(t *testing.T) {
+func TestImportStatement_ErrorRowsSkipped(t *testing.T) {
 	svc, userID, accountID, g := newImportSvc(t)
 	ctx := context.Background()
 	csv := "Date,Description,Amount\nnot-a-date,Bad,-1.00\n2026-05-16,Good,-2.00\n"
 
-	res, err := svc.ImportCSV(ctx, userID, accountID, mustParse(t, csv), true)
+	res, err := svc.ImportStatement(ctx, userID, accountID, mustExtract(t, csv), true)
 	if err != nil {
-		t.Fatalf("ImportCSV: %v", err)
+		t.Fatalf("ImportStatement: %v", err)
 	}
 	if res.ErrorCount != 1 || res.NewCount != 1 || res.InsertedCount != 1 {
 		t.Errorf("err=%d new=%d inserted=%d, want 1/1/1", res.ErrorCount, res.NewCount, res.InsertedCount)
@@ -162,14 +176,14 @@ func TestImportCSV_ErrorRowsSkipped(t *testing.T) {
 	}
 }
 
-func TestImportCSV_RejectsForeignAccount(t *testing.T) {
+func TestImportStatement_RejectsForeignAccount(t *testing.T) {
 	svc, _, accountID, _ := newImportSvc(t)
 	ctx := context.Background()
 	csv := "Date,Description,Amount\n2026-05-15,Coffee,-4.50\n"
 
 	// A different user importing into the first user's account must be rejected.
 	otherUser := int64(-1) // no such user owns accountID
-	_, err := svc.ImportCSV(ctx, otherUser, accountID, mustParse(t, csv), true)
+	_, err := svc.ImportStatement(ctx, otherUser, accountID, mustExtract(t, csv), true)
 	if err == nil {
 		t.Fatal("expected error importing into a non-owned account, got nil")
 	}

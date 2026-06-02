@@ -73,6 +73,11 @@ type ParsedRow struct {
 	// Err is non-empty when this row could not be parsed; Date/Amount are then
 	// zero and the row is excluded from import.
 	Err string `json:"error,omitempty"`
+	// Confidence is the extractor's certainty in this row, 0–1. Deterministic
+	// parsing (CSV) sets 1.0 for valid rows — there is no ambiguity once the
+	// columns are mapped. The AI extractor (ADR-0019 phase 2) reports a real
+	// per-row confidence the import service gates "needs review" on.
+	Confidence float64 `json:"confidence"`
 }
 
 // Valid reports whether the row parsed cleanly and can be imported.
@@ -227,6 +232,8 @@ func parseRecord(line int, rec []string, idx fieldIndex) ParsedRow {
 	row.Amount = amt
 
 	row.Description = field(rec, idx.description)
+	// Deterministic parse: a cleanly parsed row is fully trusted.
+	row.Confidence = 1.0
 	return row
 }
 
