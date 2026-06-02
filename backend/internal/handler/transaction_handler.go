@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -12,19 +13,34 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/service/ai"
 	"github.com/gregwym/offbook/backend/internal/service/auth"
 	"github.com/gregwym/offbook/backend/internal/service/ingestion"
 )
 
+// ExtractorResolver maps a user to the document extractor backed by their
+// configured AI provider (ADR-0019 §6), or (nil, nil) when none is configured.
+// Implemented by the router; nil on the handler disables AI import entirely.
+type ExtractorResolver interface {
+	For(ctx context.Context, userID int64) (ingestion.Extractor, error)
+}
+
 type TransactionHandler struct {
-	svc      *service.TransactionService
-	registry *ingestion.Registry
+	svc        *service.TransactionService
+	registry   *ingestion.Registry
+	extractors ExtractorResolver
 }
 
 func NewTransactionHandler(s *service.TransactionService) *TransactionHandler {
-	// Phase-1 registry: CSV only. ADR-0019 phase 2 swaps in a registry that
-	// also routes application/pdf and image/* to the AI extractor.
+	// Phase-1 registry: deterministic CSV only. AI extraction (PDF/photo) is
+	// dispatched separately via the /extract endpoint + ExtractorResolver.
 	return &TransactionHandler{svc: s, registry: ingestion.NewDefaultRegistry()}
+}
+
+// WithExtractorResolver enables the AI import endpoints. Returns the receiver.
+func (h *TransactionHandler) WithExtractorResolver(r ExtractorResolver) *TransactionHandler {
+	h.extractors = r
+	return h
 }
 
 func (h *TransactionHandler) Register(g *gin.RouterGroup) {
@@ -36,6 +52,10 @@ func (h *TransactionHandler) Register(g *gin.RouterGroup) {
 	// CSV statement import is account-scoped (#330): the account fixes the
 	// asset and the dedup namespace.
 	g.POST("/accounts/:id/transactions/import", h.Import)
+	// AI import (ADR-0019 §7): extract+stage runs the document extractor once
+	// and stages rows; commit applies a staged job with no second egress.
+	g.POST("/accounts/:id/transactions/import/extract", h.ImportExtract)
+	g.POST("/transactions/import/jobs/:job_id/commit", h.ImportCommit)
 }
 
 // List returns a paginated, filtered slice of transactions.
@@ -324,6 +344,113 @@ func (h *TransactionHandler) Import(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": res})
+}
+
+// ImportExtract runs the AI document extractor over an uploaded statement
+// (PDF/photo, or CSV fallback) and stages the result for review. This is the
+// single egress event and requires explicit consent. Multipart fields:
+//
+//	file    — the statement (required)
+//	consent — must be "true"; the upload is sent to the user's AI provider
+//
+// Returns an ImportResult preview with a job_id; the client reviews, then POSTs
+// to the commit endpoint. Writes no transactions.
+func (h *TransactionHandler) ImportExtract(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	if h.extractors == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "AI import is not available on this instance", "code": "AI_IMPORT_UNAVAILABLE"})
+		return
+	}
+	// Consent gate: the document leaves the app for the configured provider.
+	if c.PostForm("consent") != "true" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "consent is required: extracting sends this document to your configured AI provider",
+			"code":  "IMPORT_CONSENT_REQUIRED",
+		})
+		return
+	}
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required", "code": "INVALID_REQUEST"})
+		return
+	}
+	f, err := fileHeader.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot read uploaded file", "code": "INVALID_REQUEST"})
+		return
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot read uploaded file", "code": "INVALID_REQUEST"})
+		return
+	}
+
+	userID := auth.MustUserID(c.Request.Context())
+	extractor, err := h.extractors.For(c.Request.Context(), userID)
+	if err != nil {
+		h.writeImportError(c, err)
+		return
+	}
+	if extractor == nil {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "no AI provider configured — add a provider key in Settings to import PDFs or photos",
+			"code":  "AI_IMPORT_UNAVAILABLE",
+		})
+		return
+	}
+
+	doc := ingestion.Document{
+		Filename: fileHeader.Filename,
+		MIME:     fileHeader.Header.Get("Content-Type"),
+		Data:     data,
+	}
+	now := time.Now()
+	res, err := h.svc.ExtractAndStage(c.Request.Context(), userID, id, doc, extractor, &now)
+	if err != nil {
+		h.writeImportError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": res})
+}
+
+// ImportCommit applies the rows staged by a prior ImportExtract call. No second
+// extractor egress — the staged rows are re-validated, deduped, and inserted.
+func (h *TransactionHandler) ImportCommit(c *gin.Context) {
+	jobID, err := strconv.ParseInt(c.Param("job_id"), 10, 64)
+	if err != nil || jobID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid job id", "code": "INVALID_REQUEST"})
+		return
+	}
+	res, err := h.svc.CommitJob(c.Request.Context(), auth.MustUserID(c.Request.Context()), jobID)
+	if err != nil {
+		h.writeImportError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": res})
+}
+
+// writeImportError maps AI-import domain + extraction errors to HTTP codes.
+func (h *TransactionHandler) writeImportError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, ingestion.ErrUnsupportedMediaType):
+		c.JSON(http.StatusUnsupportedMediaType, gin.H{"error": err.Error(), "code": "IMPORT_UNSUPPORTED_TYPE"})
+	case errors.Is(err, ingestion.ErrEmptyExtraction):
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "no transactions could be read from this document — try a clearer file", "code": "IMPORT_EMPTY_EXTRACTION"})
+	case errors.Is(err, ai.ErrUnauthorized):
+		c.JSON(http.StatusBadGateway, gin.H{"error": "your AI provider rejected the request — check your key in Settings", "code": "AI_PROVIDER_UNAUTHORIZED"})
+	case errors.Is(err, service.ErrImportStagingUnavailable):
+		c.JSON(http.StatusNotImplemented, gin.H{"error": err.Error(), "code": "AI_IMPORT_UNAVAILABLE"})
+	case errors.Is(err, service.ErrImportJobNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error(), "code": "IMPORT_JOB_NOT_FOUND"})
+	case errors.Is(err, service.ErrImportJobNotPending):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "IMPORT_JOB_NOT_PENDING"})
+	default:
+		h.writeServiceError(c, err)
+	}
 }
 
 // writeImportParseError maps ingestion parse failures to 400s with a machine

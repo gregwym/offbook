@@ -3,10 +3,11 @@
 // originate here). Absorbs the old /connect and /import routes. Plaid
 // dismissal falls back to the manual form within the same surface.
 //
-// CSV transaction import is intentionally NOT a tile here — per v6 §03 it
-// lives as a per-account "add more" affordance. It's implemented as
-// ImportTransactionsModal (#330), reachable from the Transactions page header
-// and per-account on the Accounts page. PDF/photo ingestion is still future.
+// Statement import is intentionally NOT a tile here — per v6 §03 it lives as a
+// per-account "add more" affordance. It's implemented as ImportTransactionsModal
+// (#330), reachable from the Transactions page header and per-account on the
+// Accounts page. CSV parses locally; PDF/photo route through the user's AI
+// provider with explicit consent (ADR-0019).
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { usePlaidLink } from 'react-plaid-link'

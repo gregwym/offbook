@@ -15,6 +15,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/service/ai"
 	"github.com/gregwym/offbook/backend/internal/service/auth"
 	"github.com/gregwym/offbook/backend/internal/service/household"
+	"github.com/gregwym/offbook/backend/internal/service/ingestion"
 	plaidsvc "github.com/gregwym/offbook/backend/internal/service/plaid"
 	"github.com/gregwym/offbook/backend/internal/service/valuation"
 )
@@ -51,7 +52,9 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	transactionRepo := repository.NewTransactionRepository(gormDB)
 	categoryRepo := repository.NewCategoryRepository(gormDB)
 	ruleRepo := repository.NewCategorizationRuleRepository(gormDB)
-	transactionSvc := service.NewTransactionService(transactionRepo, accountRepo, categoryRepo).WithRuleRepo(ruleRepo)
+	transactionSvc := service.NewTransactionService(transactionRepo, accountRepo, categoryRepo).
+		WithRuleRepo(ruleRepo).
+		WithJobRepo(repository.NewIngestionJobRepository(gormDB))
 	transactionHandler := handler.NewTransactionHandler(transactionSvc)
 
 	priceRepo := repository.NewPriceRepository(gormDB)
@@ -128,6 +131,10 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	// derived from SESSION_SECRET — no new operator secret.
 	userSettingsSvc := newUserSettingsService(cfg, gormDB)
 	userSettingsHandler := handler.NewUserSettingsHandler(userSettingsSvc)
+
+	// AI statement import (ADR-0019) reuses the same per-user provider/key the
+	// chat advisor resolves — extraction is just a different capability.
+	transactionHandler.WithExtractorResolver(&extractorResolver{settings: userSettingsSvc, envKey: cfg.ClaudeAPIKey})
 
 	// AI advisor: per-user provider resolution. The resolver reads user
 	// settings; missing settings fall back to env-configured Claude. The
@@ -299,6 +306,43 @@ func (r *aiProviderResolver) For(ctx context.Context, userID int64) (ai.Provider
 			return r.envFallback, nil
 		}
 		return p, nil
+	}
+}
+
+// extractorResolver maps a userID to the document extractor backed by their
+// configured AI provider (ADR-0019 §6), mirroring aiProviderResolver. Claude
+// is implemented; Ollama-vision extraction is a fast-follow, so an Ollama user
+// gets (nil, nil) → the handler reports AI_IMPORT_UNAVAILABLE. Returns
+// (nil, nil) whenever no usable key is configured (user or env).
+type extractorResolver struct {
+	settings *service.UserSettingsService
+	envKey   string // CLAUDE_API_KEY fallback for single-tenant deploys
+}
+
+func (r *extractorResolver) For(ctx context.Context, userID int64) (ingestion.Extractor, error) {
+	resolved, err := r.settings.Resolve(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	switch resolved.Provider {
+	case "ollama":
+		// Local vision extraction is an ADR-0019 fast-follow.
+		return nil, nil
+	case "claude":
+		fallthrough
+	default:
+		key := resolved.ClaudeKey
+		if key == "" {
+			key = r.envKey
+		}
+		if key == "" {
+			return nil, nil
+		}
+		ex, err := ai.NewClaudeExtractor(ai.ClaudeConfig{APIKey: key})
+		if err != nil {
+			return nil, nil
+		}
+		return ex, nil
 	}
 }
 

@@ -22,7 +22,8 @@ func newImportSvc(t *testing.T) (svc *service.TransactionService, userID, accoun
 	txRepo := repository.NewTransactionRepository(g)
 	accRepo := repository.NewAccountRepository(g)
 	catRepo := repository.NewCategoryRepository(g)
-	svc = service.NewTransactionService(txRepo, accRepo, catRepo)
+	svc = service.NewTransactionService(txRepo, accRepo, catRepo).
+		WithJobRepo(repository.NewIngestionJobRepository(g))
 
 	userID = seedTestUser(t, g)
 	usdID := testutil.LookupUSDAssetID(t, g)

@@ -107,6 +107,19 @@ Every field an extractor returns is re-parsed through the **existing determinist
 
 New extraction providers are **Go adapters** implementing `DocumentExtractor`, selected via the existing resolver and per-user settings. We reject a Node.js adapter sidecar: it would add a third runtime, a deploy surface, and a new trust boundary to a Go + Postgres + React stack for no capability the Go interface can't express.
 
+### 7. AI extraction runs once; commit applies *staged* rows (added phase 2)
+
+A subtlety the CSV slice didn't have: **CSV is parsed twice** (once for preview, once for commit) and that's safe because parsing is deterministic — both passes yield identical rows. **An LLM re-run is neither free nor deterministic:** a second call is a second egress and may return *different* rows than the ones the user reviewed, silently breaking the review-before-commit guarantee. So AI extraction must run exactly once.
+
+Decision: the AI path is **stateful and job-staged**, while CSV stays stateless and unchanged.
+
+- **Extract (preview):** `POST /accounts/:id/transactions/import/extract` with `consent=true`. The handler resolves the user's provider, runs the `DocumentExtractor` once, re-validates + reconciles, and **stages** the resulting rows in an `ingestion_jobs` row (`extraction JSONB`, `status='extracted'`). It returns the same `ImportResult` preview shape plus the `job_id`. This is the single egress event and is audited here.
+- **Commit:** `POST /transactions/import/jobs/:job_id/commit`. Loads the staged rows for the session user, re-validates them again, dedups, inserts, and marks the job `completed`. **No second AI call.** Ownership is enforced on `ingestion_jobs.user_id`.
+
+CSV keeps its existing stateless `POST /accounts/:id/transactions/import` (deterministic re-parse on commit) untouched, so the shipped CSV frontend and its contract are unaffected — the AI endpoints are purely additive. Unifying CSV onto job-staging is possible later but deliberately out of scope to avoid a contract break on a working flow.
+
+`ingestion_jobs` becomes the import audit trail *and* the AI staging store. It gains `user_id NOT NULL`, `provider`, `extractor` (`deterministic`|`ai`), `consented_at`, and `extraction JSONB`; the `source` CHECK widens to include `photo` (and `transactions.source` likewise). Stale uncommitted `extracted` jobs need eventual cleanup — filed as a follow-up, not a launch blocker.
+
 ## Consequences
 
 - The `ingestion` package stays the neutral row shape; a new `extractor` concern sits beside it. The import service method `ImportCSV` is generalized to `ImportStatement(..., source)` so `source` ∈ {`csv`, `pdf`} (and the AI path tags provenance) is set correctly. `external_id` prefixing stays per-source for idempotent re-import.

@@ -82,6 +82,16 @@ export type ImportResult = {
   review_count: number
   inserted_count: number
   rows: ImportRowResult[]
+  // AI-extraction fields (ADR-0019), absent for deterministic CSV:
+  //   job_id     — the staged import job; pass to commitImportJob to apply.
+  //   reconciled — null when no statement total was detected; else whether the
+  //                row sum matched one.
+  //   row_sum    — signed decimal sum of valid rows.
+  //   doc_totals — statement totals the extractor detected.
+  job_id?: number
+  reconciled?: boolean | null
+  row_sum?: string
+  doc_totals?: string[]
 }
 
 // UpdateTransactionInput: sparse patch. `clear_category: true` with a null

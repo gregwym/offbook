@@ -63,6 +63,16 @@ type ImportResult struct {
 	ReviewCount    int                     `json:"review_count"`
 	InsertedCount  int                     `json:"inserted_count"`
 	Rows           []ImportRowResult       `json:"rows"`
+	// AI-extraction fields (ADR-0019 §7), zero/nil for deterministic CSV:
+	//   JobID      — the staged ingestion_job; pass to CommitJob to apply.
+	//   Reconciled — nil when no statement total was detected; else whether the
+	//                row sum matched one.
+	//   RowSum     — signed decimal sum of valid rows, for the UI to display.
+	//   DocTotals  — statement totals the extractor detected.
+	JobID      *int64   `json:"job_id,omitempty"`
+	Reconciled *bool    `json:"reconciled,omitempty"`
+	RowSum     string   `json:"row_sum,omitempty"`
+	DocTotals  []string `json:"doc_totals,omitempty"`
 }
 
 // ImportStatement classifies extracted statement rows against the target

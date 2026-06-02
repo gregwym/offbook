@@ -237,6 +237,34 @@ func parseRecord(line int, rec []string, idx fieldIndex) ParsedRow {
 	return row
 }
 
+// NewRow builds a ParsedRow from raw string fields, running them through the
+// exact same date/amount validators the CSV parser uses. This is the
+// re-validation seam from ADR-0019 §3: the AI extractor produces raw strings,
+// and feeding them here guarantees an LLM-proposed row is admitted only if its
+// date and amount parse deterministically — a hallucinated "amount" of "lots"
+// becomes an error row, never a transaction. confidence is the extractor's
+// per-row certainty (0–1); a failed parse sets Err and the row is excluded.
+func NewRow(line int, dateStr, amountStr, description string, confidence float64) ParsedRow {
+	row := ParsedRow{Line: line, Description: strings.TrimSpace(description), Confidence: confidence}
+	d, err := parseDate(dateStr)
+	if err != nil {
+		row.Err = fmt.Sprintf("unparseable date %q", dateStr)
+		return row
+	}
+	row.Date = d
+	amt, err := parseAmount(amountStr)
+	if err != nil {
+		row.Err = fmt.Sprintf("unparseable amount %q", amountStr)
+		return row
+	}
+	if amt.IsZero() {
+		row.Err = "amount is zero"
+		return row
+	}
+	row.Amount = amt
+	return row
+}
+
 func parseDate(s string) (time.Time, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {

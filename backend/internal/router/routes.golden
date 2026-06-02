@@ -65,6 +65,7 @@ PATCH /api/v1/transactions/:id
 POST /api/v1/accounts
 POST /api/v1/accounts/:id/trades
 POST /api/v1/accounts/:id/transactions/import
+POST /api/v1/accounts/:id/transactions/import/extract
 POST /api/v1/ai/threads
 POST /api/v1/ai/threads/:id/messages
 POST /api/v1/assets/ensure
@@ -96,5 +97,6 @@ POST /api/v1/savings-goals
 POST /api/v1/savings-goals/:id/contributions
 POST /api/v1/setup/admin
 POST /api/v1/transactions
+POST /api/v1/transactions/import/jobs/:job_id/commit
 PUT /api/v1/accounts/:id/pii
 PUT /api/v1/accounts/:id/shares/:householdID
