@@ -34,13 +34,14 @@ file (csv / pdf / image)
    │
    ▼
 Extractor registry  ── tries in order, escalates on low confidence:
-   1. deterministic  (CSV headers, PDF text)      free · exact · on-box
-   2. AI extractor   (user's configured provider) "auto-adapt any format"
+   1. deterministic  (CSV headers)                 free · exact · on-box
+   2. AI extractor   (user's configured provider)  "auto-adapt any format" — all PDFs + photos
    │  emits ParsedRow[] + per-row confidence + document metadata (detected totals)
    ▼
 Deterministic re-validation + reconciliation
    · every AI-extracted field re-parsed through the existing date/decimal validators
    · row sum reconciled against any statement total/balance-delta the extractor detected
+   · for digital PDFs, the pure-Go text layer (if present) is an extra reconciliation cross-check
    ▼
 ImportStatement pipeline (today's ImportCSV, generalized):
    preview → confidence-gated review → commit
@@ -48,7 +49,11 @@ ImportStatement pipeline (today's ImportCSV, generalized):
 
 ### 1. Deterministic-first, AI-fallback
 
-The deterministic parser runs first on every import. AI is invoked only when deterministic parsing **fails or is low-confidence** (CSV autodetect misses a required field; PDF yields no usable text; a photo has no text layer at all). Rationale: CSV and text-PDF are already exact, free, and on-box — spending tokens, egress, and hallucination risk on them is strictly worse. The user still never specifies a format: autodetect handles the common case, AI handles the long tail.
+For **CSV**, the deterministic parser runs first; AI is invoked only when autodetect misses a required field. CSV is already exact, free, and on-box, so spending tokens/egress/hallucination-risk on it is strictly worse.
+
+For **PDF and photo**, there is no deterministic path worth gating on. Pure-Go PDF text extraction only reliably covers *clean digitally-generated* statements — getting glyphs out is tractable, but reconstructing the *table* (which token is the date, which is the amount) is not, and scanned PDFs have no text layer at all. Rather than ship a fragile "digital-PDF-only" parser, **all PDFs and photos route directly through the AI extractor.** Where a digital PDF *does* carry a text layer, it is extracted (pure-Go, no CGO) and used purely as a **reconciliation cross-check** against the AI's output — never as the primary parse. (Decision recorded June 2026, superseding the earlier "standalone text-PDF phase".)
+
+The user never specifies a format either way: CSV autodetect handles the common case, AI handles everything else.
 
 ### 2. Extraction is a distinct trust context from chat
 
@@ -114,7 +119,6 @@ New extraction providers are **Go adapters** implementing `DocumentExtractor`, s
 
 Phased; each phase is independently shippable and merges via its own PR.
 
-1. **Extractor seam (no AI).** Generalize `ImportCSV` → `ImportStatement`; introduce the `Extractor` registry with the deterministic extractor only; add `confidence`/`needs_review` to `ImportRowResult` (deterministic rows = confidence 1, never needs review). Pure refactor; behavior identical. 
-2. **Text-PDF extractor.** Pure-Go PDF text extraction → `ParsedRow`s through the same validators. No AI, no egress.
-3. **AI extraction capability.** Add `DocumentExtractor` to the provider interface; implement for the configured provider; wire the fallback escalation + consent + audit + reconciliation; extend the import modal for confidence review and image upload.
-4. **(Future)** Redact-then-send pre-pass for cloud egress.
+1. **Extractor seam (no AI).** Generalize `ImportCSV` → `ImportStatement`; introduce the `Extractor` registry with the deterministic CSV extractor only; add `confidence`/`needs_review` to `ImportRowResult` (deterministic rows = confidence 1, never needs review). Pure refactor; behavior identical.
+2. **AI extraction capability (CSV fallback + all PDFs + photos).** Add `DocumentExtractor` to the provider layer; implement for the configured provider (text + vision); wire the fallback escalation + per-import consent + audit + row-sum reconciliation; extend the import modal for confidence review and file/image upload. PDF and photo enter the product here — there is no standalone deterministic PDF phase. A digital PDF's text layer, when present, is extracted pure-Go and fed in only as a reconciliation cross-check.
+3. **(Future)** Redact-then-send pre-pass for cloud egress.
