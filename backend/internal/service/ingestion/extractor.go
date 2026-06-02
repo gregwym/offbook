@@ -28,6 +28,10 @@ type Extraction struct {
 	Rows    []ParsedRow   `json:"-"`
 	Mapping ColumnMapping `json:"mapping"`
 	Headers []string      `json:"headers"`
+	// DocTotals are statement totals an extractor detected (e.g. a closing
+	// balance or "total debits") used to reconcile the row sum (ADR-0019 §3).
+	// Empty for CSV, which carries no document-level total. decimal strings.
+	DocTotals []string `json:"doc_totals,omitempty"`
 }
 
 // Extractor turns a Document into a neutral Extraction. The deterministic CSV
