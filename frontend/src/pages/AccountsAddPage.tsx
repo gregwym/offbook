@@ -3,9 +3,10 @@
 // originate here). Absorbs the old /connect and /import routes. Plaid
 // dismissal falls back to the manual form within the same surface.
 //
-// Out of scope (per #227 technical notes): the CSV/PDF/photo dropzone
-// — no working backend import handler exists today (ImportPage was a
-// stub). Tracked as a backlog issue when the ingestion pipeline lands.
+// CSV transaction import is intentionally NOT a tile here — per v6 §03 it
+// lives as a per-account "add more" affordance. It's implemented as
+// ImportTransactionsModal (#330), reachable from the Transactions page header
+// and per-account on the Accounts page. PDF/photo ingestion is still future.
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { usePlaidLink } from 'react-plaid-link'

@@ -127,6 +127,19 @@ type TransactionRepository interface {
 	// "skipped_manual" for the response. For scope='plaid_default' the
 	// method filter inherently excludes manual rows.
 	ListForCategorizationScope(ctx context.Context, userID int64, scope string, afterID int64, limit int) ([]model.Transaction, error)
+	// ExistingExternalIDs returns the subset of the supplied external_ids that
+	// already have a LIVE (deleted_at IS NULL) transaction for the (user,
+	// account) pair — matching the uq_transactions_external partial index. Used
+	// by CSV import (#330) to classify rows as new vs duplicate before insert.
+	// Empty input → empty set.
+	ExistingExternalIDs(ctx context.Context, userID, accountID int64, externalIDs []string) (map[string]struct{}, error)
+	// ImportBatch inserts CSV-sourced transactions in one round-trip, doing
+	// nothing on conflict with the (account_id, external_id) partial unique
+	// index uq_transactions_external. Returns the number of rows inserted —
+	// the caller compares against len(txns) to count duplicates skipped by a
+	// concurrent import. Like CreateBatch, this only guards LIVE duplicates;
+	// soft-deleted rows sit outside the partial index.
+	ImportBatch(ctx context.Context, txns []model.Transaction) (int64, error)
 }
 
 // CategorizationScopes enumerates the valid `scope` values for
@@ -247,6 +260,43 @@ func (r *transactionRepo) CreateBatch(ctx context.Context, txns []model.Transact
 		Columns: []clause.Column{{Name: "user_id"}, {Name: "plaid_transaction_id"}},
 		TargetWhere: clause.Where{Exprs: []clause.Expression{
 			clause.Expr{SQL: "deleted_at IS NULL AND plaid_transaction_id IS NOT NULL"},
+		}},
+		DoNothing: true,
+	}).Create(&txns)
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
+func (r *transactionRepo) ExistingExternalIDs(ctx context.Context, userID, accountID int64, externalIDs []string) (map[string]struct{}, error) {
+	out := make(map[string]struct{})
+	if len(externalIDs) == 0 {
+		return out, nil
+	}
+	// GORM's soft-delete scope adds `deleted_at IS NULL`, matching the partial
+	// index predicate — so this counts only live duplicates.
+	var found []string
+	if err := r.db.WithContext(ctx).
+		Model(&model.Transaction{}).
+		Where("user_id = ? AND account_id = ? AND external_id IN ?", userID, accountID, externalIDs).
+		Pluck("external_id", &found).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range found {
+		out[id] = struct{}{}
+	}
+	return out, nil
+}
+
+func (r *transactionRepo) ImportBatch(ctx context.Context, txns []model.Transaction) (int64, error) {
+	if len(txns) == 0 {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "account_id"}, {Name: "external_id"}},
+		TargetWhere: clause.Where{Exprs: []clause.Expression{
+			clause.Expr{SQL: "deleted_at IS NULL AND external_id IS NOT NULL"},
 		}},
 		DoNothing: true,
 	}).Create(&txns)
