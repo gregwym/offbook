@@ -63,16 +63,23 @@ export type ImportRowResult = {
   external_id?: string
   status: ImportRowStatus
   error?: string
+  // confidence is the extractor's certainty (0–1). Deterministic CSV rows are
+  // 1.0; the AI extractor (ADR-0019 phase 2) reports real values. needs_review
+  // flags low-confidence new rows the UI surfaces before commit.
+  confidence: number
+  needs_review: boolean
 }
 
 export type ImportResult = {
   committed: boolean
+  source: string
   mapping: ColumnMapping
   headers: string[]
   total_rows: number
   new_count: number
   duplicate_count: number
   error_count: number
+  review_count: number
   inserted_count: number
   rows: ImportRowResult[]
 }
