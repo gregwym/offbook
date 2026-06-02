@@ -44,6 +44,39 @@ export type CreateTransactionInput = {
   notes?: string | null
 }
 
+// ── CSV import (#330) — mirrors backend service.ImportResult ──
+
+// ColumnMapping ties the three logical fields to source-CSV header names.
+export type ColumnMapping = {
+  date: string
+  amount: string
+  description: string
+}
+
+export type ImportRowStatus = 'new' | 'duplicate' | 'error'
+
+export type ImportRowResult = {
+  line: number
+  date: string
+  amount: string
+  description: string
+  external_id?: string
+  status: ImportRowStatus
+  error?: string
+}
+
+export type ImportResult = {
+  committed: boolean
+  mapping: ColumnMapping
+  headers: string[]
+  total_rows: number
+  new_count: number
+  duplicate_count: number
+  error_count: number
+  inserted_count: number
+  rows: ImportRowResult[]
+}
+
 // UpdateTransactionInput: sparse patch. `clear_category: true` with a null
 // `category_id` uncategorizes; a non-null `category_id` sets it; absent both
 // leaves the category alone.

@@ -1,6 +1,8 @@
 import { apiClient, type ApiItem, type ApiList } from './client'
 import type {
+  ColumnMapping,
   CreateTransactionInput,
+  ImportResult,
   Transaction,
   UpdateTransactionInput,
 } from '../types/transaction'
@@ -51,4 +53,53 @@ export async function updateTransaction(id: number, input: UpdateTransactionInpu
 
 export async function deleteTransaction(id: number): Promise<void> {
   await apiClient.delete(`/transactions/${id}`)
+}
+
+// ImportUnmappableError is thrown when the backend couldn't auto-detect the
+// required columns (code IMPORT_UNMAPPABLE). It carries the source headers and
+// the unmatched fields so the UI can render manual column pickers.
+export class ImportUnmappableError extends Error {
+  headers: string[]
+  missing: string[]
+  constructor(message: string, headers: string[], missing: string[]) {
+    super(message)
+    this.name = 'ImportUnmappableError'
+    this.headers = headers
+    this.missing = missing
+  }
+}
+
+// importTransactions uploads a CSV statement into an account. commit=false
+// (default) previews — the backend classifies rows and writes nothing; pass
+// commit=true to insert the new rows. Optional mapping overrides the
+// auto-detected column→field assignment.
+export async function importTransactions(
+  accountID: number,
+  file: File,
+  opts: { commit?: boolean; mapping?: Partial<ColumnMapping> } = {},
+): Promise<ImportResult> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('commit', opts.commit ? 'true' : 'false')
+  if (opts.mapping?.date) form.append('date_col', opts.mapping.date)
+  if (opts.mapping?.amount) form.append('amount_col', opts.mapping.amount)
+  if (opts.mapping?.description) form.append('description_col', opts.mapping.description)
+
+  try {
+    const res = await apiClient.post<ApiItem<ImportResult>>(
+      `/accounts/${accountID}/transactions/import`,
+      form,
+      // Let the browser set the multipart boundary; override the client's
+      // default application/json.
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    return res.data.data
+  } catch (err) {
+    const body = (err as { response?: { data?: { code?: string; headers?: string[]; missing?: string[]; error?: string } } })
+      ?.response?.data
+    if (body?.code === 'IMPORT_UNMAPPABLE') {
+      throw new ImportUnmappableError(body.error ?? 'Could not detect columns', body.headers ?? [], body.missing ?? [])
+    }
+    throw err
+  }
 }

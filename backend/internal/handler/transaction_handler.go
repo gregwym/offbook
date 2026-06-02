@@ -12,6 +12,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/auth"
+	"github.com/gregwym/offbook/backend/internal/service/ingestion"
 )
 
 type TransactionHandler struct {
@@ -28,6 +29,9 @@ func (h *TransactionHandler) Register(g *gin.RouterGroup) {
 	g.GET("/transactions/:id", h.Get)
 	g.PATCH("/transactions/:id", h.Update)
 	g.DELETE("/transactions/:id", h.Delete)
+	// CSV statement import is account-scoped (#330): the account fixes the
+	// asset and the dedup namespace.
+	g.POST("/accounts/:id/transactions/import", h.Import)
 }
 
 // List returns a paginated, filtered slice of transactions.
@@ -258,6 +262,72 @@ func (h *TransactionHandler) Delete(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// Import ingests a CSV statement into the path account. Multipart form fields:
+//
+//	file            — the CSV file (required)
+//	commit          — "true" writes new rows; otherwise (default) preview only
+//	date_col        — optional header-name override for the date column
+//	amount_col      — optional header-name override for the amount column
+//	description_col — optional header-name override for the description column
+//
+// Omitted *_col fields are auto-detected from common header aliases. The
+// response is an ImportResult: per-row new/duplicate/error classification plus
+// totals. A preview run writes nothing.
+func (h *TransactionHandler) Import(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required", "code": "INVALID_REQUEST"})
+		return
+	}
+	f, err := fileHeader.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cannot read uploaded file", "code": "INVALID_REQUEST"})
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	mapping := ingestion.ColumnMapping{
+		Date:        c.PostForm("date_col"),
+		Amount:      c.PostForm("amount_col"),
+		Description: c.PostForm("description_col"),
+	}
+	parsed, err := ingestion.Parse(f, mapping)
+	if err != nil {
+		h.writeImportParseError(c, err)
+		return
+	}
+	commit := c.PostForm("commit") == "true"
+	res, err := h.svc.ImportCSV(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, parsed, commit)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": res})
+}
+
+// writeImportParseError maps ingestion parse failures to 400s with a machine
+// code the UI can branch on (e.g. IMPORT_UNMAPPABLE → show column pickers).
+func (h *TransactionHandler) writeImportParseError(c *gin.Context, err error) {
+	var unmappable *ingestion.UnmappableError
+	switch {
+	case errors.As(err, &unmappable):
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   unmappable.Error(),
+			"code":    "IMPORT_UNMAPPABLE",
+			"headers": unmappable.Headers,
+			"missing": unmappable.Missing,
+		})
+	case errors.Is(err, ingestion.ErrEmptyFile), errors.Is(err, ingestion.ErrNoDataRows):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "IMPORT_EMPTY"})
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "IMPORT_PARSE_ERROR"})
+	}
 }
 
 func (h *TransactionHandler) writeServiceError(c *gin.Context, err error) {

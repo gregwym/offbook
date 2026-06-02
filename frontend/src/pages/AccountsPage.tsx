@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { LineChart, Pencil, Plus, Trash2 } from 'lucide-react'
+import { LineChart, Pencil, Plus, Trash2, Upload } from 'lucide-react'
 import { AccountVisibilityChip } from '../components/AccountVisibilityChip'
 import { AmountDisplay } from '../components/AmountDisplay'
+import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
 import { PIIPanel } from '../components/PIIPanel'
 import { SyncStatusPill } from '../components/SyncStatusPill'
 import { TradeFormModal } from '../components/TradeFormModal'
@@ -27,6 +28,9 @@ export function AccountsPage() {
   // Trade-entry surface — only available for brokerage-style accounts
   // (matches backend brokerageAccountTypes in service/trade_service.go).
   const [tradingOn, setTradingOn] = useState<Account | null>(null)
+  // Per-account CSV import (#330) — opens the shared modal preset to this
+  // account, the v6 §03 "per-account add more" affordance.
+  const [importingInto, setImportingInto] = useState<Account | null>(null)
 
   useEffect(() => {
     void fetch()
@@ -115,6 +119,15 @@ export function AccountsPage() {
                   )}
                   <button
                     type="button"
+                    onClick={() => setImportingInto(a)}
+                    className="mr-2 text-gray-500 hover:text-indigo-700"
+                    aria-label="Import transactions from CSV"
+                    title="Import CSV"
+                  >
+                    <Upload size={16} />
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setEditing(a)}
                     className="mr-2 text-gray-500 hover:text-gray-900"
                     aria-label="Edit"
@@ -139,6 +152,15 @@ export function AccountsPage() {
           </tbody>
         </table>
       </div>
+
+      {importingInto && (
+        <ImportTransactionsModal
+          accounts={accounts}
+          initialAccountID={importingInto.id}
+          onClose={() => setImportingInto(null)}
+          onImported={() => { void fetch() }}
+        />
+      )}
 
       {editing && (
         <AccountFormModal

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronRight, Eye, Plus, Sparkles, Trash2, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Eye, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { DateDisplay } from '../components/DateDisplay'
+import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
 import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
 import { listTransactions } from '../api/transactions'
 import { useAccountsStore } from '../store/accountsStore'
@@ -49,6 +50,7 @@ export function TransactionsPage() {
   const [searchInput, setSearchInput] = useState<string>(filter.search ?? '')
   const search = useDebounce(searchInput, 300)
   const [adding, setAdding] = useState(false)
+  const [importing, setImporting] = useState(false)
   // "Needs review" filter chip + banner. needsReview drives the store
   // filter (categorization_method=plaid_default). reviewCount is a
   // separate query so the banner can announce a number independent of
@@ -198,13 +200,22 @@ export function TransactionsPage() {
           <h1 className="text-2xl font-semibold text-gray-900">Transactions</h1>
           <p className="mt-1 text-sm text-gray-500">{total} total</p>
         </div>
-        <button
-          type="button"
-          onClick={() => setAdding(true)}
-          className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-        >
-          <Plus size={16} /> Add transaction
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setImporting(true)}
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <Upload size={16} /> Import CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            <Plus size={16} /> Add transaction
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -376,6 +387,14 @@ export function TransactionsPage() {
             await create(input)
             setAdding(false)
           }}
+        />
+      )}
+
+      {importing && (
+        <ImportTransactionsModal
+          accounts={accounts}
+          onClose={() => setImporting(false)}
+          onImported={() => { void fetch() }}
         />
       )}
 
