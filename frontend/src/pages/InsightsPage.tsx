@@ -31,6 +31,7 @@ import {
 } from 'recharts'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { FALLBACK_PIE_COLORS } from '../components/chartColors'
+import { PartialBadge } from '../components/PartialBadge'
 import { useScopedInsights, type InsightsData } from '../hooks/useScopedInsights'
 import { useScopeStore } from '../store/scopeStore'
 import { SCOPE_HOUSEHOLD } from '../types/scope'
@@ -125,6 +126,7 @@ function FreshSignupEmpty() {
 // ───── Band 1: net worth headline + trend ─────
 function NetWorthBand({ data }: { data: InsightsData }) {
   const trend = data.net_worth_trend
+  const hasPartialMonths = trend.some((p) => !p.complete)
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-5">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -146,14 +148,56 @@ function NetWorthBand({ data }: { data: InsightsData }) {
               No trend data yet — net worth will appear here as snapshots accumulate.
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={140}>
-              <LineChart data={trend.map((p) => ({ date: p.date.slice(0, 7), total: num(p.value) }))}>
-                <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                <YAxis hide />
-                <Tooltip formatter={(v) => (typeof v === 'number' ? v.toFixed(2) : String(v))} />
-                <Line type="monotone" dataKey="total" stroke="#6366F1" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
+            <>
+              <ResponsiveContainer width="100%" height={hasPartialMonths ? 124 : 140}>
+                <LineChart
+                  data={trend.map((p) => ({
+                    date: p.date.slice(0, 7),
+                    total: num(p.value),
+                    complete: p.complete,
+                  }))}
+                >
+                  <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                  <YAxis hide />
+                  <Tooltip
+                    formatter={(v, _name, item) => {
+                      const text = typeof v === 'number' ? v.toFixed(2) : String(v)
+                      const point = item?.payload as { complete?: boolean } | undefined
+                      return point?.complete === false ? `${text} (partial)` : text
+                    }}
+                  />
+                  {/* Months with an unpriced asset render a hollow amber dot —
+                      the value plotted there is a partial sum (#339). */}
+                  <Line
+                    type="monotone"
+                    dataKey="total"
+                    stroke="#6366F1"
+                    strokeWidth={2}
+                    dot={(props: { cx?: number; cy?: number; payload?: { complete?: boolean } }) =>
+                      props.payload?.complete === false && props.cx != null && props.cy != null ? (
+                        <circle
+                          key={`partial-${props.cx}-${props.cy}`}
+                          cx={props.cx}
+                          cy={props.cy}
+                          r={3.5}
+                          fill="#FFFBEB"
+                          stroke="#D97706"
+                          strokeWidth={1.5}
+                        />
+                      ) : (
+                        // recharts requires an element; render nothing visible.
+                        <circle key={`dot-${props.cx}-${props.cy}`} r={0} />
+                      )
+                    }
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+              {hasPartialMonths && (
+                <div className="mt-1 text-[11px] text-amber-700">
+                  ◌ marked months include assets without prices — those totals are partial.
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -165,6 +209,7 @@ function NetWorthBand({ data }: { data: InsightsData }) {
 function AllocationBand({ data }: { data: InsightsData }) {
   const rows = data.allocation
   const total = rows.reduce((acc, r) => acc + num(r.value), 0)
+  const hasPartial = rows.some((r) => !r.complete)
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-5">
       <div className="flex items-center gap-2">
@@ -173,35 +218,40 @@ function AllocationBand({ data }: { data: InsightsData }) {
           Asset allocation
         </h2>
       </div>
-      {rows.length === 0 || total === 0 ? (
+      {rows.length === 0 ? (
         <div className="mt-3 py-6 text-center text-sm text-gray-400">
           No investments yet — add a brokerage or crypto account to see allocation.
         </div>
       ) : (
         <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
-          <ResponsiveContainer width="100%" height={220}>
-            <PieChart>
-              <Pie
-                data={rows.map((r, i) => ({
-                  name: r.kind,
-                  value: num(r.value),
-                  color: FALLBACK_PIE_COLORS[i % FALLBACK_PIE_COLORS.length],
-                }))}
-                dataKey="value"
-                nameKey="name"
-                cx="50%"
-                cy="50%"
-                innerRadius={50}
-                outerRadius={85}
-                label={(p: { name?: string }) => p.name ?? ''}
-              >
-                {rows.map((_, i) => (
-                  <Cell key={i} fill={FALLBACK_PIE_COLORS[i % FALLBACK_PIE_COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(v) => (typeof v === 'number' ? v.toFixed(2) : String(v))} />
-            </PieChart>
-          </ResponsiveContainer>
+          {/* total === 0 with rows present means every position is unpriced —
+              skip the empty donut but keep the list, so holdings aren't
+              misreported as "no investments" (#339). */}
+          {total > 0 && (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie
+                  data={rows.map((r, i) => ({
+                    name: r.kind,
+                    value: num(r.value),
+                    color: FALLBACK_PIE_COLORS[i % FALLBACK_PIE_COLORS.length],
+                  }))}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={50}
+                  outerRadius={85}
+                  label={(p: { name?: string }) => p.name ?? ''}
+                >
+                  {rows.map((_, i) => (
+                    <Cell key={i} fill={FALLBACK_PIE_COLORS[i % FALLBACK_PIE_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(v) => (typeof v === 'number' ? v.toFixed(2) : String(v))} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
           <ul className="flex flex-col justify-center gap-1.5 text-sm">
             {rows.map((r, i) => {
               const pct = total > 0 ? (num(r.value) / total) * 100 : 0
@@ -216,11 +266,20 @@ function AllocationBand({ data }: { data: InsightsData }) {
                   </span>
                   <span className="text-gray-500">
                     <AmountDisplay amount={r.value} /> · {pct.toFixed(1)}%
+                    {!r.complete && (
+                      <PartialBadge title="Some positions of this kind have no recent price — this value (and the percentages) understate the true allocation." />
+                    )}
                   </span>
                 </li>
               )
             })}
           </ul>
+        </div>
+      )}
+      {hasPartial && (
+        <div className="mt-2 text-[11px] text-amber-700">
+          Buckets marked “partial” hold assets without prices; the donut and percentages are
+          computed from the priced portion only.
         </div>
       )}
     </section>
@@ -388,6 +447,7 @@ function AccountsBand({ data }: { data: InsightsData }) {
               <span className="text-xs text-gray-400 capitalize">{a.source}</span>
               <span className="text-right">
                 <AmountDisplay amount={a.balance} currency={a.currency || 'USD'} />
+                {!a.balance_complete && <PartialBadge />}
               </span>
             </div>
           ))}

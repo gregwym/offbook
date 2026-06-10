@@ -98,8 +98,11 @@ type HouseholdAggregatorRepository interface {
 
 	// AccountBalances returns one row per account in accountIDs with the
 	// account's current balance in its owner's primary currency. Missing
-	// account IDs (e.g. soft-deleted) are silently omitted.
-	AccountBalances(ctx context.Context, accountIDs []int64) ([]AccountBalanceRow, error)
+	// account IDs (e.g. soft-deleted) are silently omitted. freshAfter is
+	// the staleness cutoff for the Complete flag: a position with no price
+	// row at-or-after it (and not denominated in the owner's primary
+	// currency) marks the account incomplete (#339).
+	AccountBalances(ctx context.Context, accountIDs []int64, freshAfter time.Time) ([]AccountBalanceRow, error)
 }
 
 // AllocationPosition is one live position plus its asset kind, fed to the
@@ -113,7 +116,11 @@ type AllocationPosition struct {
 
 // AccountBalanceRow is the per-account balance contribution from
 // AccountBalances — minimal projection so handlers can join with the
-// share view to add visibility and owner info.
+// share view to add visibility and owner info. Complete is false when
+// any position in the account had no price row observed at-or-after the
+// caller's freshness cutoff (#339): Balance may still include a stale
+// valuation, but the row is flagged so the UI can render it as partial
+// rather than confidently current.
 type AccountBalanceRow struct {
 	AccountID   int64
 	Name        string
@@ -121,6 +128,7 @@ type AccountBalanceRow struct {
 	Currency    string
 	OwnerUserID int64
 	Balance     decimal.Decimal
+	Complete    bool
 }
 
 type householdAggregatorRepo struct{ db *gorm.DB }
@@ -446,7 +454,7 @@ func (r *householdAggregatorRepo) HouseholdQuoteAssetID(ctx context.Context, hou
 	return assetID, nil
 }
 
-func (r *householdAggregatorRepo) AccountBalances(ctx context.Context, accountIDs []int64) ([]AccountBalanceRow, error) {
+func (r *householdAggregatorRepo) AccountBalances(ctx context.Context, accountIDs []int64, freshAfter time.Time) ([]AccountBalanceRow, error) {
 	if len(accountIDs) == 0 {
 		return nil, nil
 	}
@@ -457,6 +465,7 @@ func (r *householdAggregatorRepo) AccountBalances(ctx context.Context, accountID
 		Currency    string
 		OwnerUserID int64
 		Balance     string
+		Complete    bool
 	}
 	var rows []rawRow
 	err := r.db.WithContext(ctx).Raw(`
@@ -465,7 +474,17 @@ func (r *householdAggregatorRepo) AccountBalances(ctx context.Context, accountID
 		       a.account_type AS account_type,
 		       qa.symbol      AS currency,
 		       a.user_id      AS owner_user_id,
-		       COALESCE(SUM(`+fmt.Sprintf(positionValueExpr, "")+`), 0)::text AS balance
+		       COALESCE(SUM(`+fmt.Sprintf(positionValueExpr, "")+`), 0)::text AS balance,
+		       COALESCE(BOOL_AND(
+		           p.id IS NULL
+		           OR p.asset_id = u.primary_currency_asset_id
+		           OR EXISTS (
+		               SELECT 1 FROM prices pr
+		               WHERE pr.asset_id = p.asset_id
+		                 AND pr.quote_asset_id = u.primary_currency_asset_id
+		                 AND pr.as_of >= ?
+		           )
+		       ), TRUE) AS complete
 		FROM accounts a
 		JOIN users     u  ON u.id = a.user_id
 		JOIN assets    qa ON qa.id = a.primary_quote_asset_id
@@ -473,7 +492,7 @@ func (r *householdAggregatorRepo) AccountBalances(ctx context.Context, accountID
 		WHERE a.deleted_at IS NULL AND a.id IN ?
 		GROUP BY a.id, a.name, a.account_type, qa.symbol, a.user_id
 		ORDER BY a.id
-	`, accountIDs).Scan(&rows).Error
+	`, freshAfter, accountIDs).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -487,6 +506,7 @@ func (r *householdAggregatorRepo) AccountBalances(ctx context.Context, accountID
 			Currency:    row.Currency,
 			OwnerUserID: row.OwnerUserID,
 			Balance:     b,
+			Complete:    row.Complete,
 		})
 	}
 	return out, nil

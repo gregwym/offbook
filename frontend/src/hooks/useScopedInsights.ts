@@ -32,6 +32,9 @@ export type InsightsCategoryRow = {
 export type InsightsTrendPoint = {
   date: string // YYYY-MM-DD (we slice off any time component)
   value: string
+  // false when an asset held at this month-end had no available price, so
+  // `value` is a partial sum (#282/#339).
+  complete: boolean
 }
 
 export type InsightsAllocationRow = {
@@ -67,6 +70,9 @@ export type InsightsAccountRow = {
   account_type: string
   currency: string
   balance: string
+  // false when the balance includes unpriced or stale-priced positions —
+  // render as partial, never as a confident total (#339).
+  balance_complete: boolean
   source: 'plaid' | 'manual'
   last_synced_at: string | null
   owner_user_id?: number
@@ -169,7 +175,11 @@ async function loadPersonal(): Promise<InsightsData> {
     income: summary.income,
     spending: summary.spending,
     by_category: summary.by_category,
-    net_worth_trend: trend.map((p) => ({ date: p.date.slice(0, 10), value: p.total })),
+    net_worth_trend: trend.map((p) => ({
+      date: p.date.slice(0, 10),
+      value: p.total,
+      complete: p.complete,
+    })),
     allocation: allocation.map((a) => ({ kind: a.kind, value: a.value, complete: a.complete })),
     budgets: budgetRows,
     goals: goals.map((g) => ({
@@ -186,6 +196,7 @@ async function loadPersonal(): Promise<InsightsData> {
       account_type: a.account_type,
       currency: a.currency,
       balance: a.balance,
+      balance_complete: a.balance_complete,
       source: a.plaid_account_id ? 'plaid' : 'manual',
       last_synced_at: a.last_synced_at,
     })),
@@ -224,7 +235,11 @@ async function loadHousehold(): Promise<InsightsData> {
     income: dashboard.income,
     spending: dashboard.spending,
     by_category: dashboard.by_category,
-    net_worth_trend: trend.map((p) => ({ date: p.date.slice(0, 10), value: p.value })),
+    net_worth_trend: trend.map((p) => ({
+      date: p.date.slice(0, 10),
+      value: p.value,
+      complete: p.complete,
+    })),
     allocation: allocation.map((a) => ({ kind: a.kind, value: a.value, complete: a.complete })),
     budgets: budgetRows,
     goals: goalProgress.map((g) => ({
@@ -241,6 +256,7 @@ async function loadHousehold(): Promise<InsightsData> {
       account_type: a.account_type,
       currency: a.currency,
       balance: a.balance,
+      balance_complete: a.complete,
       // Household-shared accounts can be either Plaid-linked or manual,
       // but the aggregator doesn't surface that distinction (would leak
       // a per-owner plaid_item indicator). Default to "manual" badge.
