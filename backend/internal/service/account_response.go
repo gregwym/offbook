@@ -3,6 +3,8 @@ package service
 import (
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/gregwym/offbook/backend/internal/model"
 )
 
@@ -20,4 +22,14 @@ type AccountResponse struct {
 	LastSyncStatus *string    `json:"last_sync_status"`
 	LastSyncedAt   *time.Time `json:"last_synced_at"`
 	LastSyncError  *string    `json:"last_sync_error"`
+
+	// Balance is the valuation-derived account value — Σ positions × prices
+	// in the account's primary quote asset, at response time. ADR-0013
+	// dropped the stored scalar, so this is the only balance the API serves
+	// (#291). Marshals as a decimal string.
+	Balance decimal.Decimal `json:"balance"`
+	// BalanceComplete is false when any position's price chain was stale or
+	// missing, i.e. Balance is a partial sum rather than the whole story —
+	// the #282 "no wrong-but-confident totals" contract.
+	BalanceComplete bool `json:"balance_complete"`
 }
