@@ -1,5 +1,6 @@
 import { apiClient, type ApiItem, type ApiList } from './client'
 import type {
+  AssetClassAllocation,
   BudgetAlert,
   CashFlowMonth,
   DashboardPeriod,
@@ -32,5 +33,10 @@ export async function getCashFlow(months = 12): Promise<CashFlowMonth[]> {
 
 export async function getNetWorth(months = 12): Promise<NetWorthPoint[]> {
   const res = await apiClient.get<ApiList<NetWorthPoint>>('/dashboard/net-worth', { params: { months } })
+  return res.data.data
+}
+
+export async function getAllocation(): Promise<AssetClassAllocation[]> {
+  const res = await apiClient.get<ApiList<AssetClassAllocation>>('/dashboard/allocation')
   return res.data.data
 }

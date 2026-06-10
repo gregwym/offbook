@@ -22,6 +22,7 @@ GET /api/v1/budgets/:id/spend
 GET /api/v1/categories
 GET /api/v1/categorization-rules
 GET /api/v1/categorization-rules/:id
+GET /api/v1/dashboard/allocation
 GET /api/v1/dashboard/budget-alerts
 GET /api/v1/dashboard/cash-flow
 GET /api/v1/dashboard/net-worth

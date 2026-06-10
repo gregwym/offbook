@@ -50,3 +50,14 @@ export type NetWorthPoint = {
   // `total` is a partial sum (#282).
   complete: boolean
 }
+
+// AssetClassAllocation mirrors backend service.AssetClassAllocation (#341).
+// Wire-identical to the household aggregator's allocation row, so the
+// Insights band renders both scopes from one shape.
+export type AssetClassAllocation = {
+  kind: string
+  value: string
+  // false when a position of this kind had no fresh price — `value` is a
+  // partial sum (#282).
+  complete: boolean
+}

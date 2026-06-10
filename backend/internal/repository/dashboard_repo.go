@@ -91,6 +91,13 @@ type DashboardRepository interface {
 	// excluded by construction (a trade's security leg is never fiat).
 	// Returns rows ordered by gross DESC.
 	TradeSummaryByKind(ctx context.Context, userID int64, from, to time.Time) ([]TradeKindAggregate, error)
+	// ListPositionsForAllocation returns every live position owned by the
+	// user with its asset kind, for the personal allocation rollup (#341) —
+	// the user-scoped analogue of the household aggregator repo method of
+	// the same name. Pricing is NOT done in SQL: the caller values each
+	// position through the shared valuation derivation so an unpriced asset
+	// surfaces as incomplete rather than silently $0 (#282).
+	ListPositionsForAllocation(ctx context.Context, userID int64) ([]AllocationPosition, error)
 }
 
 // TradeKindAggregate is one row of the trade rollup surfaced to the AI
@@ -354,6 +361,37 @@ func (r *dashboardRepo) TradeSummaryByKind(ctx context.Context, userID int64, fr
 	for _, r := range rows {
 		gross, _ := decimal.NewFromString(r.Gross)
 		out = append(out, TradeKindAggregate{Kind: r.Kind, LegCount: r.LegCount, GrossValue: gross})
+	}
+	return out, nil
+}
+
+func (r *dashboardRepo) ListPositionsForAllocation(ctx context.Context, userID int64) ([]AllocationPosition, error) {
+	type rawRow struct {
+		AssetID  int64
+		Quantity string
+		Kind     string
+	}
+	var rows []rawRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT p.asset_id  AS asset_id,
+		       p.quantity::text AS quantity,
+		       ass.kind    AS kind
+		FROM positions p
+		JOIN accounts a ON a.id = p.account_id AND a.deleted_at IS NULL
+		JOIN assets   ass ON ass.id = p.asset_id
+		WHERE p.deleted_at IS NULL AND p.user_id = ?
+		ORDER BY ass.kind, p.asset_id
+	`, userID).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AllocationPosition, 0, len(rows))
+	for _, row := range rows {
+		q, err := decimal.NewFromString(row.Quantity)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, AllocationPosition{AssetID: row.AssetID, Quantity: q, Kind: row.Kind})
 	}
 	return out, nil
 }

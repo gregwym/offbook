@@ -85,7 +85,8 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	savingsGoalHandler := handler.NewSavingsGoalHandler(savingsGoalSvc)
 
 	// Investments wiring removed per ADR-0013 — the snapshot table is gone.
-	// Position-based portfolio + allocation aggregator lands in #238.
+	// Position-based allocation is served by /dashboard/allocation (personal,
+	// #341) and /h/insights/allocation (household, #237).
 
 	householdRepo := repository.NewHouseholdRepository(gormDB)
 	memberRepo := repository.NewHouseholdMemberRepository(gormDB)
