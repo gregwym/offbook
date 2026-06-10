@@ -35,9 +35,12 @@ type HouseholdAggregatorRepository interface {
 	// household (active + left-within-grace). Callers split by left_at.
 	ListMembersIncludingLeft(ctx context.Context, householdID int64) ([]model.HouseholdMember, error)
 
-	// SumBalances returns sum(balance) across the given account IDs.
-	// Returns decimal.Zero on empty input — no SQL is issued in that case.
-	SumBalances(ctx context.Context, accountIDs []int64) (decimal.Decimal, error)
+	// SumBalances returns sum(balance) across the given account IDs, plus
+	// a completeness flag: false when any position in the set had no price
+	// row at-or-after freshAfter (and isn't denominated in its owner's
+	// primary currency), i.e. the sum may rest on stale rates (#344).
+	// Returns (decimal.Zero, true) on empty input — no SQL is issued.
+	SumBalances(ctx context.Context, accountIDs []int64, freshAfter time.Time) (decimal.Decimal, bool, error)
 
 	// PeriodIncomeSpending returns (income, spending) over [from, to)
 	// across the given account IDs. Spending is returned as a positive value.
@@ -169,15 +172,21 @@ func (r *householdAggregatorRepo) ListMembersIncludingLeft(ctx context.Context, 
 	return out, err
 }
 
-func (r *householdAggregatorRepo) SumBalances(ctx context.Context, accountIDs []int64) (decimal.Decimal, error) {
+func (r *householdAggregatorRepo) SumBalances(ctx context.Context, accountIDs []int64, freshAfter time.Time) (decimal.Decimal, bool, error) {
 	if len(accountIDs) == 0 {
-		return decimal.Zero, nil
+		return decimal.Zero, true, nil
 	}
 	// Per ADR-0013, balance is derived from positions × latest prices —
 	// the legacy accounts.balance column is gone. For positions denominated
 	// in the position owner's primary currency the price is implicit (1);
-	// for others we look up the most-recent price into that currency.
-	var s string
+	// for others we look up the most-recent price into that currency. The
+	// complete flag mirrors AccountBalances (#339/#344): any position whose
+	// freshest price predates freshAfter marks the sum partial.
+	type rawRow struct {
+		Balance  string
+		Complete bool
+	}
+	var row rawRow
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(SUM(
 			CASE
@@ -191,17 +200,26 @@ func (r *householdAggregatorRepo) SumBalances(ctx context.Context, accountIDs []
 						LIMIT 1
 					), 0)
 			END
-		), 0)::text
+		), 0)::text AS balance,
+		COALESCE(BOOL_AND(
+			p.asset_id = u.primary_currency_asset_id
+			OR EXISTS (
+				SELECT 1 FROM prices pr
+				WHERE pr.asset_id = p.asset_id
+				  AND pr.quote_asset_id = u.primary_currency_asset_id
+				  AND pr.as_of >= ?
+			)
+		), TRUE) AS complete
 		FROM positions p
 		JOIN accounts a ON a.id = p.account_id AND a.deleted_at IS NULL
 		JOIN users    u ON u.id = p.user_id
 		WHERE p.deleted_at IS NULL AND p.account_id IN ?
-	`, accountIDs).Scan(&s).Error
+	`, freshAfter, accountIDs).Scan(&row).Error
 	if err != nil {
-		return decimal.Zero, err
+		return decimal.Zero, false, err
 	}
-	d, _ := decimal.NewFromString(s)
-	return d, nil
+	d, _ := decimal.NewFromString(row.Balance)
+	return d, row.Complete, nil
 }
 
 func (r *householdAggregatorRepo) PeriodIncomeSpending(ctx context.Context, accountIDs []int64, from, to time.Time) (decimal.Decimal, decimal.Decimal, error) {

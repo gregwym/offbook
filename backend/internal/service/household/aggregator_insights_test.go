@@ -394,3 +394,42 @@ func TestAggregator_AccountSummaries_FlagsStalePricing(t *testing.T) {
 		t.Errorf("stale-priced account Complete = true, want false (only price is 30d old)")
 	}
 }
+
+// TestAggregator_Dashboard_NetWorthCompleteness: the household headline
+// reports complete for fresh/primary-currency positions and partial when a
+// shared position's only price predates the stale window (#344).
+func TestAggregator_Dashboard_NetWorthCompleteness(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	usd := testutil.LookupUSDAssetID(t, g)
+	ownerID := seedUser(t, g, "dash-nwc-owner")
+	hh := seedHouseholdRow(t, g, ownerID, "DashNWC", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+
+	cashAcct := seedAccount(t, g, ownerID, "cash")
+	upsertPosition(t, g, ownerID, cashAcct.ID, usd, "500")
+	setShare(t, g, cashAcct.ID, hh.ID, model.VisibilityBalanceOnly)
+
+	dash, err := agg.Dashboard(ctx, hh.ID, household.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Dashboard: %v", err)
+	}
+	if dash.NetWorth != "500" || !dash.NetWorthComplete {
+		t.Errorf("dashboard = {net_worth:%s complete:%v}, want {500 true}", dash.NetWorth, dash.NetWorthComplete)
+	}
+
+	// A stale-priced shared equity flips the headline to partial.
+	stale := seedAsset(t, g, "DNWC-"+fmt.Sprintf("%d", time.Now().UnixNano()), model.AssetKindEquity, usd)
+	insertPrice(t, g, stale, usd, "10", time.Now().Add(-30*24*time.Hour))
+	brkAcct := seedAccount(t, g, ownerID, "brk")
+	upsertPosition(t, g, ownerID, brkAcct.ID, stale, "5")
+	setShare(t, g, brkAcct.ID, hh.ID, model.VisibilityBalanceOnly)
+
+	dash, err = agg.Dashboard(ctx, hh.ID, household.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Dashboard (stale): %v", err)
+	}
+	if dash.NetWorthComplete {
+		t.Error("net_worth_complete = true, want false (shared equity priced 30d ago)")
+	}
+}

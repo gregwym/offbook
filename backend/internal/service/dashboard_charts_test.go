@@ -396,3 +396,39 @@ func TestDashboard_Allocation_TenantIsolation(t *testing.T) {
 		t.Errorf("user A allocation has %d rows, want 0 (user B's positions must not leak)", len(rows))
 	}
 }
+
+// TestDashboard_Summarize_NetWorthCompleteness: the headline net worth goes
+// through the valuation derivation (#344) — a fresh-priced portfolio reports
+// complete; adding an unpriced asset flips the flag and the unpriced value
+// is excluded, never coerced to $0-and-counted-as-fine.
+func TestDashboard_Summarize_NetWorthCompleteness(t *testing.T) {
+	svc, userID, accountID, g := newDashboardSvc(t)
+	ctx := context.Background()
+	usdID := testutil.LookupUSDAssetID(t, g)
+
+	seedAllocationPosition(t, g, userID, accountID, usdID, "1000")
+
+	summary, err := svc.Summarize(ctx, userID, service.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	if summary.NetWorth != "1000" || !summary.NetWorthComplete {
+		t.Errorf("summary = {net_worth:%s complete:%v}, want {1000 true}", summary.NetWorth, summary.NetWorthComplete)
+	}
+
+	// An unpriced asset joins the book → headline flips to partial and the
+	// priced portion still sums.
+	btcID := testutil.LookupAssetID(t, g, "BTC", "crypto")
+	seedAllocationPosition(t, g, userID, accountID, btcID, "0.5")
+
+	summary, err = svc.Summarize(ctx, userID, service.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Summarize (with unpriced): %v", err)
+	}
+	if summary.NetWorth != "1000" {
+		t.Errorf("net_worth = %s, want 1000 (unpriced BTC excluded from the sum)", summary.NetWorth)
+	}
+	if summary.NetWorthComplete {
+		t.Error("net_worth_complete = true, want false (BTC has no price chain)")
+	}
+}

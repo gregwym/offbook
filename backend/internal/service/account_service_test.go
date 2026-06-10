@@ -311,16 +311,31 @@ func TestAccountService_Create_OpeningBalanceIsLedgerFact(t *testing.T) {
 	}
 
 	// Counts toward net worth (positions × price) but NOT income/spending.
-	dash := repository.NewDashboardRepository(g)
-	agg, err := dash.Summarize(ctx, userID, time.Now().AddDate(0, -1, 0), time.Now().AddDate(0, 0, 1))
+	// Net worth comes from the service since #344 (single valuation
+	// derivation; the repo no longer computes it).
+	dashSvc := service.NewDashboardService(
+		repository.NewDashboardRepository(g),
+		repository.NewTransactionRepository(g),
+		repository.NewUserRepository(g),
+		valuation.NewService(
+			repository.NewPositionRepository(g),
+			repository.NewPriceRepository(g),
+			repository.NewAssetRepository(g),
+			repository.NewAccountRepository(g),
+		),
+	)
+	summary, err := dashSvc.Summarize(ctx, userID, service.PeriodCurrentMonth)
 	if err != nil {
 		t.Fatalf("summarize: %v", err)
 	}
-	if !agg.NetWorth.Equal(decimal.NewFromInt(1000)) {
-		t.Errorf("net worth = %s, want 1000 (opening balance counts)", agg.NetWorth)
+	if summary.NetWorth != "1000" {
+		t.Errorf("net worth = %s, want 1000 (opening balance counts)", summary.NetWorth)
 	}
-	if !agg.Income.IsZero() || !agg.Spending.IsZero() {
-		t.Errorf("income=%s spending=%s, want 0/0 (opening_balance excluded from flow)", agg.Income, agg.Spending)
+	if !summary.NetWorthComplete {
+		t.Error("net_worth_complete = false, want true (primary-currency cash needs no price)")
+	}
+	if summary.Income != "0" || summary.Spending != "0" {
+		t.Errorf("income=%s spending=%s, want 0/0 (opening_balance excluded from flow)", summary.Income, summary.Spending)
 	}
 }
 

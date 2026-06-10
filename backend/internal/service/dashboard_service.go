@@ -27,10 +27,13 @@ const (
 var ErrInvalidPeriod = errors.New("invalid period")
 
 // DashboardSummary mirrors the API response shape exactly. The handler can
-// json-encode this directly.
+// json-encode this directly. NetWorthComplete is false when a held position
+// had no fresh price, so NetWorth is a partial sum (#282/#344) — the UI
+// flags it instead of presenting a confident-but-understated figure.
 type DashboardSummary struct {
 	Period           PeriodWindow                    `json:"period"`
 	NetWorth         string                          `json:"net_worth"`
+	NetWorthComplete bool                            `json:"net_worth_complete"`
 	Income           string                          `json:"income"`
 	Spending         string                          `json:"spending"`
 	AccountCount     int64                           `json:"account_count"`
@@ -116,6 +119,27 @@ func (s *DashboardService) Summarize(ctx context.Context, userID int64, period s
 		return nil, err
 	}
 
+	// Headline net worth goes through the single valuation derivation
+	// (#282/#344) with the same stale window as the per-account balances,
+	// so the headline and the accounts list never disagree silently. An
+	// unpriced or stale position drops out of the sum and flips the flag.
+	user, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	allocPositions, err := s.repo.ListPositionsForAllocation(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	positions := make([]model.Position, 0, len(allocPositions))
+	for _, p := range allocPositions {
+		positions = append(positions, model.Position{AssetID: p.AssetID, Quantity: p.Quantity})
+	}
+	netWorth, err := s.val.ValuePositions(ctx, positions, s.now().UTC(), user.PrimaryCurrencyAssetID)
+	if err != nil {
+		return nil, err
+	}
+
 	items := make([]DashboardCategorySpendingItem, 0, len(agg.ByCategory))
 	for _, row := range agg.ByCategory {
 		items = append(items, DashboardCategorySpendingItem{
@@ -127,7 +151,8 @@ func (s *DashboardService) Summarize(ctx context.Context, userID int64, period s
 
 	return &DashboardSummary{
 		Period:           PeriodWindow{Key: period, From: from, To: to},
-		NetWorth:         agg.NetWorth.String(),
+		NetWorth:         netWorth.Value.String(),
+		NetWorthComplete: netWorth.Complete(),
 		Income:           agg.Income.String(),
 		Spending:         agg.Spending.String(),
 		AccountCount:     agg.AccountCount,
