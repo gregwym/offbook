@@ -311,3 +311,88 @@ func TestDashboard_NetWorth_TenantIsolation(t *testing.T) {
 }
 
 func ptrStr(s string) *string { return &s }
+
+// seedAllocationPosition inserts a live position row (with cleanup) for
+// allocation tests — allocation reads current positions, not the fold.
+func seedAllocationPosition(t *testing.T, g *gorm.DB, userID, accountID, assetID int64, quantity string) {
+	t.Helper()
+	p := &model.Position{
+		UserID: userID, AccountID: accountID, AssetID: assetID,
+		Quantity: decimal.RequireFromString(quantity),
+	}
+	if err := g.Create(p).Error; err != nil {
+		t.Fatalf("seed position: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Position{}, p.ID) })
+}
+
+// TestDashboard_Allocation_BucketsByKindAndFlagsUnpriced: positions roll up
+// by asset kind in the user's primary currency; a kind containing an unpriced
+// asset is flagged incomplete instead of silently summing to a partial value
+// (#341, #282 contract).
+func TestDashboard_Allocation_BucketsByKindAndFlagsUnpriced(t *testing.T) {
+	svc, userID, accountID, g := newDashboardSvc(t)
+	ctx := context.Background()
+	usdID := testutil.LookupUSDAssetID(t, g)
+	eurID := testutil.LookupAssetID(t, g, "EUR", "fiat")
+	btcID := testutil.LookupAssetID(t, g, "BTC", "crypto")
+
+	// fiat: 1000 USD (same-asset, prices at 1) + 100 EUR at 1.20 → 1120.
+	seedAllocationPosition(t, g, userID, accountID, usdID, "1000")
+	seedAllocationPosition(t, g, userID, accountID, eurID, "100")
+	insertNetWorthPrice(t, g, eurID, usdID, "1.20", time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC))
+	// crypto: 0.5 BTC with NO price → bucket present but incomplete, value 0.
+	seedAllocationPosition(t, g, userID, accountID, btcID, "0.5")
+
+	rows, err := svc.Allocation(ctx, userID)
+	if err != nil {
+		t.Fatalf("Allocation: %v", err)
+	}
+	byKind := map[string]service.AssetClassAllocation{}
+	for _, r := range rows {
+		byKind[r.Kind] = r
+	}
+	fiat, ok := byKind["fiat"]
+	if !ok {
+		t.Fatal("no fiat bucket")
+	}
+	if fiat.Value != "1120" || !fiat.Complete {
+		t.Errorf("fiat = {value:%s complete:%v}, want {1120 true}", fiat.Value, fiat.Complete)
+	}
+	crypto, ok := byKind["crypto"]
+	if !ok {
+		t.Fatal("no crypto bucket (unpriced asset must still surface its kind)")
+	}
+	if crypto.Complete {
+		t.Error("crypto.Complete = true, want false (BTC has no price chain)")
+	}
+	if crypto.Value != "0" {
+		t.Errorf("crypto.Value = %s, want 0 (unpriced excluded, not coerced)", crypto.Value)
+	}
+}
+
+// TestDashboard_Allocation_TenantIsolation: user B's positions never appear
+// in user A's allocation (new repository read path → multi-tenant test rule).
+func TestDashboard_Allocation_TenantIsolation(t *testing.T) {
+	svc, userA, _, g := newDashboardSvc(t)
+	ctx := context.Background()
+	userB := seedTestUser(t, g)
+	accB := &model.Account{
+		UserID: userB, Name: "AllocB-" + time.Now().Format("150405.000000"),
+		InstitutionSlug: "fixture", AccountType: "checking", Currency: "USD",
+	}
+	if err := g.Create(accB).Error; err != nil {
+		t.Fatalf("seed B account: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Account{}, accB.ID) })
+	usdID := testutil.LookupUSDAssetID(t, g)
+	seedAllocationPosition(t, g, userB, accB.ID, usdID, "9999")
+
+	rows, err := svc.Allocation(ctx, userA)
+	if err != nil {
+		t.Fatalf("Allocation: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("user A allocation has %d rows, want 0 (user B's positions must not leak)", len(rows))
+	}
+}

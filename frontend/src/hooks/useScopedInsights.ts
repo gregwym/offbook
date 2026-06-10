@@ -10,7 +10,7 @@ import { useEffect, useState } from 'react'
 import { listAccounts } from '../api/accounts'
 import { getBudgetSpend, listBudgets } from '../api/budgets'
 import { listCategories } from '../api/categories'
-import { getDashboardSummary, getNetWorth } from '../api/dashboard'
+import { getAllocation, getDashboardSummary, getNetWorth } from '../api/dashboard'
 import {
   getBudgetPace,
   getGoalProgress,
@@ -37,10 +37,9 @@ export type InsightsTrendPoint = {
 export type InsightsAllocationRow = {
   kind: string
   value: string
-  // weight_pct present for personal portfolio (server-computed), absent
-  // for household (would require a sum-then-divide that we don't bother
-  // with here — UI can compute if needed).
-  weight_pct?: string
+  // false when a position of this kind had no fresh price — `value` is a
+  // partial sum (#282). Rendering of the flag lands with #339.
+  complete: boolean
 }
 
 export type InsightsBudgetRow = {
@@ -127,16 +126,11 @@ export function useScopedInsights(): Result {
 }
 
 async function loadPersonal(): Promise<InsightsData> {
-  // Allocation band has no data source in personal scope right now —
-  // the legacy /investments/portfolio endpoint was removed per ADR-0013
-  // and its position-based replacement lands in M10b #238. Until then
-  // the band renders its empty state ("No investments yet…") via the
-  // empty allocation array below. Household scope is unaffected — it
-  // goes through the aggregator's /h/insights/allocation route.
-  const [summary, trend, budgets, goals, accountsResp, categories] =
+  const [summary, trend, allocation, budgets, goals, accountsResp, categories] =
     await Promise.all([
       getDashboardSummary('current_month'),
       getNetWorth(12),
+      getAllocation(),
       listBudgets(),
       listGoals(),
       listAccounts({}),
@@ -176,8 +170,7 @@ async function loadPersonal(): Promise<InsightsData> {
     spending: summary.spending,
     by_category: summary.by_category,
     net_worth_trend: trend.map((p) => ({ date: p.date.slice(0, 10), value: p.total })),
-    allocation: [], // see header comment — restored when M10b #238 lands
-
+    allocation: allocation.map((a) => ({ kind: a.kind, value: a.value, complete: a.complete })),
     budgets: budgetRows,
     goals: goals.map((g) => ({
       id: g.id,
@@ -232,7 +225,7 @@ async function loadHousehold(): Promise<InsightsData> {
     spending: dashboard.spending,
     by_category: dashboard.by_category,
     net_worth_trend: trend.map((p) => ({ date: p.date.slice(0, 10), value: p.value })),
-    allocation: allocation.map((a) => ({ kind: a.kind, value: a.value })),
+    allocation: allocation.map((a) => ({ kind: a.kind, value: a.value, complete: a.complete })),
     budgets: budgetRows,
     goals: goalProgress.map((g) => ({
       id: g.goal_id,

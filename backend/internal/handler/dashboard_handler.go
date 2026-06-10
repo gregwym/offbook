@@ -27,6 +27,19 @@ func (h *DashboardHandler) Register(g *gin.RouterGroup) {
 	g.GET("/dashboard/spend-by-category", h.SpendByCategory)
 	g.GET("/dashboard/cash-flow", h.CashFlow)
 	g.GET("/dashboard/net-worth", h.NetWorth)
+	g.GET("/dashboard/allocation", h.Allocation)
+}
+
+// Allocation returns the user's positions rolled up by asset kind, valued
+// in their primary currency (#341) — the personal counterpart of
+// /h/insights/allocation.
+func (h *DashboardHandler) Allocation(c *gin.Context) {
+	items, err := h.svc.Allocation(c.Request.Context(), auth.MustUserID(c.Request.Context()))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items, "total": int64(len(items))})
 }
 
 // SpendByCategory handles ?from=YYYY-MM-DD&to=YYYY-MM-DD. Either bound

@@ -3,8 +3,11 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
@@ -211,6 +214,70 @@ func (s *DashboardService) NetWorth(ctx context.Context, userID int64, months in
 			Total:    p.Value.String(),
 			Complete: p.Complete(),
 		})
+	}
+	return out, nil
+}
+
+// AssetClassAllocation is one row of the personal allocation rollup — the
+// total value of the user's positions whose asset kind matches, in the
+// user's primary currency. Wire-identical to the household aggregator's
+// allocation row so the Insights band renders both scopes from one shape.
+// Complete is false when at least one position of this kind had no fresh
+// price, so Value is a partial sum (#282).
+type AssetClassAllocation struct {
+	Kind     string `json:"kind"`
+	Value    string `json:"value"`
+	Complete bool   `json:"complete"`
+}
+
+// Allocation returns the user's positions rolled up by asset kind
+// (fiat / equity / fund / crypto / …), valued at now in the user's primary
+// currency via the single valuation derivation (#282, #341) — the personal
+// analogue of the household aggregator's Allocation. An unpriced position
+// marks its kind incomplete instead of contributing a silent $0.
+func (s *DashboardService) Allocation(ctx context.Context, userID int64) ([]AssetClassAllocation, error) {
+	user, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	positions, err := s.repo.ListPositionsForAllocation(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := s.now().UTC()
+	type bucket struct {
+		value    decimal.Decimal
+		complete bool
+		order    int
+	}
+	buckets := map[string]*bucket{}
+	order := 0
+	ensure := func(kind string) *bucket {
+		b, ok := buckets[kind]
+		if !ok {
+			b = &bucket{value: decimal.Zero, complete: true, order: order}
+			order++
+			buckets[kind] = b
+		}
+		return b
+	}
+	for _, p := range positions {
+		b := ensure(p.Kind)
+		v, err := s.val.Value(ctx, model.Position{AssetID: p.AssetID, Quantity: p.Quantity}, now, user.PrimaryCurrencyAssetID)
+		if errors.Is(err, valuation.ErrStalePrice) {
+			b.complete = false
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("value position (asset=%d): %w", p.AssetID, err)
+		}
+		b.value = b.value.Add(v)
+	}
+
+	out := make([]AssetClassAllocation, len(buckets))
+	for kind, b := range buckets {
+		out[b.order] = AssetClassAllocation{Kind: kind, Value: b.value.String(), Complete: b.complete}
 	}
 	return out, nil
 }
