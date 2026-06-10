@@ -6,7 +6,7 @@
 // aggregator is the only path for cross-user reads; this hook must never
 // call household repos directly. Personal scope hits the existing per-user
 // dashboard/portfolio/budget/goal/account endpoints.
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { listAccounts } from '../api/accounts'
 import { getBudgetSpend, listBudgets } from '../api/budgets'
 import { listCategories } from '../api/categories'
@@ -103,9 +103,13 @@ type Result =
   | { state: 'error'; error: string }
   | { state: 'ready'; data: InsightsData }
 
-export function useScopedInsights(): Result {
+// reload refetches the active scope's data in place (used after actions
+// that change what the bands should show, e.g. a price refresh).
+export function useScopedInsights(): Result & { reload: () => void } {
   const { active, hydrated, householdId } = useScopeStore()
   const [result, setResult] = useState<Result>({ state: 'loading' })
+  const [nonce, setNonce] = useState(0)
+  const reload = useCallback(() => setNonce((n) => n + 1), [])
 
   useEffect(() => {
     if (!hydrated) return
@@ -126,9 +130,9 @@ export function useScopedInsights(): Result {
     return () => {
       cancelled = true
     }
-  }, [active, hydrated, householdId])
+  }, [active, hydrated, householdId, nonce])
 
-  return result
+  return { ...result, reload }
 }
 
 async function loadPersonal(): Promise<InsightsData> {

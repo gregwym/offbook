@@ -94,6 +94,7 @@ POST /api/v1/plaid/items/:item_id/sync-investment-transactions
 POST /api/v1/plaid/items/:item_id/sync-transactions
 POST /api/v1/plaid/link/exchange
 POST /api/v1/plaid/link/token
+POST /api/v1/prices/refresh
 POST /api/v1/savings-goals
 POST /api/v1/savings-goals/:id/contributions
 POST /api/v1/setup/admin
