@@ -8,6 +8,10 @@ export type UserSettingsView = {
   ollama_base_url?: string | null
   preferred_provider: 'claude' | 'ollama'
   preferred_model?: string | null
+  // Opt-in for the daily background price refresh (#338 Phase 3). When
+  // true, the held-symbol list goes to the price providers once a day
+  // without a click — hence stored consent, default false.
+  auto_price_refresh: boolean
 }
 
 export type UpdateUserSettingsInput = {
@@ -18,4 +22,5 @@ export type UpdateUserSettingsInput = {
   preferred_provider?: 'claude' | 'ollama'
   preferred_model?: string
   clear_preferred_model?: boolean
+  auto_price_refresh?: boolean
 }

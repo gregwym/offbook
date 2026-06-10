@@ -24,6 +24,7 @@ export function SettingsPage() {
         <p className="mt-1 text-sm text-gray-500">AI provider, linked institutions, and preferences.</p>
       </div>
       <AISettingsSection />
+      <PriceSettingsSection />
       <LinkedInstitutionsSection />
       <AboutSection />
     </div>
@@ -233,6 +234,88 @@ function AISettingsSection() {
             Leave blank to use the server default (<span className="font-mono">http://localhost:11434</span>).
           </p>
         </div>
+      </div>
+    </section>
+  )
+}
+
+// PriceSettingsSection owns the scheduled price refresh opt-in (#338
+// Phase 3). Kept separate from the AI section: it's a different egress
+// consent (price providers, not AI providers), per ADR-0014 §3.
+function PriceSettingsSection() {
+  const [settings, setSettings] = useState<UserSettingsView | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [savedFlash, setSavedFlash] = useState(false)
+
+  useEffect(() => {
+    getUserSettings()
+      .then((v) => setSettings(v))
+      .catch((e: unknown) => setError(errMsg(e)))
+  }, [])
+
+  const toggle = async (enabled: boolean) => {
+    setSaving(true)
+    setError(null)
+    try {
+      const v = await updateUserSettings({ auto_price_refresh: enabled })
+      setSettings(v)
+      setSavedFlash(true)
+      window.setTimeout(() => setSavedFlash(false), 1500)
+    } catch (e) {
+      setError(errMsg(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!settings) {
+    return (
+      <section className="rounded-lg border border-gray-200 bg-white px-5 py-6 text-sm text-gray-400">
+        {error ?? 'Loading price settings…'}
+      </section>
+    )
+  }
+
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white">
+      <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+        <div className="flex items-center gap-2">
+          <RefreshCw size={16} className="text-gray-500" />
+          <h2 className="text-base font-medium text-gray-900">Market Prices</h2>
+        </div>
+        {savedFlash && (
+          <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
+            <Check size={14} /> Saved
+          </span>
+        )}
+      </div>
+
+      {error && (
+        <div className="mx-5 mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      <div className="px-5 py-4">
+        <label className="flex cursor-pointer items-start gap-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={settings.auto_price_refresh}
+            onChange={(e) => void toggle(e.target.checked)}
+            disabled={saving}
+          />
+          <span>
+            <span className="font-medium text-gray-800">Refresh prices automatically (daily)</span>
+            <span className="mt-0.5 block text-xs text-gray-500">
+              Once a day, fetch current prices for the assets you hold — crypto via CoinGecko, exchange
+              rates via the ECB. Only the list of symbols you hold is sent, never quantities or
+              balances. Off by default; the manual “Refresh prices” button on Insights works either
+              way.
+            </span>
+          </span>
+        </label>
       </div>
     </section>
   )

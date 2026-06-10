@@ -41,6 +41,7 @@ type updateUserSettingsRequest struct {
 	PreferredProvider *string `json:"preferred_provider"`
 	PreferredModel    *string `json:"preferred_model"`
 	ClearModel        bool    `json:"clear_preferred_model"`
+	AutoPriceRefresh  *bool   `json:"auto_price_refresh"`
 }
 
 func (h *UserSettingsHandler) Update(c *gin.Context) {
@@ -57,6 +58,7 @@ func (h *UserSettingsHandler) Update(c *gin.Context) {
 		PreferredProvider: req.PreferredProvider,
 		PreferredModel:    req.PreferredModel,
 		ClearModel:        req.ClearModel,
+		AutoPriceRefresh:  req.AutoPriceRefresh,
 	})
 	if err != nil {
 		switch {

@@ -25,6 +25,9 @@ type UserSettingsView struct {
 	OllamaBaseURL     *string `json:"ollama_base_url,omitempty"`
 	PreferredProvider string  `json:"preferred_provider"`
 	PreferredModel    *string `json:"preferred_model,omitempty"`
+	// AutoPriceRefresh is the persistent opt-in for the scheduled price
+	// refresh (#338 Phase 3, ADR-0014 §3). Default false.
+	AutoPriceRefresh bool `json:"auto_price_refresh"`
 }
 
 // UpdateUserSettingsInput is a sparse patch — only set fields apply. The
@@ -39,6 +42,7 @@ type UpdateUserSettingsInput struct {
 	PreferredProvider *string
 	PreferredModel    *string
 	ClearModel        bool
+	AutoPriceRefresh  *bool
 }
 
 // UserSettingsService owns user_settings CRUD + Claude-key encryption.
@@ -139,6 +143,10 @@ func (s *UserSettingsService) Update(ctx context.Context, userID int64, in Updat
 		}
 	}
 
+	if in.AutoPriceRefresh != nil {
+		row.AutoPriceRefresh = *in.AutoPriceRefresh
+	}
+
 	if err := s.repo.Upsert(ctx, row); err != nil {
 		return nil, fmt.Errorf("user_settings: upsert: %w", err)
 	}
@@ -205,5 +213,6 @@ func view(s *model.UserSettings) *UserSettingsView {
 		OllamaBaseURL:     s.OllamaBaseURL,
 		PreferredProvider: s.PreferredProvider,
 		PreferredModel:    s.PreferredModel,
+		AutoPriceRefresh:  s.AutoPriceRefresh,
 	}
 }
