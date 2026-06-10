@@ -9,11 +9,13 @@
 //   3) Spending by category (current period)
 //   4) Budgets + Goals at-a-glance
 //   5) Account list summary
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   LineChart as LineChartIcon,
   PieChart as PieChartIcon,
   PiggyBank,
+  RefreshCw,
   Target,
   TrendingUp,
   Wallet,
@@ -29,6 +31,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { refreshPrices } from '../api/prices'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { FALLBACK_PIE_COLORS } from '../components/chartColors'
 import { PartialBadge } from '../components/PartialBadge'
@@ -56,13 +59,16 @@ export function InsightsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Insights</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          {active === SCOPE_HOUSEHOLD
-            ? 'Household aggregates over shared accounts. PII never leaves each member’s book.'
-            : 'Net worth · allocation · spending · budgets · goals — at a glance.'}
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Insights</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            {active === SCOPE_HOUSEHOLD
+              ? 'Household aggregates over shared accounts. PII never leaves each member’s book.'
+              : 'Net worth · allocation · spending · budgets · goals — at a glance.'}
+          </p>
+        </div>
+        <RefreshPricesButton onRefreshed={result.reload} />
       </div>
 
       {result.state === 'loading' && (
@@ -101,6 +107,50 @@ function InsightsBody({ data }: { data: InsightsData }) {
         {data.period.from.slice(0, 10)} → {data.period.to.slice(0, 10)}
       </p>
     </>
+  )
+}
+
+// RefreshPricesButton triggers the user-initiated price refresh (ADR-0014
+// Phase 1). Clicking is the egress consent: only the user's held symbols
+// go upstream. On success the page data reloads so valuations pick up the
+// fresh observations; skipped symbols are surfaced, not hidden.
+function RefreshPricesButton({ onRefreshed }: { onRefreshed: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const run = async () => {
+    setBusy(true)
+    setNote(null)
+    setError(null)
+    try {
+      const r = await refreshPrices()
+      const parts = [`${r.refreshed} price${r.refreshed === 1 ? '' : 's'} refreshed`]
+      if (r.skipped.length > 0) parts.push(`no source for ${r.skipped.join(', ')}`)
+      setNote(parts.join(' · '))
+      onRefreshed()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'refresh failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex shrink-0 flex-col items-end gap-1">
+      <button
+        type="button"
+        onClick={() => void run()}
+        disabled={busy}
+        title="Fetch current market prices for the assets you hold. Sends only the symbol list to the price provider."
+        className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+      >
+        <RefreshCw size={14} className={busy ? 'animate-spin' : undefined} />
+        {busy ? 'Refreshing…' : 'Refresh prices'}
+      </button>
+      {note && <span className="text-[11px] text-gray-500">{note}</span>}
+      {error && <span className="text-[11px] text-red-600">{error}</span>}
+    </div>
   )
 }
 
