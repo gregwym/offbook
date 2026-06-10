@@ -45,6 +45,9 @@ export type GoalProgressItem = {
 export type HouseholdDashboard = {
   period: HouseholdPeriod
   net_worth: string
+  // false when a shared position had no price within the valuation stale
+  // window — net_worth may rest on stale rates (#344).
+  net_worth_complete: boolean
   income: string
   spending: string
   account_count: number

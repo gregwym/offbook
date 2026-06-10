@@ -55,8 +55,11 @@ func (a *Aggregator) SetClock(fn func() time.Time) { a.now = fn }
 // household + aggregates only across opt-in shared accounts. All money fields
 // are strings to preserve precision across the wire.
 type HouseholdDashboard struct {
-	Period           PeriodWindow                  `json:"period"`
-	NetWorth         string                        `json:"net_worth"`         // sum across balance_only + balance_and_txns shares
+	Period   PeriodWindow `json:"period"`
+	NetWorth string       `json:"net_worth"` // sum across balance_only + balance_and_txns shares
+	// NetWorthComplete is false when a shared position had no price within
+	// the valuation stale window — NetWorth may rest on stale rates (#344).
+	NetWorthComplete bool                          `json:"net_worth_complete"`
 	Income           string                        `json:"income"`            // period; balance_and_txns only
 	Spending         string                        `json:"spending"`          // period; balance_and_txns only
 	AccountCount     int                           `json:"account_count"`     // shared accounts count (any visibility)
@@ -219,7 +222,7 @@ func (a *Aggregator) Dashboard(ctx context.Context, householdID int64, period st
 	}
 	txAccounts := filterAccountsByUsers(txShares, liveUserIDs)
 
-	netWorth, err := a.repo.SumBalances(ctx, netWorthAccounts)
+	netWorth, netWorthComplete, err := a.repo.SumBalances(ctx, netWorthAccounts, a.now().Add(-a.val.StaleWindow()))
 	if err != nil {
 		return nil, fmt.Errorf("sum balances: %w", err)
 	}
@@ -252,6 +255,7 @@ func (a *Aggregator) Dashboard(ctx context.Context, householdID int64, period st
 	return &HouseholdDashboard{
 		Period:           PeriodWindow{Key: period, From: from, To: to},
 		NetWorth:         netWorth.String(),
+		NetWorthComplete: netWorthComplete,
 		Income:           income.String(),
 		Spending:         spending.String(),
 		AccountCount:     len(netWorthAccounts),
@@ -296,7 +300,9 @@ func (a *Aggregator) perMemberContributions(
 		if len(nwIDs) == 0 && len(txIDs) == 0 {
 			continue
 		}
-		nw, err := a.repo.SumBalances(ctx, nwIDs)
+		// Per-member completeness isn't surfaced on the tile strip yet —
+		// the headline flag (above) covers the same account set.
+		nw, _, err := a.repo.SumBalances(ctx, nwIDs, a.now().Add(-a.val.StaleWindow()))
 		if err != nil {
 			return nil, fmt.Errorf("sum balances for user %d: %w", m.UserID, err)
 		}
@@ -422,7 +428,9 @@ func (a *Aggregator) AIContext(ctx context.Context, householdID, requesterUserID
 	}
 	txAccounts := filterAccountsByUsers(txShares, liveUserIDs)
 
-	netWorth, err := a.repo.SumBalances(ctx, nwAccounts)
+	// Completeness is not part of the AI context — the model gets the
+	// partial sum either way; flagging is a UI concern.
+	netWorth, _, err := a.repo.SumBalances(ctx, nwAccounts, a.now().Add(-a.val.StaleWindow()))
 	if err != nil {
 		return nil, err
 	}

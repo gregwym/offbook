@@ -186,6 +186,9 @@ function NetWorthBand({ data }: { data: InsightsData }) {
           </div>
           <div className="mt-1 text-3xl font-semibold text-gray-900">
             <AmountDisplay amount={data.net_worth} />
+            {!data.net_worth_complete && (
+              <PartialBadge title="Some assets have no recent price — this net worth is a partial sum. Try Refresh prices." />
+            )}
           </div>
           <div className="mt-1 text-xs text-gray-400">
             Income (period): <AmountDisplay amount={data.income} /> · Spending:{' '}

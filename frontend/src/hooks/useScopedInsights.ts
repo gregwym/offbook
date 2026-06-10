@@ -83,6 +83,9 @@ export type InsightsData = {
   scope: 'personal' | 'household'
   period: { from: string; to: string }
   net_worth: string
+  // false when a held/shared position had no fresh price — the headline
+  // is a partial sum (#344).
+  net_worth_complete: boolean
   income: string
   spending: string
   by_category: InsightsCategoryRow[]
@@ -176,6 +179,7 @@ async function loadPersonal(): Promise<InsightsData> {
     scope: 'personal',
     period: { from: summary.period.from, to: summary.period.to },
     net_worth: summary.net_worth,
+    net_worth_complete: summary.net_worth_complete,
     income: summary.income,
     spending: summary.spending,
     by_category: summary.by_category,
@@ -236,6 +240,7 @@ async function loadHousehold(): Promise<InsightsData> {
     scope: 'household',
     period: { from: dashboard.period.from, to: dashboard.period.to },
     net_worth: dashboard.net_worth,
+    net_worth_complete: dashboard.net_worth_complete,
     income: dashboard.income,
     spending: dashboard.spending,
     by_category: dashboard.by_category,

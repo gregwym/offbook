@@ -3,6 +3,9 @@
 export type DashboardSummary = {
   period: { key: string; from: string; to: string }
   net_worth: string
+  // false when a held position had no fresh price — net_worth is a
+  // partial sum (#344).
+  net_worth_complete: boolean
   income: string
   spending: string
   account_count: number
