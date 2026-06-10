@@ -178,6 +178,10 @@ type AccountSummary struct {
 	Balance     string `json:"balance"`
 	OwnerUserID int64  `json:"owner_user_id"`
 	Visibility  string `json:"visibility"`
+	// Complete is false when a position in this account had no price
+	// observed within the valuation stale window — Balance may rest on a
+	// stale rate, so the UI flags it as partial (#339, #282 contract).
+	Complete bool `json:"complete"`
 }
 
 // --- core methods ---
@@ -606,7 +610,7 @@ func (a *Aggregator) AccountSummaries(ctx context.Context, householdID int64) ([
 		meta[s.AccountID] = shareMeta{visibility: s.Visibility}
 		accountIDs = append(accountIDs, s.AccountID)
 	}
-	balances, err := a.repo.AccountBalances(ctx, accountIDs)
+	balances, err := a.repo.AccountBalances(ctx, accountIDs, a.now().Add(-a.val.StaleWindow()))
 	if err != nil {
 		return nil, fmt.Errorf("account balances: %w", err)
 	}
@@ -620,6 +624,7 @@ func (a *Aggregator) AccountSummaries(ctx context.Context, householdID int64) ([
 			Balance:     b.Balance.String(),
 			OwnerUserID: b.OwnerUserID,
 			Visibility:  meta[b.AccountID].visibility,
+			Complete:    b.Complete,
 		})
 	}
 	return out, nil

@@ -76,6 +76,9 @@ export type HouseholdNetWorthPoint = {
 
 // AccountSummary mirrors service/household.AccountSummary — lightweight,
 // non-PII account projection used for the Insights account list band.
+// `complete` is false when a position in the account had no price observed
+// within the valuation stale window, so `balance` may rest on a stale rate
+// (#339).
 export type HouseholdAccountSummary = {
   account_id: number
   name: string
@@ -84,4 +87,5 @@ export type HouseholdAccountSummary = {
   balance: string
   owner_user_id: number
   visibility: 'balance_only' | 'balance_and_txns'
+  complete: boolean
 }

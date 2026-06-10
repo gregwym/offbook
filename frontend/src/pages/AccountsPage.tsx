@@ -4,6 +4,7 @@ import { LineChart, Pencil, Plus, Trash2, Upload } from 'lucide-react'
 import { AccountVisibilityChip } from '../components/AccountVisibilityChip'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
+import { PartialBadge } from '../components/PartialBadge'
 import { PIIPanel } from '../components/PIIPanel'
 import { SyncStatusPill } from '../components/SyncStatusPill'
 import { TradeFormModal } from '../components/TradeFormModal'
@@ -91,6 +92,7 @@ export function AccountsPage() {
                 <td className="px-4 py-2 text-gray-700">{a.last_four ?? '—'}</td>
                 <td className="px-4 py-2 text-right">
                   <AmountDisplay amount={a.balance} currency={a.currency} />
+                  {!a.balance_complete && <PartialBadge />}
                 </td>
                 <td className="px-4 py-2 text-center">
                   <span className={a.is_active ? 'text-emerald-700' : 'text-gray-400'}>

@@ -348,3 +348,49 @@ func TestAggregator_NetWorthTrend_InGraceExcluded(t *testing.T) {
 		}
 	}
 }
+
+// TestAggregator_AccountSummaries_FlagsStalePricing: an account holding an
+// asset whose only price is older than the valuation stale window reports
+// Complete=false; fresh-priced and primary-currency-only accounts report
+// Complete=true (#339, #282 contract).
+func TestAggregator_AccountSummaries_FlagsStalePricing(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	usd := testutil.LookupUSDAssetID(t, g)
+	fresh := seedAsset(t, g, "FRSH-"+fmt.Sprintf("%d", time.Now().UnixNano()), model.AssetKindEquity, usd)
+	stale := seedAsset(t, g, "STAL-"+fmt.Sprintf("%d", time.Now().UnixNano()), model.AssetKindEquity, usd)
+	insertPrice(t, g, fresh, usd, "10", time.Now().Add(-time.Hour))
+	insertPrice(t, g, stale, usd, "10", time.Now().Add(-30*24*time.Hour)) // outside DefaultStaleWindow
+
+	ownerID := seedUser(t, g, "summ-stale-owner")
+	hh := seedHouseholdRow(t, g, ownerID, "SummStale", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+
+	cashAcct := seedAccount(t, g, ownerID, "cash-only")
+	freshAcct := seedAccount(t, g, ownerID, "fresh-equity")
+	staleAcct := seedAccount(t, g, ownerID, "stale-equity")
+	upsertPosition(t, g, ownerID, cashAcct.ID, usd, "100")
+	upsertPosition(t, g, ownerID, freshAcct.ID, fresh, "5")
+	upsertPosition(t, g, ownerID, staleAcct.ID, stale, "5")
+	setShare(t, g, cashAcct.ID, hh.ID, model.VisibilityBalanceOnly)
+	setShare(t, g, freshAcct.ID, hh.ID, model.VisibilityBalanceOnly)
+	setShare(t, g, staleAcct.ID, hh.ID, model.VisibilityBalanceOnly)
+
+	out, err := agg.AccountSummaries(ctx, hh.ID)
+	if err != nil {
+		t.Fatalf("AccountSummaries: %v", err)
+	}
+	byID := map[int64]household.AccountSummary{}
+	for _, s := range out {
+		byID[s.AccountID] = s
+	}
+	if !byID[cashAcct.ID].Complete {
+		t.Errorf("cash-only account Complete = false, want true (primary currency needs no price)")
+	}
+	if !byID[freshAcct.ID].Complete {
+		t.Errorf("fresh-priced account Complete = false, want true")
+	}
+	if byID[staleAcct.ID].Complete {
+		t.Errorf("stale-priced account Complete = true, want false (only price is 30d old)")
+	}
+}
