@@ -55,7 +55,10 @@ export const useAccountsStore = create<State>((set, get) => ({
     set({ error: null })
     try {
       const acct = await apiUpdate(id, input)
-      set({ accounts: get().accounts.map((a) => (a.id === id ? acct : a)) })
+      // Refetch instead of splicing the PATCH response in: that response is
+      // the bare account row, without the derived balance and sync fields
+      // the list shape carries.
+      await get().fetch()
       return acct
     } catch (err) {
       set({ error: errMsg(err) })

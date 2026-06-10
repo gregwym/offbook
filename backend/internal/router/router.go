@@ -40,7 +40,11 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	plaidItemRepo := repository.NewPlaidItemRepository(gormDB)
 	assetRepo := repository.NewAssetRepository(gormDB)
 	positionRepo := repository.NewPositionRepository(gormDB)
-	accountSvc := service.NewAccountService(gormDB, accountRepo, assetRepo, positionRepo).WithPlaidItemRepo(plaidItemRepo)
+	priceRepo := repository.NewPriceRepository(gormDB)
+	valuationSvc := valuation.NewService(positionRepo, priceRepo, assetRepo, accountRepo)
+	accountSvc := service.NewAccountService(gormDB, accountRepo, assetRepo, positionRepo).
+		WithPlaidItemRepo(plaidItemRepo).
+		WithValuation(valuationSvc)
 	accountHandler := handler.NewAccountHandler(accountSvc)
 
 	// PII flow: pii_repo is wired ONLY into pii_service, which is wired ONLY
@@ -57,7 +61,6 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		WithJobRepo(repository.NewIngestionJobRepository(gormDB))
 	transactionHandler := handler.NewTransactionHandler(transactionSvc)
 
-	priceRepo := repository.NewPriceRepository(gormDB)
 	tradeSvc := service.NewTradeService(gormDB, accountRepo, assetRepo, transactionRepo, positionRepo, priceRepo, userRepo)
 	tradeHandler := handler.NewTradeHandler(tradeSvc)
 	assetHandler := handler.NewAssetHandler(assetRepo)
@@ -69,7 +72,6 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	ruleHandler := handler.NewCategorizationRuleHandler(ruleSvc)
 
 	dashboardRepo := repository.NewDashboardRepository(gormDB)
-	valuationSvc := valuation.NewService(positionRepo, priceRepo, assetRepo, accountRepo)
 	dashboardSvc := service.NewDashboardService(dashboardRepo, transactionRepo, userRepo, valuationSvc)
 
 	budgetRepo := repository.NewBudgetRepository(gormDB)

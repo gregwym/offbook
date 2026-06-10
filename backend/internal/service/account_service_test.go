@@ -16,6 +16,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/service/valuation"
 )
 
 func loadRepoDotenv() {
@@ -321,4 +322,85 @@ func TestAccountService_Create_OpeningBalanceIsLedgerFact(t *testing.T) {
 	if !agg.Income.IsZero() || !agg.Spending.IsZero() {
 		t.Errorf("income=%s spending=%s, want 0/0 (opening_balance excluded from flow)", agg.Income, agg.Spending)
 	}
+}
+
+// TestListResponse_DerivedBalance verifies the accounts API serves the
+// valuation-derived balance (#291): the opening cash position values at
+// quantity in the account's own quote asset, and an unpriced position flips
+// balance_complete to false instead of silently contributing $0 (#282).
+func TestListResponse_DerivedBalance(t *testing.T) {
+	svc, userID, g := newAccountSvc(t)
+	svc.WithValuation(valuation.NewService(
+		repository.NewPositionRepository(g),
+		repository.NewPriceRepository(g),
+		repository.NewAssetRepository(g),
+		repository.NewAccountRepository(g),
+	))
+	ctx := context.Background()
+
+	in := validInput(tcSuffix(8))
+	in.OpeningBalance = decimal.RequireFromString("123.45")
+	acct, err := svc.Create(ctx, userID, in)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	find := func(t *testing.T) service.AccountResponse {
+		t.Helper()
+		resps, _, err := svc.ListResponse(ctx, userID, repository.AccountFilter{})
+		if err != nil {
+			t.Fatalf("list response: %v", err)
+		}
+		for _, r := range resps {
+			if r.ID == acct.ID {
+				return r
+			}
+		}
+		t.Fatalf("account %d not in list response", acct.ID)
+		return service.AccountResponse{}
+	}
+
+	t.Run("cash position values at quantity", func(t *testing.T) {
+		r := find(t)
+		if !r.Balance.Equal(decimal.RequireFromString("123.45")) {
+			t.Errorf("balance = %s, want 123.45", r.Balance)
+		}
+		if !r.BalanceComplete {
+			t.Error("balance_complete = false, want true (same-asset cash needs no price)")
+		}
+	})
+
+	t.Run("unpriced position flips balance_complete", func(t *testing.T) {
+		assetRepo := repository.NewAssetRepository(g)
+		btc, err := assetRepo.EnsureBySymbolKind(ctx, "BTC", model.AssetKindCrypto, "Bitcoin")
+		if err != nil {
+			t.Fatalf("ensure BTC asset: %v", err)
+		}
+		posRepo := repository.NewPositionRepository(g)
+		if err := posRepo.Upsert(ctx, &model.Position{
+			UserID:    userID,
+			AccountID: acct.ID,
+			AssetID:   btc.ID,
+			Quantity:  decimal.RequireFromString("0.5"),
+		}); err != nil {
+			t.Fatalf("upsert BTC position: %v", err)
+		}
+
+		r := find(t)
+		if !r.Balance.Equal(decimal.RequireFromString("123.45")) {
+			t.Errorf("balance = %s, want 123.45 (unpriced BTC excluded, not $0-coerced)", r.Balance)
+		}
+		if r.BalanceComplete {
+			t.Error("balance_complete = true, want false (BTC has no price chain)")
+		}
+
+		single, err := svc.GetResponse(ctx, userID, acct.ID)
+		if err != nil {
+			t.Fatalf("get response: %v", err)
+		}
+		if !single.Balance.Equal(r.Balance) || single.BalanceComplete != r.BalanceComplete {
+			t.Errorf("GetResponse balance=%s complete=%v, want %s/%v (must match ListResponse)",
+				single.Balance, single.BalanceComplete, r.Balance, r.BalanceComplete)
+		}
+	})
 }

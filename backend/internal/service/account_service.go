@@ -12,6 +12,7 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
+	"github.com/gregwym/offbook/backend/internal/service/valuation"
 )
 
 // Domain errors. Handlers map these to HTTP status codes.
@@ -74,6 +75,7 @@ type AccountService struct {
 	assetRepo     repository.AssetRepository
 	positionRepo  repository.PositionRepository
 	plaidItemRepo repository.PlaidItemRepository
+	valuationSvc  *valuation.Service
 }
 
 func NewAccountService(
@@ -90,6 +92,15 @@ func NewAccountService(
 // construction stays a one-liner.
 func (s *AccountService) WithPlaidItemRepo(p repository.PlaidItemRepository) *AccountService {
 	s.plaidItemRepo = p
+	return s
+}
+
+// WithValuation injects the valuation service that derives each account's
+// balance from positions × prices (ADR-0013). Same optional-dependency
+// pattern as WithPlaidItemRepo; without it, responses carry a zero balance
+// marked incomplete so it can't be mistaken for a real total.
+func (s *AccountService) WithValuation(v *valuation.Service) *AccountService {
+	s.valuationSvc = v
 	return s
 }
 
@@ -289,6 +300,9 @@ func (s *AccountService) GetResponse(ctx context.Context, userID, id int64) (*Ac
 		return nil, err
 	}
 	resp := s.buildResponse(a, items)
+	if err := s.fillBalances(ctx, userID, []*AccountResponse{&resp}); err != nil {
+		return nil, err
+	}
 	return &resp, nil
 }
 
@@ -303,10 +317,52 @@ func (s *AccountService) ListResponse(ctx context.Context, userID int64, f repos
 		return nil, 0, err
 	}
 	out := make([]AccountResponse, 0, len(accounts))
+	ptrs := make([]*AccountResponse, 0, len(accounts))
 	for i := range accounts {
 		out = append(out, s.buildResponse(&accounts[i], items))
+		ptrs = append(ptrs, &out[len(out)-1])
+	}
+	if err := s.fillBalances(ctx, userID, ptrs); err != nil {
+		return nil, 0, err
 	}
 	return out, total, nil
+}
+
+// fillBalances derives each response's Balance from positions × prices via
+// the valuation service (#291). One ListByUserID query feeds every account;
+// each account is valued in its own primary quote asset. A stale/missing
+// price chain drops that position from the sum and flips BalanceComplete to
+// false (#282) — never a silent $0 masquerading as the full value.
+func (s *AccountService) fillBalances(ctx context.Context, userID int64, resps []*AccountResponse) error {
+	if len(resps) == 0 {
+		return nil
+	}
+	if s.valuationSvc == nil {
+		// No valuation wiring (unit tests): mark the zero balance incomplete
+		// so it reads as "unknown", not "empty account".
+		for _, r := range resps {
+			r.BalanceComplete = false
+		}
+		return nil
+	}
+	positions, err := s.positionRepo.ListByUserID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("list positions for balances: %w", err)
+	}
+	byAccount := make(map[int64][]model.Position)
+	for _, p := range positions {
+		byAccount[p.AccountID] = append(byAccount[p.AccountID], p)
+	}
+	now := time.Now().UTC()
+	for _, r := range resps {
+		val, err := s.valuationSvc.ValuePositions(ctx, byAccount[r.ID], now, r.PrimaryQuoteAssetID)
+		if err != nil {
+			return fmt.Errorf("value account %d: %w", r.ID, err)
+		}
+		r.Balance = val.Value
+		r.BalanceComplete = val.Complete()
+	}
+	return nil
 }
 
 // loadPlaidItems indexes the user's PlaidItem rows by plaid_item_id (the

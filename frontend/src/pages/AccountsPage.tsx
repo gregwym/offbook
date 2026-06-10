@@ -209,7 +209,6 @@ function AccountFormModal({ mode, account, onClose, onSubmit }: FormProps) {
   const [institution, setInstitution] = useState(account?.institution_slug ?? '')
   const [accountType, setAccountType] = useState<AccountType>(account?.account_type ?? 'checking')
   const [currency, setCurrency] = useState(account?.currency ?? 'USD')
-  const [balance, setBalance] = useState(account?.balance ?? '0')
   const [lastFour, setLastFour] = useState(account?.last_four ?? '')
   const [isActive, setIsActive] = useState(account?.is_active ?? true)
   const [submitting, setSubmitting] = useState(false)
@@ -237,7 +236,6 @@ function AccountFormModal({ mode, account, onClose, onSubmit }: FormProps) {
         institution_slug: institution.trim(),
         account_type: accountType,
         currency: currency.trim().toUpperCase(),
-        balance,
         last_four: lastFour.trim() === '' ? null : lastFour.trim(),
         is_active: isActive,
       })
@@ -274,14 +272,11 @@ function AccountFormModal({ mode, account, onClose, onSubmit }: FormProps) {
               <input className={inputClass} value={currency} maxLength={3} onChange={(e) => setCurrency(e.target.value.toUpperCase())} />
             </Field>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Balance">
-              <input className={inputClass} value={balance} onChange={(e) => setBalance(e.target.value)} inputMode="decimal" />
-            </Field>
-            <Field label="Last 4 (optional)">
-              <input className={inputClass} value={lastFour ?? ''} maxLength={4} onChange={(e) => setLastFour(e.target.value)} />
-            </Field>
-          </div>
+          {/* No balance field: balance is derived from positions × prices
+              (ADR-0013) — to change it, record a transaction or trade. */}
+          <Field label="Last 4 (optional)">
+            <input className={inputClass} value={lastFour ?? ''} maxLength={4} onChange={(e) => setLastFour(e.target.value)} />
+          </Field>
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
             Active

@@ -15,7 +15,11 @@ export type Account = {
   // (per ADR-0013). Derived server-side from the chosen currency on
   // create — clients shouldn't try to mutate it.
   primary_quote_asset_id: number
+  // balance is derived server-side from positions × prices (ADR-0013) on
+  // GET responses. balance_complete=false means some position had no fresh
+  // price, so balance is a partial sum — never treat it as the full value.
   balance: string
+  balance_complete: boolean
   last_four?: string | null
   plaid_account_id?: string | null
   plaid_item_id?: string | null
@@ -58,7 +62,9 @@ export type CreateAccountInput = {
 }
 
 // UpdateAccountInput is a sparse patch; only provided fields are mutated.
-export type UpdateAccountInput = Partial<CreateAccountInput>
+// balance is excluded: it only exists on create (as the opening position);
+// afterwards balance is derived and changed via transactions/trades.
+export type UpdateAccountInput = Partial<Omit<CreateAccountInput, 'balance'>>
 
 // AccountPII mirrors the map[string]string returned by GET /accounts/:id/pii.
 // The allowlist matches backend service.allowedAccountPIIFields.
