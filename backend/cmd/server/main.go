@@ -12,7 +12,9 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/config"
 	"github.com/gregwym/offbook/backend/internal/db"
+	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/router"
+	"github.com/gregwym/offbook/backend/internal/service/prices"
 )
 
 func main() {
@@ -39,6 +41,23 @@ func main() {
 	}
 
 	r := router.New(cfg, gormDB)
+
+	// Scheduled price refresh (#338 Phase 3): daily background pass over
+	// users who opted in via Settings (ADR-0014 §3 — background egress
+	// needs stored consent). Stops with the server context below.
+	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
+	defer stopScheduler()
+	settingsRepo := repository.NewUserSettingsRepository(gormDB)
+	prices.NewScheduler(
+		prices.NewService(
+			repository.NewUserRepository(gormDB),
+			repository.NewPositionRepository(gormDB),
+			repository.NewAssetRepository(gormDB),
+			repository.NewPriceRepository(gormDB),
+			prices.NewCoinGecko(), prices.NewFrankfurter(),
+		),
+		settingsRepo.ListAutoRefreshUserIDs,
+	).Start(schedulerCtx)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

@@ -287,3 +287,52 @@ func TestRefreshForUser_PartitionsAcrossProviders(t *testing.T) {
 		t.Errorf("fx provider asked for %+v, want exactly EUR", fx.requested)
 	}
 }
+
+// TestScheduler_RunOnce_RefreshesOptedInUsersOnly: the background pass
+// (#338 Phase 3) covers exactly the users whose auto_price_refresh setting
+// is true — consent is stored, not implied (ADR-0014 §3). Wired through the
+// real ListAutoRefreshUserIDs repo lister.
+func TestScheduler_RunOnce_RefreshesOptedInUsersOnly(t *testing.T) {
+	g := openTestDB(t)
+	ctx := context.Background()
+	optIn := seedUser(t, g)
+	optOut := seedUser(t, g)
+	acctIn := seedAccount(t, g, optIn)
+	acctOut := seedAccount(t, g, optOut)
+	btc := testutil.LookupAssetID(t, g, "BTC", "crypto")
+	eth := testutil.LookupAssetID(t, g, "ETH", "crypto")
+	seedPosition(t, g, optIn, acctIn.ID, btc, "1")
+	seedPosition(t, g, optOut, acctOut.ID, eth, "1")
+
+	for _, s := range []*model.UserSettings{
+		{UserID: optIn, PreferredProvider: "claude", AutoPriceRefresh: true},
+		{UserID: optOut, PreferredProvider: "claude", AutoPriceRefresh: false},
+	} {
+		if err := g.Create(s).Error; err != nil {
+			t.Fatalf("seed settings: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("user_id IN ?", []int64{optIn, optOut}).Delete(&model.UserSettings{})
+	})
+
+	asOf := time.Date(2026, 6, 10, 14, 0, 0, 0, time.UTC)
+	fake := &fakeProvider{price: decimal.New(1, 0), asOf: asOf}
+	settingsRepo := repository.NewUserSettingsRepository(g)
+	svc := prices.NewService(
+		repository.NewUserRepository(g),
+		repository.NewPositionRepository(g),
+		repository.NewAssetRepository(g),
+		repository.NewPriceRepository(g),
+		fake,
+	)
+	t.Cleanup(func() {
+		g.Unscoped().Where("source = ? AND as_of = ?", "fake", asOf).Delete(&model.Price{})
+	})
+
+	prices.NewScheduler(svc, settingsRepo.ListAutoRefreshUserIDs).WithPause(0).RunOnce(ctx)
+
+	if len(fake.requested) != 1 || fake.requested[0].ID != btc {
+		t.Errorf("provider asked for %+v, want exactly opted-in user's BTC (opt-out user's ETH must not egress)", fake.requested)
+	}
+}

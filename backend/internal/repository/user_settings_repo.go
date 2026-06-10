@@ -15,6 +15,10 @@ import (
 type UserSettingsRepository interface {
 	Get(ctx context.Context, userID int64) (*model.UserSettings, error)
 	Upsert(ctx context.Context, s *model.UserSettings) error
+	// ListAutoRefreshUserIDs returns the ids of every user who opted in to
+	// the scheduled price refresh (#338 Phase 3). Ordered by user_id so the
+	// scheduler's pass order is deterministic.
+	ListAutoRefreshUserIDs(ctx context.Context) ([]int64, error)
 }
 
 type userSettingsRepo struct {
@@ -34,6 +38,16 @@ func (r *userSettingsRepo) Get(ctx context.Context, userID int64) (*model.UserSe
 		return nil, err
 	}
 	return &s, nil
+}
+
+func (r *userSettingsRepo) ListAutoRefreshUserIDs(ctx context.Context) ([]int64, error) {
+	var ids []int64
+	err := r.db.WithContext(ctx).
+		Model(&model.UserSettings{}).
+		Where("auto_price_refresh = TRUE").
+		Order("user_id").
+		Pluck("user_id", &ids).Error
+	return ids, err
 }
 
 // Upsert writes the row, inserting on first call and updating on

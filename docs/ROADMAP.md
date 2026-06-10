@@ -227,15 +227,17 @@ See [ADR-0013](ADR/0013-position-based-account-model.md) for the full rationale.
 
 ---
 
-## M12 — Trustworthy Overview [CURRENT]
+## M12 — Trustworthy Overview [DONE]
 
 **Goal:** A user with real historical data (Plaid sandbox + statement imports) opens Insights or Accounts and sees a **correct, current, complete** picture of their financial state. The M10/ADR-0017 valuation engine is sound (#281, #282 closed); this milestone wires the overview surfaces to it and keeps prices fresh between imports. Owner direction (June 2026): get the financial-state overview right before any new feature surface.
 
-- [ ] #291 — Accounts + Insights read the dead `a.balance` field (dropped in M10) → expose the valuation-derived balance on the accounts API and consume it.
-- [ ] #338 — Epic: pluggable price & FX ingestion (ADR-0014, 3 phases) — held assets and non-primary-currency cash stay priced between imports.
-- [ ] #339 — Render completeness/staleness signals on Insights + Accounts (the UI half of the #282 "no wrong-but-confident totals" contract).
+- [x] #291 — Accounts + Insights read the dead `a.balance` field (dropped in M10) → expose the valuation-derived balance on the accounts API and consume it. (PR #342)
+- [x] #341 — Personal allocation endpoint — the Insights allocation band was hardcoded empty in personal scope. (PR #343; found while scoping #291)
+- [x] #339 — Render completeness/staleness signals on Insights + Accounts (the UI half of the #282 "no wrong-but-confident totals" contract). (PR #345)
+- [x] #344 — Headline net-worth completeness flags, both scopes — the last silent missing-price-→-$0 coercions removed. (PR #348; found while scoping #339)
+- [x] #338 — Epic: pluggable price & FX ingestion (ADR-0014, 3 phases): provider seam + CoinGecko + manual refresh (PR #346), Frankfurter/ECB FX (PR #347), opt-in daily scheduled refresh (final PR).
 
-**Done criteria:** Accounts list and Insights bands show valuation-derived balances (no blank/0 from the dead field). A portfolio with manually tracked equity + crypto + foreign cash shows today's net worth without re-importing, after configuring a price provider in Settings. Any unpriced/stale figure is visibly flagged as partial rather than silently understated. Personal and household (`/h/insights`) both honor the above.
+**Done criteria:** Accounts list and Insights bands show valuation-derived balances (no blank/0 from the dead field). A portfolio with manually tracked equity + crypto + foreign cash shows today's net worth without re-importing — manually via the Insights "Refresh prices" button, or daily via the opt-in Settings toggle. Any unpriced/stale figure is visibly flagged as partial rather than silently understated. Personal and household (`/h/insights`) both honor the above.
 
 **Sequencing note:** M11 visual pass, AI advisor un-deferral, and forward-looking features (recurring detection, cash-flow forecast) intentionally wait behind this milestone.
 
