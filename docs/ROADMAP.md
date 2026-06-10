@@ -227,6 +227,20 @@ See [ADR-0013](ADR/0013-position-based-account-model.md) for the full rationale.
 
 ---
 
+## M12 — Trustworthy Overview [CURRENT]
+
+**Goal:** A user with real historical data (Plaid sandbox + statement imports) opens Insights or Accounts and sees a **correct, current, complete** picture of their financial state. The M10/ADR-0017 valuation engine is sound (#281, #282 closed); this milestone wires the overview surfaces to it and keeps prices fresh between imports. Owner direction (June 2026): get the financial-state overview right before any new feature surface.
+
+- [ ] #291 — Accounts + Insights read the dead `a.balance` field (dropped in M10) → expose the valuation-derived balance on the accounts API and consume it.
+- [ ] #338 — Epic: pluggable price & FX ingestion (ADR-0014, 3 phases) — held assets and non-primary-currency cash stay priced between imports.
+- [ ] #339 — Render completeness/staleness signals on Insights + Accounts (the UI half of the #282 "no wrong-but-confident totals" contract).
+
+**Done criteria:** Accounts list and Insights bands show valuation-derived balances (no blank/0 from the dead field). A portfolio with manually tracked equity + crypto + foreign cash shows today's net worth without re-importing, after configuring a price provider in Settings. Any unpriced/stale figure is visibly flagged as partial rather than silently understated. Personal and household (`/h/insights`) both honor the above.
+
+**Sequencing note:** M11 visual pass, AI advisor un-deferral, and forward-looking features (recurring detection, cash-flow forecast) intentionally wait behind this milestone.
+
+---
+
 ### M11+ — Frontend Hi-Fi: Visual Pass [DEFERRED]
 
 Once M9 IA and M10 data model are in place, apply the visual hi-fi treatment from `docs/designs/Offbook Hi-Fi v1.html` — typography, color tokens, spacing, polished empty/loading/error states. Vertical-slice approach: pick one high-traffic surface (likely Insights or Transactions), establish the design-system reference there, then propagate.
