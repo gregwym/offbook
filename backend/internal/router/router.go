@@ -75,9 +75,11 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	dashboardRepo := repository.NewDashboardRepository(gormDB)
 	dashboardSvc := service.NewDashboardService(dashboardRepo, transactionRepo, userRepo, valuationSvc)
 
-	// Price refresh (ADR-0014 Phase 1): user-initiated, providers write
-	// into the prices time series the valuation layer already reads.
-	pricesSvc := prices.NewService(userRepo, positionRepo, assetRepo, priceRepo, prices.NewCoinGecko())
+	// Price refresh (ADR-0014): user-initiated, providers write into the
+	// prices time series the valuation layer already reads. CoinGecko
+	// covers crypto (Phase 1), Frankfurter/ECB covers fiat FX (Phase 2).
+	pricesSvc := prices.NewService(userRepo, positionRepo, assetRepo, priceRepo,
+		prices.NewCoinGecko(), prices.NewFrankfurter())
 	priceHandler := handler.NewPriceHandler(pricesSvc)
 
 	budgetRepo := repository.NewBudgetRepository(gormDB)

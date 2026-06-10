@@ -226,3 +226,64 @@ func TestRefreshForUser_TenantScoped(t *testing.T) {
 		t.Errorf("provider was asked for %+v — user B's holdings leaked into user A's refresh", fake.requested)
 	}
 }
+
+// fiatFakeProvider quotes fiat assets — paired with fakeProvider (crypto)
+// to prove the service partitions held assets across providers (Phase 2).
+type fiatFakeProvider struct {
+	requested []model.Asset
+	asOf      time.Time
+}
+
+func (f *fiatFakeProvider) Name() string                { return "fiat-fake" }
+func (f *fiatFakeProvider) Supports(a model.Asset) bool { return a.Kind == model.AssetKindFiat }
+func (f *fiatFakeProvider) Fetch(_ context.Context, assets []model.Asset, quote model.Asset) ([]prices.Quote, error) {
+	f.requested = append(f.requested, assets...)
+	out := make([]prices.Quote, 0, len(assets))
+	for _, a := range assets {
+		out = append(out, prices.Quote{AssetID: a.ID, QuoteAssetID: quote.ID, Price: decimal.RequireFromString("1.1"), AsOf: f.asOf})
+	}
+	return out, nil
+}
+
+// TestRefreshForUser_PartitionsAcrossProviders: crypto goes to the crypto
+// provider, fiat to the FX provider, nothing is skipped, and each provider
+// sees only the assets it supports.
+func TestRefreshForUser_PartitionsAcrossProviders(t *testing.T) {
+	g := openTestDB(t)
+	ctx := context.Background()
+	userID := seedUser(t, g)
+	acct := seedAccount(t, g, userID)
+
+	eur := testutil.LookupAssetID(t, g, "EUR", "fiat")
+	btc := testutil.LookupAssetID(t, g, "BTC", "crypto")
+	seedPosition(t, g, userID, acct.ID, eur, "100")
+	seedPosition(t, g, userID, acct.ID, btc, "0.5")
+
+	asOf := time.Date(2026, 6, 10, 13, 0, 0, 0, time.UTC)
+	crypto := &fakeProvider{price: decimal.New(1, 0), asOf: asOf}
+	fx := &fiatFakeProvider{asOf: asOf}
+	svc := prices.NewService(
+		repository.NewUserRepository(g),
+		repository.NewPositionRepository(g),
+		repository.NewAssetRepository(g),
+		repository.NewPriceRepository(g),
+		crypto, fx,
+	)
+	t.Cleanup(func() {
+		g.Unscoped().Where("source IN ? AND as_of = ?", []string{"fake", "fiat-fake"}, asOf).Delete(&model.Price{})
+	})
+
+	result, err := svc.RefreshForUser(ctx, userID)
+	if err != nil {
+		t.Fatalf("RefreshForUser: %v", err)
+	}
+	if result.Refreshed != 2 || len(result.Skipped) != 0 {
+		t.Errorf("result = %+v, want 2 refreshed / 0 skipped", result)
+	}
+	if len(crypto.requested) != 1 || crypto.requested[0].ID != btc {
+		t.Errorf("crypto provider asked for %+v, want exactly BTC", crypto.requested)
+	}
+	if len(fx.requested) != 1 || fx.requested[0].ID != eur {
+		t.Errorf("fx provider asked for %+v, want exactly EUR", fx.requested)
+	}
+}
