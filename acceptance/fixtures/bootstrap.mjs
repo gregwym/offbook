@@ -35,8 +35,8 @@ async function upsertUser(client, persona) {
 
   const result = await client.query(
     `
-      INSERT INTO users (email, password_hash, is_admin, last_scope, default_scope, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $4, NOW(), NOW())
+      INSERT INTO users (email, password_hash, is_admin, last_scope, default_scope, primary_currency_asset_id, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $4, (SELECT id FROM assets WHERE symbol = 'USD' AND kind = 'fiat'), NOW(), NOW())
       RETURNING id
     `,
     [persona.email, hash, isAdmin, scope],
@@ -82,18 +82,23 @@ async function provisionPersonas() {
 
     const adminID = ids.get('admin')
     const existingHousehold = await client.query(
-      "SELECT id FROM households WHERE owner_id = $1 AND name = 'QA Household' AND deleted_at IS NULL ORDER BY id LIMIT 1",
+      `
+        SELECT h.id FROM households h
+        JOIN household_members m ON m.household_id = h.id
+          AND m.user_id = $1 AND m.role = 'owner' AND m.purged_at IS NULL
+        WHERE h.name = 'QA Household' AND h.deleted_at IS NULL
+        ORDER BY h.id LIMIT 1
+      `,
       [adminID],
     )
     let householdID = existingHousehold.rows[0]?.id
     if (!householdID) {
       const household = await client.query(
         `
-          INSERT INTO households (name, owner_id, grace_period_days, created_at, updated_at)
-          VALUES ('QA Household', $1, 30, NOW(), NOW())
+          INSERT INTO households (name, grace_period_days, created_at, updated_at)
+          VALUES ('QA Household', 30, NOW(), NOW())
           RETURNING id
         `,
-        [adminID],
       )
       householdID = household.rows[0]?.id
     }

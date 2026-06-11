@@ -89,8 +89,8 @@ export async function createThrowawayUser({ suite, householdID, role = 'contribu
     try {
       const result = await client.query(
         `
-          INSERT INTO users (email, password_hash, is_admin, last_scope, default_scope, created_at, updated_at)
-          VALUES ($1, $2, FALSE, 'personal', 'personal', NOW(), NOW())
+          INSERT INTO users (email, password_hash, is_admin, last_scope, default_scope, primary_currency_asset_id, created_at, updated_at)
+          VALUES ($1, $2, FALSE, 'personal', 'personal', (SELECT id FROM assets WHERE symbol = 'USD' AND kind = 'fiat'), NOW(), NOW())
           RETURNING id, email
         `,
         [email, hash],
@@ -130,7 +130,10 @@ export async function deleteThrowawayUsers(suite) {
         const ids = users.rows.map((row) => row.id)
         const accounts = await client.query('SELECT id FROM accounts WHERE user_id = ANY($1::bigint[])', [ids])
         const accountIDs = accounts.rows.map((row) => row.id)
-        const households = await client.query('SELECT id FROM households WHERE owner_id = ANY($1::bigint[])', [ids])
+        const households = await client.query(
+          "SELECT household_id AS id FROM household_members WHERE user_id = ANY($1::bigint[]) AND role = 'owner'",
+          [ids],
+        )
         const householdIDs = households.rows.map((row) => row.id)
         await client.query('DELETE FROM sessions WHERE user_id = ANY($1::bigint[])', [ids])
         await client.query('DELETE FROM plaid_sync_errors WHERE user_id = ANY($1::bigint[])', [ids])
@@ -138,10 +141,12 @@ export async function deleteThrowawayUsers(suite) {
         await client.query('DELETE FROM ai_messages WHERE user_id = ANY($1::bigint[])', [ids])
         await client.query('DELETE FROM ai_messages WHERE thread_id IN (SELECT id FROM ai_threads WHERE user_id = ANY($1::bigint[]))', [ids])
         await client.query('DELETE FROM ai_threads WHERE user_id = ANY($1::bigint[])', [ids])
-        await client.query('DELETE FROM investments WHERE user_id = ANY($1::bigint[])', [ids])
         await client.query('DELETE FROM savings_goals WHERE user_id = ANY($1::bigint[])', [ids])
         await client.query('DELETE FROM budgets WHERE user_id = ANY($1::bigint[])', [ids])
         await client.query('DELETE FROM categorization_rules WHERE user_id = ANY($1::bigint[])', [ids])
+        await client.query('DELETE FROM positions WHERE user_id = ANY($1::bigint[])', [ids])
+        await client.query('DELETE FROM account_balance_observations WHERE user_id = ANY($1::bigint[])', [ids])
+        await client.query('DELETE FROM ingestion_jobs WHERE user_id = ANY($1::bigint[])', [ids])
         await client.query('UPDATE transactions SET transfer_pair_id = NULL WHERE user_id = ANY($1::bigint[])', [ids])
         await client.query('DELETE FROM transactions WHERE user_id = ANY($1::bigint[])', [ids])
         if (accountIDs.length > 0) {
@@ -154,8 +159,8 @@ export async function deleteThrowawayUsers(suite) {
           await client.query('DELETE FROM account_shares WHERE household_id = ANY($1::bigint[])', [householdIDs])
           await client.query('DELETE FROM ai_messages WHERE thread_id IN (SELECT id FROM ai_threads WHERE household_id = ANY($1::bigint[]))', [householdIDs])
           await client.query('DELETE FROM ai_threads WHERE household_id = ANY($1::bigint[])', [householdIDs])
-          await client.query('DELETE FROM shared_budgets WHERE household_id = ANY($1::bigint[])', [householdIDs])
-          await client.query('DELETE FROM shared_goals WHERE household_id = ANY($1::bigint[])', [householdIDs])
+          await client.query('DELETE FROM budgets WHERE household_id = ANY($1::bigint[])', [householdIDs])
+          await client.query('DELETE FROM savings_goals WHERE household_id = ANY($1::bigint[])', [householdIDs])
           await client.query('DELETE FROM household_invites WHERE household_id = ANY($1::bigint[])', [householdIDs])
           await client.query('DELETE FROM household_members WHERE household_id = ANY($1::bigint[])', [householdIDs])
           await client.query('DELETE FROM households WHERE id = ANY($1::bigint[])', [householdIDs])
