@@ -306,6 +306,15 @@ func (r *aiProviderResolver) For(ctx context.Context, userID int64) (ai.Provider
 			return ai.NewOllamaProvider(ai.OllamaConfig{}), nil
 		}
 		return ai.NewOllamaProvider(ai.OllamaConfig{BaseURL: base}), nil
+	case "openai":
+		// OpenAI-compatible endpoint (#354). The key is optional — local
+		// proxies fronting a Claude/Codex subscription often authenticate by
+		// other means — so an empty key is valid and omits the bearer header.
+		// BaseURL defaults to public OpenAI inside the provider when empty.
+		return ai.NewOpenAIProvider(ai.OpenAIConfig{
+			APIKey:  resolved.OpenAIKey,
+			BaseURL: resolved.OpenAIBaseURL,
+		}), nil
 	case "claude":
 		fallthrough
 	default:
@@ -339,6 +348,10 @@ func (r *extractorResolver) For(ctx context.Context, userID int64) (ingestion.Ex
 	switch resolved.Provider {
 	case "ollama":
 		// Local vision extraction is an ADR-0019 fast-follow.
+		return nil, nil
+	case "openai":
+		// OpenAI-compatible document extraction is a #354 fast-follow, same
+		// posture as ollama: handler reports AI_IMPORT_UNAVAILABLE.
 		return nil, nil
 	case "claude":
 		fallthrough

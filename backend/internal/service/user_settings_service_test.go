@@ -143,6 +143,64 @@ func TestUserSettings_Update_OllamaURL(t *testing.T) {
 	}
 }
 
+// TestUserSettings_Update_OpenAIProvider covers the #354 surface: "openai"
+// is an accepted provider, the key encrypts-at-rest + redacts-on-read like
+// the Claude key, and the base URL round-trips set + clear.
+func TestUserSettings_Update_OpenAIProvider(t *testing.T) {
+	svc, userID := newUserSettingsSvc(t)
+	ctx := context.Background()
+
+	provider := "openai"
+	key := "sk-proxy-abc"
+	url := "http://localhost:8080/v1"
+	v, err := svc.Update(ctx, userID, service.UpdateUserSettingsInput{
+		PreferredProvider: &provider,
+		OpenAIAPIKey:      &key,
+		OpenAIBaseURL:     &url,
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if v.PreferredProvider != "openai" {
+		t.Errorf("PreferredProvider = %q, want openai", v.PreferredProvider)
+	}
+	if !v.OpenAIAPIKeySet {
+		t.Errorf("OpenAIAPIKeySet = false after setting, want true")
+	}
+	if v.OpenAIBaseURL == nil || *v.OpenAIBaseURL != url {
+		t.Errorf("OpenAIBaseURL = %v, want %q", v.OpenAIBaseURL, url)
+	}
+
+	resolved, err := svc.Resolve(ctx, userID)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if resolved.Provider != "openai" {
+		t.Errorf("Resolve.Provider = %q, want openai", resolved.Provider)
+	}
+	if resolved.OpenAIKey != key {
+		t.Errorf("Resolve.OpenAIKey = %q, want %q", resolved.OpenAIKey, key)
+	}
+	if resolved.OpenAIBaseURL != url {
+		t.Errorf("Resolve.OpenAIBaseURL = %q, want %q", resolved.OpenAIBaseURL, url)
+	}
+
+	// Clear key + url leaves the flags off and the resolver empty.
+	v2, err := svc.Update(ctx, userID, service.UpdateUserSettingsInput{
+		ClearOpenAIAPIKey: true,
+		ClearOpenAIURL:    true,
+	})
+	if err != nil {
+		t.Fatalf("Update clear: %v", err)
+	}
+	if v2.OpenAIAPIKeySet {
+		t.Errorf("OpenAIAPIKeySet = true after clear, want false")
+	}
+	if v2.OpenAIBaseURL != nil {
+		t.Errorf("OpenAIBaseURL = %v after clear, want nil", v2.OpenAIBaseURL)
+	}
+}
+
 // TestUserSettings_DifferentUsers — each user keeps separate settings.
 func TestUserSettings_DifferentUsers(t *testing.T) {
 	svc, userA := newUserSettingsSvc(t)

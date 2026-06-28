@@ -38,6 +38,10 @@ type updateUserSettingsRequest struct {
 	ClearClaudeAPIKey bool    `json:"clear_claude_api_key"`
 	OllamaBaseURL     *string `json:"ollama_base_url"`
 	ClearOllamaURL    bool    `json:"clear_ollama_url"`
+	OpenAIAPIKey      *string `json:"openai_api_key"`
+	ClearOpenAIAPIKey bool    `json:"clear_openai_api_key"`
+	OpenAIBaseURL     *string `json:"openai_base_url"`
+	ClearOpenAIURL    bool    `json:"clear_openai_url"`
 	PreferredProvider *string `json:"preferred_provider"`
 	PreferredModel    *string `json:"preferred_model"`
 	ClearModel        bool    `json:"clear_preferred_model"`
@@ -55,6 +59,10 @@ func (h *UserSettingsHandler) Update(c *gin.Context) {
 		ClearClaudeAPIKey: req.ClearClaudeAPIKey,
 		OllamaBaseURL:     req.OllamaBaseURL,
 		ClearOllamaURL:    req.ClearOllamaURL,
+		OpenAIAPIKey:      req.OpenAIAPIKey,
+		ClearOpenAIAPIKey: req.ClearOpenAIAPIKey,
+		OpenAIBaseURL:     req.OpenAIBaseURL,
+		ClearOpenAIURL:    req.ClearOpenAIURL,
 		PreferredProvider: req.PreferredProvider,
 		PreferredModel:    req.PreferredModel,
 		ClearModel:        req.ClearModel,

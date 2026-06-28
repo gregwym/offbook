@@ -71,6 +71,8 @@ function AISettingsSection() {
   const [error, setError] = useState<string | null>(null)
   const [keyDraft, setKeyDraft] = useState('')
   const [ollamaDraft, setOllamaDraft] = useState('')
+  const [openaiKeyDraft, setOpenaiKeyDraft] = useState('')
+  const [openaiUrlDraft, setOpenaiUrlDraft] = useState('')
   const [savedFlash, setSavedFlash] = useState(false)
 
   const refresh = useCallback(() => {
@@ -78,6 +80,7 @@ function AISettingsSection() {
       .then((v) => {
         setSettings(v)
         setOllamaDraft(v.ollama_base_url ?? '')
+        setOpenaiUrlDraft(v.openai_base_url ?? '')
         setError(null)
       })
       .catch((e: unknown) => setError(errMsg(e)))
@@ -97,6 +100,8 @@ function AISettingsSection() {
       setSettings(v)
       setKeyDraft('')
       setOllamaDraft(v.ollama_base_url ?? '')
+      setOpenaiKeyDraft('')
+      setOpenaiUrlDraft(v.openai_base_url ?? '')
       setSavedFlash(true)
       window.setTimeout(() => setSavedFlash(false), 1500)
     } catch (e) {
@@ -139,7 +144,7 @@ function AISettingsSection() {
         <div>
           <label className="block text-sm font-medium text-gray-800 mb-1">Preferred provider</label>
           <div className="flex gap-3 text-sm">
-            {(['claude', 'ollama'] as const).map((p) => (
+            {(['claude', 'ollama', 'openai'] as const).map((p) => (
               <label key={p} className="inline-flex items-center gap-2 cursor-pointer">
                 <input
                   type="radio"
@@ -149,13 +154,16 @@ function AISettingsSection() {
                   onChange={() => void save({ preferred_provider: p })}
                   disabled={saving}
                 />
-                <span className="text-gray-700">{p === 'claude' ? 'Claude (cloud)' : 'Ollama (local)'}</span>
+                <span className="text-gray-700">
+                  {p === 'claude' ? 'Claude (cloud)' : p === 'ollama' ? 'Ollama (local)' : 'OpenAI-compatible'}
+                </span>
               </label>
             ))}
           </div>
           <p className="text-xs text-gray-500 mt-1">
             Claude streams from Anthropic and needs a key. Ollama runs locally — no key, no data leaves
-            your machine.
+            your machine. OpenAI-compatible points at any chat-completions endpoint — OpenAI itself, or a
+            local proxy fronting another subscription.
           </p>
         </div>
 
@@ -232,6 +240,82 @@ function AISettingsSection() {
           </div>
           <p className="text-xs text-gray-500 mt-1">
             Leave blank to use the server default (<span className="font-mono">http://localhost:11434</span>).
+          </p>
+        </div>
+
+        {/* OpenAI-compatible base URL */}
+        <div>
+          <label className="block text-sm font-medium text-gray-800 mb-1">OpenAI-compatible base URL</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="https://api.openai.com/v1"
+              value={openaiUrlDraft}
+              onChange={(e) => setOpenaiUrlDraft(e.target.value)}
+              className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => void save({ openai_base_url: openaiUrlDraft })}
+              disabled={saving || openaiUrlDraft === (settings.openai_base_url ?? '')}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+            >
+              Save URL
+            </button>
+            {settings.openai_base_url && (
+              <button
+                type="button"
+                onClick={() => void save({ clear_openai_url: true })}
+                disabled={saving}
+                className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                <Trash2 size={14} /> Clear
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            The <span className="font-mono">/v1</span> root to POST against. Leave blank for public OpenAI;
+            set it to a local proxy's address to route through another subscription.
+          </p>
+        </div>
+
+        {/* OpenAI-compatible key */}
+        <div>
+          <label className="block text-sm font-medium text-gray-800 mb-1">OpenAI-compatible API key</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="password"
+              placeholder={settings.openai_api_key_set ? '••••••••  (key set)' : 'sk-… (optional for proxies)'}
+              value={openaiKeyDraft}
+              onChange={(e) => setOpenaiKeyDraft(e.target.value)}
+              className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => void save({ openai_api_key: openaiKeyDraft })}
+              disabled={!openaiKeyDraft.trim() || saving}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+            >
+              Save key
+            </button>
+            {settings.openai_api_key_set && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm('Remove the stored OpenAI key?')) {
+                    void save({ clear_openai_api_key: true })
+                  }
+                }}
+                disabled={saving}
+                className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                <Trash2 size={14} /> Remove
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            Stored encrypted at rest, never displayed again after you save it. Optional — some local
+            proxies authenticate by other means and need no key.
           </p>
         </div>
       </div>

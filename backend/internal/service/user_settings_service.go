@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	ErrInvalidProvider = errors.New("preferred_provider must be 'claude' or 'ollama'")
+	ErrInvalidProvider = errors.New("preferred_provider must be 'claude', 'ollama', or 'openai'")
 )
 
 // UserSettingsView is the redacted shape returned over the API. The
@@ -23,6 +23,8 @@ type UserSettingsView struct {
 	UserID            int64   `json:"user_id"`
 	ClaudeAPIKeySet   bool    `json:"claude_api_key_set"`
 	OllamaBaseURL     *string `json:"ollama_base_url,omitempty"`
+	OpenAIBaseURL     *string `json:"openai_base_url,omitempty"`
+	OpenAIAPIKeySet   bool    `json:"openai_api_key_set"`
 	PreferredProvider string  `json:"preferred_provider"`
 	PreferredModel    *string `json:"preferred_model,omitempty"`
 	// AutoPriceRefresh is the persistent opt-in for the scheduled price
@@ -39,6 +41,10 @@ type UpdateUserSettingsInput struct {
 	ClearClaudeAPIKey bool
 	OllamaBaseURL     *string
 	ClearOllamaURL    bool
+	OpenAIAPIKey      *string
+	ClearOpenAIAPIKey bool
+	OpenAIBaseURL     *string
+	ClearOpenAIURL    bool
 	PreferredProvider *string
 	PreferredModel    *string
 	ClearModel        bool
@@ -124,9 +130,34 @@ func (s *UserSettingsService) Update(ctx context.Context, userID int64, in Updat
 		}
 	}
 
+	if in.ClearOpenAIAPIKey {
+		row.OpenAIAPIKeyEnc = nil
+	} else if in.OpenAIAPIKey != nil {
+		key := strings.TrimSpace(*in.OpenAIAPIKey)
+		if key == "" {
+			return nil, errors.New("openai_api_key must not be empty (use clear_openai_api_key to delete)")
+		}
+		enc, err := s.box.Encrypt([]byte(key))
+		if err != nil {
+			return nil, fmt.Errorf("user_settings: encrypt openai key: %w", err)
+		}
+		row.OpenAIAPIKeyEnc = enc
+	}
+
+	if in.ClearOpenAIURL {
+		row.OpenAIBaseURL = nil
+	} else if in.OpenAIBaseURL != nil {
+		v := strings.TrimSpace(*in.OpenAIBaseURL)
+		if v == "" {
+			row.OpenAIBaseURL = nil
+		} else {
+			row.OpenAIBaseURL = &v
+		}
+	}
+
 	if in.PreferredProvider != nil {
 		p := strings.TrimSpace(*in.PreferredProvider)
-		if p != "claude" && p != "ollama" {
+		if p != "claude" && p != "ollama" && p != "openai" {
 			return nil, ErrInvalidProvider
 		}
 		row.PreferredProvider = p
@@ -161,10 +192,12 @@ func (s *UserSettingsService) Update(ctx context.Context, userID int64, in Updat
 // PreferredProvider == "claude" — keeps the local single-tenant deploy
 // model working without anyone visiting Settings.
 type ResolvedProvider struct {
-	Provider      string // "claude" | "ollama"
+	Provider      string // "claude" | "ollama" | "openai"
 	Model         string // "" → provider default
 	ClaudeKey     string // "" → env fallback applies
 	OllamaBaseURL string // "" → env fallback applies
+	OpenAIBaseURL string // "" → public OpenAI default
+	OpenAIKey     string // "" → Authorization header omitted (proxy auth)
 }
 
 func (s *UserSettingsService) Resolve(ctx context.Context, userID int64) (*ResolvedProvider, error) {
@@ -181,12 +214,22 @@ func (s *UserSettingsService) Resolve(ctx context.Context, userID int64) (*Resol
 	if row.OllamaBaseURL != nil {
 		out.OllamaBaseURL = *row.OllamaBaseURL
 	}
+	if row.OpenAIBaseURL != nil {
+		out.OpenAIBaseURL = *row.OpenAIBaseURL
+	}
 	if len(row.ClaudeAPIKeyEnc) > 0 {
 		plain, err := s.box.Decrypt(row.ClaudeAPIKeyEnc)
 		if err != nil {
 			return nil, fmt.Errorf("user_settings: decrypt claude key: %w", err)
 		}
 		out.ClaudeKey = string(plain)
+	}
+	if len(row.OpenAIAPIKeyEnc) > 0 {
+		plain, err := s.box.Decrypt(row.OpenAIAPIKeyEnc)
+		if err != nil {
+			return nil, fmt.Errorf("user_settings: decrypt openai key: %w", err)
+		}
+		out.OpenAIKey = string(plain)
 	}
 	return out, nil
 }
@@ -211,6 +254,8 @@ func view(s *model.UserSettings) *UserSettingsView {
 		UserID:            s.UserID,
 		ClaudeAPIKeySet:   len(s.ClaudeAPIKeyEnc) > 0,
 		OllamaBaseURL:     s.OllamaBaseURL,
+		OpenAIBaseURL:     s.OpenAIBaseURL,
+		OpenAIAPIKeySet:   len(s.OpenAIAPIKeyEnc) > 0,
 		PreferredProvider: s.PreferredProvider,
 		PreferredModel:    s.PreferredModel,
 		AutoPriceRefresh:  s.AutoPriceRefresh,

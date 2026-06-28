@@ -10,6 +10,8 @@ type UserSettings struct {
 	UserID            int64   `gorm:"primaryKey" json:"user_id"`
 	ClaudeAPIKeyEnc   []byte  `gorm:"column:claude_api_key_enc" json:"-"`
 	OllamaBaseURL     *string `gorm:"column:ollama_base_url" json:"ollama_base_url,omitempty"`
+	OpenAIBaseURL     *string `gorm:"column:openai_base_url" json:"openai_base_url,omitempty"`
+	OpenAIAPIKeyEnc   []byte  `gorm:"column:openai_api_key_enc" json:"-"`
 	PreferredProvider string  `gorm:"column:preferred_provider;not null;default:claude" json:"preferred_provider"`
 	PreferredModel    *string `gorm:"column:preferred_model" json:"preferred_model,omitempty"`
 	// AutoPriceRefresh is the ADR-0014 §3 opt-in: background price refresh
