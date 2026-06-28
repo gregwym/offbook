@@ -40,30 +40,30 @@ func TestUserSettings_Get_Default(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if v.ClaudeAPIKeySet {
-		t.Errorf("ClaudeAPIKeySet = true on fresh user, want false")
+	if v.APITokenSet {
+		t.Errorf("APITokenSet = true on fresh user, want false")
 	}
 	if v.PreferredProvider != "claude" {
 		t.Errorf("PreferredProvider = %q, want 'claude'", v.PreferredProvider)
 	}
 }
 
-// TestUserSettings_Update_StoresAndHidesClaudeKey verifies the encrypt-at-
-// rest + redact-on-read contract: the plaintext is recoverable via
-// Resolve(), but Get() never returns the key — only ClaudeAPIKeySet=true.
-func TestUserSettings_Update_StoresAndHidesClaudeKey(t *testing.T) {
+// TestUserSettings_Update_StoresAndHidesToken verifies the encrypt-at-rest +
+// redact-on-read contract for the unified API token: the plaintext is
+// recoverable via Resolve(), but Get() never returns it — only APITokenSet=true.
+func TestUserSettings_Update_StoresAndHidesToken(t *testing.T) {
 	svc, userID := newUserSettingsSvc(t)
 	ctx := context.Background()
 
-	key := "sk-ant-test-12345"
+	token := "sk-ant-test-12345"
 	v, err := svc.Update(ctx, userID, service.UpdateUserSettingsInput{
-		ClaudeAPIKey: &key,
+		APIToken: &token,
 	})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	if !v.ClaudeAPIKeySet {
-		t.Errorf("ClaudeAPIKeySet = false after setting, want true")
+	if !v.APITokenSet {
+		t.Errorf("APITokenSet = false after setting, want true")
 	}
 
 	// Resolve must be able to recover the plaintext (router-side provider
@@ -72,41 +72,41 @@ func TestUserSettings_Update_StoresAndHidesClaudeKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if resolved.ClaudeKey != key {
-		t.Errorf("Resolve.ClaudeKey = %q, want %q", resolved.ClaudeKey, key)
+	if resolved.Token != token {
+		t.Errorf("Resolve.Token = %q, want %q", resolved.Token, token)
 	}
 }
 
-// TestUserSettings_Update_ClearClaudeKey removes the stored ciphertext.
-func TestUserSettings_Update_ClearClaudeKey(t *testing.T) {
+// TestUserSettings_Update_ClearToken removes the stored ciphertext.
+func TestUserSettings_Update_ClearToken(t *testing.T) {
 	svc, userID := newUserSettingsSvc(t)
 	ctx := context.Background()
 	k := "sk-test"
-	if _, err := svc.Update(ctx, userID, service.UpdateUserSettingsInput{ClaudeAPIKey: &k}); err != nil {
+	if _, err := svc.Update(ctx, userID, service.UpdateUserSettingsInput{APIToken: &k}); err != nil {
 		t.Fatalf("Update set: %v", err)
 	}
-	v, err := svc.Update(ctx, userID, service.UpdateUserSettingsInput{ClearClaudeAPIKey: true})
+	v, err := svc.Update(ctx, userID, service.UpdateUserSettingsInput{ClearAPIToken: true})
 	if err != nil {
 		t.Fatalf("Update clear: %v", err)
 	}
-	if v.ClaudeAPIKeySet {
-		t.Errorf("ClaudeAPIKeySet = true after clear, want false")
+	if v.APITokenSet {
+		t.Errorf("APITokenSet = true after clear, want false")
 	}
 	resolved, _ := svc.Resolve(ctx, userID)
-	if resolved.ClaudeKey != "" {
-		t.Errorf("Resolve.ClaudeKey = %q after clear, want empty", resolved.ClaudeKey)
+	if resolved.Token != "" {
+		t.Errorf("Resolve.Token = %q after clear, want empty", resolved.Token)
 	}
 }
 
-// TestUserSettings_Update_EmptyKeyRejected — empty plaintext is a
+// TestUserSettings_Update_EmptyTokenRejected — empty plaintext is a
 // user-error (probably a stripped paste); we reject rather than encrypting
 // an empty byte slice that would behave as "set but useless".
-func TestUserSettings_Update_EmptyKeyRejected(t *testing.T) {
+func TestUserSettings_Update_EmptyTokenRejected(t *testing.T) {
 	svc, userID := newUserSettingsSvc(t)
 	empty := "   "
-	_, err := svc.Update(context.Background(), userID, service.UpdateUserSettingsInput{ClaudeAPIKey: &empty})
+	_, err := svc.Update(context.Background(), userID, service.UpdateUserSettingsInput{APIToken: &empty})
 	if err == nil {
-		t.Fatal("Update with empty key succeeded, want error")
+		t.Fatal("Update with empty token succeeded, want error")
 	}
 }
 
@@ -122,53 +122,50 @@ func TestUserSettings_Update_PreferredProviderValidation(t *testing.T) {
 	}
 }
 
-// TestUserSettings_Update_OllamaURL set + clear round-trip.
-func TestUserSettings_Update_OllamaURL(t *testing.T) {
+// TestUserSettings_Update_Endpoint set + clear round-trip.
+func TestUserSettings_Update_Endpoint(t *testing.T) {
 	svc, userID := newUserSettingsSvc(t)
 	ctx := context.Background()
 	url := "http://my-ollama:11434"
-	v, err := svc.Update(ctx, userID, service.UpdateUserSettingsInput{OllamaBaseURL: &url})
+	v, err := svc.Update(ctx, userID, service.UpdateUserSettingsInput{APIEndpoint: &url})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	if v.OllamaBaseURL == nil || *v.OllamaBaseURL != url {
-		t.Errorf("OllamaBaseURL = %v, want %q", v.OllamaBaseURL, url)
+	if v.APIEndpoint == nil || *v.APIEndpoint != url {
+		t.Errorf("APIEndpoint = %v, want %q", v.APIEndpoint, url)
 	}
-	v2, err := svc.Update(ctx, userID, service.UpdateUserSettingsInput{ClearOllamaURL: true})
+	resolved, _ := svc.Resolve(ctx, userID)
+	if resolved.Endpoint != url {
+		t.Errorf("Resolve.Endpoint = %q, want %q", resolved.Endpoint, url)
+	}
+	v2, err := svc.Update(ctx, userID, service.UpdateUserSettingsInput{ClearAPIEndpoint: true})
 	if err != nil {
 		t.Fatalf("Update clear: %v", err)
 	}
-	if v2.OllamaBaseURL != nil {
-		t.Errorf("OllamaBaseURL = %v after clear, want nil", v2.OllamaBaseURL)
+	if v2.APIEndpoint != nil {
+		t.Errorf("APIEndpoint = %v after clear, want nil", v2.APIEndpoint)
 	}
 }
 
-// TestUserSettings_Update_OpenAIProvider covers the #354 surface: "openai"
-// is an accepted provider, the key encrypts-at-rest + redacts-on-read like
-// the Claude key, and the base URL round-trips set + clear.
-func TestUserSettings_Update_OpenAIProvider(t *testing.T) {
+// TestUserSettings_Update_Protocol covers picking an OpenAI-compatible
+// protocol alongside its endpoint + token in one patch.
+func TestUserSettings_Update_Protocol(t *testing.T) {
 	svc, userID := newUserSettingsSvc(t)
 	ctx := context.Background()
 
 	provider := "openai"
-	key := "sk-proxy-abc"
+	token := "sk-proxy-abc"
 	url := "http://localhost:8080/v1"
 	v, err := svc.Update(ctx, userID, service.UpdateUserSettingsInput{
 		PreferredProvider: &provider,
-		OpenAIAPIKey:      &key,
-		OpenAIBaseURL:     &url,
+		APIToken:          &token,
+		APIEndpoint:       &url,
 	})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	if v.PreferredProvider != "openai" {
 		t.Errorf("PreferredProvider = %q, want openai", v.PreferredProvider)
-	}
-	if !v.OpenAIAPIKeySet {
-		t.Errorf("OpenAIAPIKeySet = false after setting, want true")
-	}
-	if v.OpenAIBaseURL == nil || *v.OpenAIBaseURL != url {
-		t.Errorf("OpenAIBaseURL = %v, want %q", v.OpenAIBaseURL, url)
 	}
 
 	resolved, err := svc.Resolve(ctx, userID)
@@ -178,26 +175,11 @@ func TestUserSettings_Update_OpenAIProvider(t *testing.T) {
 	if resolved.Provider != "openai" {
 		t.Errorf("Resolve.Provider = %q, want openai", resolved.Provider)
 	}
-	if resolved.OpenAIKey != key {
-		t.Errorf("Resolve.OpenAIKey = %q, want %q", resolved.OpenAIKey, key)
+	if resolved.Token != token {
+		t.Errorf("Resolve.Token = %q, want %q", resolved.Token, token)
 	}
-	if resolved.OpenAIBaseURL != url {
-		t.Errorf("Resolve.OpenAIBaseURL = %q, want %q", resolved.OpenAIBaseURL, url)
-	}
-
-	// Clear key + url leaves the flags off and the resolver empty.
-	v2, err := svc.Update(ctx, userID, service.UpdateUserSettingsInput{
-		ClearOpenAIAPIKey: true,
-		ClearOpenAIURL:    true,
-	})
-	if err != nil {
-		t.Fatalf("Update clear: %v", err)
-	}
-	if v2.OpenAIAPIKeySet {
-		t.Errorf("OpenAIAPIKeySet = true after clear, want false")
-	}
-	if v2.OpenAIBaseURL != nil {
-		t.Errorf("OpenAIBaseURL = %v after clear, want nil", v2.OpenAIBaseURL)
+	if resolved.Endpoint != url {
+		t.Errorf("Resolve.Endpoint = %q, want %q", resolved.Endpoint, url)
 	}
 }
 
@@ -212,18 +194,18 @@ func TestUserSettings_DifferentUsers(t *testing.T) {
 
 	ctx := context.Background()
 	keyA := "sk-A"
-	if _, err := svc.Update(ctx, userA, service.UpdateUserSettingsInput{ClaudeAPIKey: &keyA}); err != nil {
+	if _, err := svc.Update(ctx, userA, service.UpdateUserSettingsInput{APIToken: &keyA}); err != nil {
 		t.Fatalf("Update A: %v", err)
 	}
 	vB, err := svc.Get(ctx, userB)
 	if err != nil {
 		t.Fatalf("Get B: %v", err)
 	}
-	if vB.ClaudeAPIKeySet {
-		t.Errorf("user B inherited user A's key flag")
+	if vB.APITokenSet {
+		t.Errorf("user B inherited user A's token flag")
 	}
 	resolvedB, _ := svc.Resolve(ctx, userB)
-	if resolvedB.ClaudeKey != "" {
-		t.Errorf("user B sees user A's key: %q", resolvedB.ClaudeKey)
+	if resolvedB.Token != "" {
+		t.Errorf("user B sees user A's token: %q", resolvedB.Token)
 	}
 }

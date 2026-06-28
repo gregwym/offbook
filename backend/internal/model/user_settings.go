@@ -7,13 +7,16 @@ import "time"
 // settings service auto-creates the row on first read so handlers can
 // treat absence as "all defaults" rather than handling a not-found path.
 type UserSettings struct {
-	UserID            int64   `gorm:"primaryKey" json:"user_id"`
-	ClaudeAPIKeyEnc   []byte  `gorm:"column:claude_api_key_enc" json:"-"`
-	OllamaBaseURL     *string `gorm:"column:ollama_base_url" json:"ollama_base_url,omitempty"`
-	OpenAIBaseURL     *string `gorm:"column:openai_base_url" json:"openai_base_url,omitempty"`
-	OpenAIAPIKeyEnc   []byte  `gorm:"column:openai_api_key_enc" json:"-"`
-	PreferredProvider string  `gorm:"column:preferred_provider;not null;default:claude" json:"preferred_provider"`
-	PreferredModel    *string `gorm:"column:preferred_model" json:"preferred_model,omitempty"`
+	UserID int64 `gorm:"primaryKey" json:"user_id"`
+	// PreferredProvider is the API protocol the advisor speaks:
+	// claude (Anthropic Messages) | ollama | openai (Chat Completions).
+	PreferredProvider string `gorm:"column:preferred_provider;not null;default:claude" json:"preferred_provider"`
+	// APIEndpoint is the protocol's endpoint/base URL (NULL → provider
+	// default). APITokenEnc is the bearer token, encrypted at rest via the
+	// SecretBox (NULL when the endpoint needs no token, e.g. local Ollama).
+	APIEndpoint    *string `gorm:"column:api_endpoint" json:"api_endpoint,omitempty"`
+	APITokenEnc    []byte  `gorm:"column:api_token_enc" json:"-"`
+	PreferredModel *string `gorm:"column:preferred_model" json:"preferred_model,omitempty"`
 	// AutoPriceRefresh is the ADR-0014 §3 opt-in: background price refresh
 	// sends the user's held-symbol list upstream without a user action, so
 	// it must be explicitly enabled. Default false.
