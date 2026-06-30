@@ -14,7 +14,7 @@ import {
 import { getHealth } from '../api/health'
 import { getUserSettings, updateUserSettings } from '../api/userSettings'
 import type { PlaidItem, PlaidSyncError } from '../types/plaid'
-import type { UpdateUserSettingsInput, UserSettingsView } from '../types/userSettings'
+import type { AIProvider, UpdateUserSettingsInput, UserSettingsView } from '../types/userSettings'
 
 export function SettingsPage() {
   return (
@@ -64,20 +64,39 @@ function AboutSection() {
   )
 }
 
+// Per-protocol presentation. Internal values stay claude|ollama|openai for
+// wire stability; the UI frames them as protocols.
+const PROTOCOL_LABELS: Record<AIProvider, string> = {
+  claude: 'Anthropic (Messages)',
+  ollama: 'Ollama (local)',
+  openai: 'OpenAI (Chat Completions)',
+}
+const PROTOCOL_ENDPOINT_PLACEHOLDER: Record<AIProvider, string> = {
+  claude: 'https://api.anthropic.com/v1/messages',
+  ollama: 'http://localhost:11434',
+  openai: 'https://api.openai.com/v1',
+}
+const PROTOCOL_HINTS: Record<AIProvider, string> = {
+  claude: 'Anthropic Messages API. Needs a token; leave the endpoint blank for the public API.',
+  ollama: 'Local Ollama daemon — no token, no data leaves your machine.',
+  openai:
+    'Any OpenAI-compatible chat-completions endpoint — OpenAI itself, or a local proxy fronting another subscription.',
+}
+
 function AISettingsSection() {
   const [settings, setSettings] = useState<UserSettingsView | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [keyDraft, setKeyDraft] = useState('')
-  const [ollamaDraft, setOllamaDraft] = useState('')
+  const [tokenDraft, setTokenDraft] = useState('')
+  const [endpointDraft, setEndpointDraft] = useState('')
   const [savedFlash, setSavedFlash] = useState(false)
 
   const refresh = useCallback(() => {
     return getUserSettings()
       .then((v) => {
         setSettings(v)
-        setOllamaDraft(v.ollama_base_url ?? '')
+        setEndpointDraft(v.api_endpoint ?? '')
         setError(null)
       })
       .catch((e: unknown) => setError(errMsg(e)))
@@ -95,8 +114,8 @@ function AISettingsSection() {
     try {
       const v = await updateUserSettings(patch)
       setSettings(v)
-      setKeyDraft('')
-      setOllamaDraft(v.ollama_base_url ?? '')
+      setTokenDraft('')
+      setEndpointDraft(v.api_endpoint ?? '')
       setSavedFlash(true)
       window.setTimeout(() => setSavedFlash(false), 1500)
     } catch (e) {
@@ -135,11 +154,11 @@ function AISettingsSection() {
       )}
 
       <div className="space-y-5 px-5 py-4">
-        {/* Provider radio */}
+        {/* Protocol picker */}
         <div>
-          <label className="block text-sm font-medium text-gray-800 mb-1">Preferred provider</label>
-          <div className="flex gap-3 text-sm">
-            {(['claude', 'ollama'] as const).map((p) => (
+          <label className="block text-sm font-medium text-gray-800 mb-1">API protocol</label>
+          <div className="flex flex-wrap gap-3 text-sm">
+            {(['claude', 'ollama', 'openai'] as const).map((p) => (
               <label key={p} className="inline-flex items-center gap-2 cursor-pointer">
                 <input
                   type="radio"
@@ -149,41 +168,74 @@ function AISettingsSection() {
                   onChange={() => void save({ preferred_provider: p })}
                   disabled={saving}
                 />
-                <span className="text-gray-700">{p === 'claude' ? 'Claude (cloud)' : 'Ollama (local)'}</span>
+                <span className="text-gray-700">{PROTOCOL_LABELS[p]}</span>
               </label>
             ))}
           </div>
-          <p className="text-xs text-gray-500 mt-1">
-            Claude streams from Anthropic and needs a key. Ollama runs locally — no key, no data leaves
-            your machine.
-          </p>
+          <p className="text-xs text-gray-500 mt-1">{PROTOCOL_HINTS[settings.preferred_provider]}</p>
         </div>
 
-        {/* Claude key */}
+        {/* Endpoint URL */}
         <div>
-          <label className="block text-sm font-medium text-gray-800 mb-1">Claude API key</label>
+          <label className="block text-sm font-medium text-gray-800 mb-1">Endpoint URL</label>
           <div className="flex items-center gap-2">
             <input
-              type="password"
-              placeholder={settings.claude_api_key_set ? '••••••••  (key set)' : 'sk-ant-…'}
-              value={keyDraft}
-              onChange={(e) => setKeyDraft(e.target.value)}
+              type="text"
+              placeholder={PROTOCOL_ENDPOINT_PLACEHOLDER[settings.preferred_provider]}
+              value={endpointDraft}
+              onChange={(e) => setEndpointDraft(e.target.value)}
               className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
             />
             <button
               type="button"
-              onClick={() => void save({ claude_api_key: keyDraft })}
-              disabled={!keyDraft.trim() || saving}
+              onClick={() => void save({ api_endpoint: endpointDraft })}
+              disabled={saving || endpointDraft === (settings.api_endpoint ?? '')}
               className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
             >
-              Save key
+              Save URL
             </button>
-            {settings.claude_api_key_set && (
+            {settings.api_endpoint && (
+              <button
+                type="button"
+                onClick={() => void save({ clear_api_endpoint: true })}
+                disabled={saving}
+                className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                <Trash2 size={14} /> Clear
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            Leave blank to use the protocol default (
+            <span className="font-mono">{PROTOCOL_ENDPOINT_PLACEHOLDER[settings.preferred_provider]}</span>).
+          </p>
+        </div>
+
+        {/* Token */}
+        <div>
+          <label className="block text-sm font-medium text-gray-800 mb-1">API token</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="password"
+              placeholder={settings.api_token_set ? '••••••••  (token set)' : 'sk-…'}
+              value={tokenDraft}
+              onChange={(e) => setTokenDraft(e.target.value)}
+              className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => void save({ api_token: tokenDraft })}
+              disabled={!tokenDraft.trim() || saving}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+            >
+              Save token
+            </button>
+            {settings.api_token_set && (
               <button
                 type="button"
                 onClick={() => {
-                  if (window.confirm('Remove the stored Claude key?')) {
-                    void save({ clear_claude_api_key: true })
+                  if (window.confirm('Remove the stored API token?')) {
+                    void save({ clear_api_token: true })
                   }
                 }}
                 disabled={saving}
@@ -194,44 +246,12 @@ function AISettingsSection() {
             )}
           </div>
           <p className="text-xs text-gray-500 mt-1">
-            Stored encrypted at rest. The key is never displayed again after you save it — only a
-            "set" indicator. Find your key at{' '}
-            <span className="font-mono">console.anthropic.com</span>.
-          </p>
-        </div>
-
-        {/* Ollama URL */}
-        <div>
-          <label className="block text-sm font-medium text-gray-800 mb-1">Ollama base URL</label>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              placeholder="http://localhost:11434"
-              value={ollamaDraft}
-              onChange={(e) => setOllamaDraft(e.target.value)}
-              className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
-            />
-            <button
-              type="button"
-              onClick={() => void save({ ollama_base_url: ollamaDraft })}
-              disabled={saving || ollamaDraft === (settings.ollama_base_url ?? '')}
-              className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
-            >
-              Save URL
-            </button>
-            {settings.ollama_base_url && (
-              <button
-                type="button"
-                onClick={() => void save({ clear_ollama_url: true })}
-                disabled={saving}
-                className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-              >
-                <Trash2 size={14} /> Clear
-              </button>
-            )}
-          </div>
-          <p className="text-xs text-gray-500 mt-1">
-            Leave blank to use the server default (<span className="font-mono">http://localhost:11434</span>).
+            Stored encrypted at rest, never displayed again after you save it — only a "set" indicator.
+            {settings.preferred_provider === 'ollama'
+              ? ' Not needed for local Ollama.'
+              : settings.preferred_provider === 'openai'
+                ? ' Optional — some local proxies authenticate by other means.'
+                : ''}
           </p>
         </div>
       </div>

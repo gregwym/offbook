@@ -12,18 +12,19 @@ import (
 )
 
 var (
-	ErrInvalidProvider = errors.New("preferred_provider must be 'claude' or 'ollama'")
+	ErrInvalidProvider = errors.New("preferred_provider must be 'claude', 'ollama', or 'openai'")
 )
 
-// UserSettingsView is the redacted shape returned over the API. The
-// Claude key is NEVER returned to the client — only a boolean flag —
-// because exfiltrating a stored bearer key would defeat the encrypt-at-rest
+// UserSettingsView is the redacted shape returned over the API. The API
+// token is NEVER returned to the client — only a boolean flag — because
+// exfiltrating a stored bearer token would defeat the encrypt-at-rest
 // guarantee.
 type UserSettingsView struct {
-	UserID            int64   `json:"user_id"`
-	ClaudeAPIKeySet   bool    `json:"claude_api_key_set"`
-	OllamaBaseURL     *string `json:"ollama_base_url,omitempty"`
+	UserID int64 `json:"user_id"`
+	// PreferredProvider is the API protocol (claude | ollama | openai).
 	PreferredProvider string  `json:"preferred_provider"`
+	APIEndpoint       *string `json:"api_endpoint,omitempty"`
+	APITokenSet       bool    `json:"api_token_set"`
 	PreferredModel    *string `json:"preferred_model,omitempty"`
 	// AutoPriceRefresh is the persistent opt-in for the scheduled price
 	// refresh (#338 Phase 3, ADR-0014 §3). Default false.
@@ -31,15 +32,15 @@ type UserSettingsView struct {
 }
 
 // UpdateUserSettingsInput is a sparse patch — only set fields apply. The
-// two Clear* flags exist to disambiguate "leave alone" from "delete":
-// sending `claude_api_key=""` is rejected (empty keys are useless);
-// sending `clear_claude_api_key=true` removes the stored ciphertext.
+// Clear* flags disambiguate "leave alone" from "delete": sending
+// `api_token=""` is rejected (empty tokens are useless); sending
+// `clear_api_token=true` removes the stored ciphertext.
 type UpdateUserSettingsInput struct {
-	ClaudeAPIKey      *string
-	ClearClaudeAPIKey bool
-	OllamaBaseURL     *string
-	ClearOllamaURL    bool
 	PreferredProvider *string
+	APIEndpoint       *string
+	ClearAPIEndpoint  bool
+	APIToken          *string
+	ClearAPIToken     bool
 	PreferredModel    *string
 	ClearModel        bool
 	AutoPriceRefresh  *bool
@@ -71,27 +72,6 @@ func (s *UserSettingsService) Get(ctx context.Context, userID int64) (*UserSetti
 	return view(row), nil
 }
 
-// GetClaudeAPIKey decrypts and returns the user's Claude key, or
-// (empty, nil) when no key is stored. This is the ONLY way callers get
-// access to the plaintext; the router-side provider resolver uses it.
-//
-// The handler MUST NOT call this — it would defeat the redact-on-read
-// guarantee. Enforced by code review since Go has no per-method visibility.
-func (s *UserSettingsService) GetClaudeAPIKey(ctx context.Context, userID int64) (string, error) {
-	row, err := s.fetchOrDefault(ctx, userID)
-	if err != nil {
-		return "", err
-	}
-	if len(row.ClaudeAPIKeyEnc) == 0 {
-		return "", nil
-	}
-	plain, err := s.box.Decrypt(row.ClaudeAPIKeyEnc)
-	if err != nil {
-		return "", fmt.Errorf("user_settings: decrypt claude key: %w", err)
-	}
-	return string(plain), nil
-}
-
 // Update applies the sparse patch and returns the redacted view.
 func (s *UserSettingsService) Update(ctx context.Context, userID int64, in UpdateUserSettingsInput) (*UserSettingsView, error) {
 	row, err := s.fetchOrDefault(ctx, userID)
@@ -99,34 +79,34 @@ func (s *UserSettingsService) Update(ctx context.Context, userID int64, in Updat
 		return nil, err
 	}
 
-	if in.ClearClaudeAPIKey {
-		row.ClaudeAPIKeyEnc = nil
-	} else if in.ClaudeAPIKey != nil {
-		key := strings.TrimSpace(*in.ClaudeAPIKey)
+	if in.ClearAPIToken {
+		row.APITokenEnc = nil
+	} else if in.APIToken != nil {
+		key := strings.TrimSpace(*in.APIToken)
 		if key == "" {
-			return nil, errors.New("claude_api_key must not be empty (use clear_claude_api_key to delete)")
+			return nil, errors.New("api_token must not be empty (use clear_api_token to delete)")
 		}
 		enc, err := s.box.Encrypt([]byte(key))
 		if err != nil {
-			return nil, fmt.Errorf("user_settings: encrypt claude key: %w", err)
+			return nil, fmt.Errorf("user_settings: encrypt api token: %w", err)
 		}
-		row.ClaudeAPIKeyEnc = enc
+		row.APITokenEnc = enc
 	}
 
-	if in.ClearOllamaURL {
-		row.OllamaBaseURL = nil
-	} else if in.OllamaBaseURL != nil {
-		v := strings.TrimSpace(*in.OllamaBaseURL)
+	if in.ClearAPIEndpoint {
+		row.APIEndpoint = nil
+	} else if in.APIEndpoint != nil {
+		v := strings.TrimSpace(*in.APIEndpoint)
 		if v == "" {
-			row.OllamaBaseURL = nil
+			row.APIEndpoint = nil
 		} else {
-			row.OllamaBaseURL = &v
+			row.APIEndpoint = &v
 		}
 	}
 
 	if in.PreferredProvider != nil {
 		p := strings.TrimSpace(*in.PreferredProvider)
-		if p != "claude" && p != "ollama" {
+		if p != "claude" && p != "ollama" && p != "openai" {
 			return nil, ErrInvalidProvider
 		}
 		row.PreferredProvider = p
@@ -153,18 +133,18 @@ func (s *UserSettingsService) Update(ctx context.Context, userID int64, in Updat
 	return view(row), nil
 }
 
-// Resolve is what the AI service / router uses to figure out which
-// provider this user wants. Returns the preferred provider, the model
-// override (or empty), and the decrypted claude key (or empty).
+// Resolve is what the AI service / router uses to figure out which provider
+// this user wants: the protocol, the model override (or empty), the endpoint
+// (or empty → provider default), and the decrypted token (or empty).
 //
-// Callers fall back to env defaults when ClaudeKey is empty AND
-// PreferredProvider == "claude" — keeps the local single-tenant deploy
-// model working without anyone visiting Settings.
+// Callers fall back to env defaults when Token is empty AND Provider ==
+// "claude" — keeps the local single-tenant deploy working without anyone
+// visiting Settings.
 type ResolvedProvider struct {
-	Provider      string // "claude" | "ollama"
-	Model         string // "" → provider default
-	ClaudeKey     string // "" → env fallback applies
-	OllamaBaseURL string // "" → env fallback applies
+	Provider string // "claude" | "ollama" | "openai"
+	Model    string // "" → provider default
+	Endpoint string // "" → provider default
+	Token    string // "" → env fallback (claude) or omitted bearer (openai)
 }
 
 func (s *UserSettingsService) Resolve(ctx context.Context, userID int64) (*ResolvedProvider, error) {
@@ -178,15 +158,15 @@ func (s *UserSettingsService) Resolve(ctx context.Context, userID int64) (*Resol
 	if row.PreferredModel != nil {
 		out.Model = *row.PreferredModel
 	}
-	if row.OllamaBaseURL != nil {
-		out.OllamaBaseURL = *row.OllamaBaseURL
+	if row.APIEndpoint != nil {
+		out.Endpoint = *row.APIEndpoint
 	}
-	if len(row.ClaudeAPIKeyEnc) > 0 {
-		plain, err := s.box.Decrypt(row.ClaudeAPIKeyEnc)
+	if len(row.APITokenEnc) > 0 {
+		plain, err := s.box.Decrypt(row.APITokenEnc)
 		if err != nil {
-			return nil, fmt.Errorf("user_settings: decrypt claude key: %w", err)
+			return nil, fmt.Errorf("user_settings: decrypt api token: %w", err)
 		}
-		out.ClaudeKey = string(plain)
+		out.Token = string(plain)
 	}
 	return out, nil
 }
@@ -209,9 +189,9 @@ func (s *UserSettingsService) fetchOrDefault(ctx context.Context, userID int64) 
 func view(s *model.UserSettings) *UserSettingsView {
 	return &UserSettingsView{
 		UserID:            s.UserID,
-		ClaudeAPIKeySet:   len(s.ClaudeAPIKeyEnc) > 0,
-		OllamaBaseURL:     s.OllamaBaseURL,
 		PreferredProvider: s.PreferredProvider,
+		APIEndpoint:       s.APIEndpoint,
+		APITokenSet:       len(s.APITokenEnc) > 0,
 		PreferredModel:    s.PreferredModel,
 		AutoPriceRefresh:  s.AutoPriceRefresh,
 	}

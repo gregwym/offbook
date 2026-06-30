@@ -34,11 +34,11 @@ func (h *UserSettingsHandler) Get(c *gin.Context) {
 }
 
 type updateUserSettingsRequest struct {
-	ClaudeAPIKey      *string `json:"claude_api_key"`
-	ClearClaudeAPIKey bool    `json:"clear_claude_api_key"`
-	OllamaBaseURL     *string `json:"ollama_base_url"`
-	ClearOllamaURL    bool    `json:"clear_ollama_url"`
 	PreferredProvider *string `json:"preferred_provider"`
+	APIEndpoint       *string `json:"api_endpoint"`
+	ClearAPIEndpoint  bool    `json:"clear_api_endpoint"`
+	APIToken          *string `json:"api_token"`
+	ClearAPIToken     bool    `json:"clear_api_token"`
 	PreferredModel    *string `json:"preferred_model"`
 	ClearModel        bool    `json:"clear_preferred_model"`
 	AutoPriceRefresh  *bool   `json:"auto_price_refresh"`
@@ -51,11 +51,11 @@ func (h *UserSettingsHandler) Update(c *gin.Context) {
 		return
 	}
 	v, err := h.svc.Update(c.Request.Context(), auth.MustUserID(c.Request.Context()), service.UpdateUserSettingsInput{
-		ClaudeAPIKey:      req.ClaudeAPIKey,
-		ClearClaudeAPIKey: req.ClearClaudeAPIKey,
-		OllamaBaseURL:     req.OllamaBaseURL,
-		ClearOllamaURL:    req.ClearOllamaURL,
 		PreferredProvider: req.PreferredProvider,
+		APIEndpoint:       req.APIEndpoint,
+		ClearAPIEndpoint:  req.ClearAPIEndpoint,
+		APIToken:          req.APIToken,
+		ClearAPIToken:     req.ClearAPIToken,
 		PreferredModel:    req.PreferredModel,
 		ClearModel:        req.ClearModel,
 		AutoPriceRefresh:  req.AutoPriceRefresh,
@@ -65,9 +65,9 @@ func (h *UserSettingsHandler) Update(c *gin.Context) {
 		case errors.Is(err, service.ErrInvalidProvider):
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_PROVIDER"})
 		default:
-			// Empty-key-with-no-clear-flag and similar validation hits the
+			// Empty-token-with-no-clear-flag and similar validation hits the
 			// generic 400 path; the message is human-readable.
-			if err.Error() == "claude_api_key must not be empty (use clear_claude_api_key to delete)" {
+			if err.Error() == "api_token must not be empty (use clear_api_token to delete)" {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
 				return
 			}

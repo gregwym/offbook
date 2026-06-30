@@ -297,23 +297,30 @@ func (r *aiProviderResolver) For(ctx context.Context, userID int64) (ai.Provider
 	if err != nil {
 		return nil, err
 	}
+	// Endpoint + token are the unified per-protocol settings (#354 follow-up):
+	// an empty endpoint falls back to each provider's default, an empty token
+	// either uses the env fallback (claude) or omits the bearer header (openai,
+	// for proxies that authenticate otherwise).
 	switch resolved.Provider {
 	case "ollama":
-		base := resolved.OllamaBaseURL
-		if base == "" {
-			// No user URL → env default. Ollama works without an API key,
-			// so there's nothing further to gate on.
-			return ai.NewOllamaProvider(ai.OllamaConfig{}), nil
-		}
-		return ai.NewOllamaProvider(ai.OllamaConfig{BaseURL: base}), nil
+		// Ollama needs no token; an empty endpoint uses the provider default.
+		return ai.NewOllamaProvider(ai.OllamaConfig{BaseURL: resolved.Endpoint}), nil
+	case "openai":
+		return ai.NewOpenAIProvider(ai.OpenAIConfig{
+			APIKey:  resolved.Token,
+			BaseURL: resolved.Endpoint,
+		}), nil
 	case "claude":
 		fallthrough
 	default:
-		key := resolved.ClaudeKey
-		if key == "" {
+		if resolved.Token == "" {
+			// No user token → env-configured provider (default endpoint).
 			return r.envFallback, nil
 		}
-		p, err := ai.NewClaudeProvider(ai.ClaudeConfig{APIKey: key})
+		p, err := ai.NewClaudeProvider(ai.ClaudeConfig{
+			APIKey:   resolved.Token,
+			Endpoint: resolved.Endpoint,
+		})
 		if err != nil {
 			return r.envFallback, nil
 		}
@@ -340,17 +347,21 @@ func (r *extractorResolver) For(ctx context.Context, userID int64) (ingestion.Ex
 	case "ollama":
 		// Local vision extraction is an ADR-0019 fast-follow.
 		return nil, nil
+	case "openai":
+		// OpenAI-compatible document extraction is a #354 fast-follow, same
+		// posture as ollama: handler reports AI_IMPORT_UNAVAILABLE.
+		return nil, nil
 	case "claude":
 		fallthrough
 	default:
-		key := resolved.ClaudeKey
+		key := resolved.Token
 		if key == "" {
 			key = r.envKey
 		}
 		if key == "" {
 			return nil, nil
 		}
-		ex, err := ai.NewClaudeExtractor(ai.ClaudeConfig{APIKey: key})
+		ex, err := ai.NewClaudeExtractor(ai.ClaudeConfig{APIKey: key, Endpoint: resolved.Endpoint})
 		if err != nil {
 			return nil, nil
 		}
