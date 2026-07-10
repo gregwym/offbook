@@ -432,3 +432,38 @@ func TestDashboard_Summarize_NetWorthCompleteness(t *testing.T) {
 		t.Error("net_worth_complete = true, want false (BTC has no price chain)")
 	}
 }
+
+// TestDashboard_Summarize_ByCategoryExcludesNonFlowKinds: a user whose only
+// transactions are an opening balance and a paired trade (both non-'flow'
+// kinds) must see an EMPTY by-category breakdown and income=spending=0 —
+// not a bogus "Uncategorized" bucket summing the opening balance + trade
+// legs. Regression for #351: the by-category query was missing the
+// `kind = 'flow'` predicate that the income/spending query and
+// SpendByCategory already had.
+func TestDashboard_Summarize_ByCategoryExcludesNonFlowKinds(t *testing.T) {
+	svc, userID, accountID, g := newDashboardSvc(t)
+	ctx := context.Background()
+	usdID := testutil.LookupUSDAssetID(t, g)
+	btcID := testutil.LookupAssetID(t, g, "BTC", "crypto")
+
+	may := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
+	// Opening balance: not spending activity.
+	seedNetWorthTxn(t, g, userID, accountID, usdID, model.KindOpeningBalance, may, "12000")
+	// Paired trade legs: buying BTC with USD. Neither leg is a flow.
+	seedNetWorthTxn(t, g, userID, accountID, usdID, model.KindTradeLeg, may, "-309.77")
+	seedNetWorthTxn(t, g, userID, accountID, btcID, model.KindTradeLeg, may, "0.01")
+
+	summary, err := svc.Summarize(ctx, userID, service.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	if summary.Income != "0" {
+		t.Errorf("income = %s, want 0 (no flow transactions)", summary.Income)
+	}
+	if summary.Spending != "0" {
+		t.Errorf("spending = %s, want 0 (no flow transactions)", summary.Spending)
+	}
+	if len(summary.ByCategory) != 0 {
+		t.Errorf("by_category = %+v, want empty (opening_balance + trade_leg rows must not leak in as bogus spending)", summary.ByCategory)
+	}
+}

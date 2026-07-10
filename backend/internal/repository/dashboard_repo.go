@@ -155,6 +155,7 @@ func (r *dashboardRepo) Summarize(ctx context.Context, userID int64, from, to ti
 		LEFT JOIN categories c ON c.id = t.category_id
 		WHERE t.deleted_at IS NULL
 		  AND t.user_id = ?
+		  AND t.kind = 'flow'
 		  AND t.transaction_date >= ?
 		  AND t.transaction_date <  ?
 		GROUP BY t.category_id, c.name
