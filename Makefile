@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help verify acceptance qa-smoke qa-suite require-env ensure-env deploy deployed-sha down teardown auto-deploy-install auto-deploy-uninstall
+.PHONY: help verify acceptance qa-smoke qa-suite require-env ensure-env pre-deploy-backup deploy deployed-sha down teardown auto-deploy-install auto-deploy-uninstall
 
 # ─── Deploy configuration (ADR-0016) ─────────────────────────────────────────
 # Near-zero config by convention. The common case — one instance, behind
@@ -112,7 +112,23 @@ ensure-env:
 #   command make deploy                                          # dev
 #   command make deploy FLAVOR=prod                              # prod
 #   command make deploy TS_AUTHKEY=tskey-... TS_HOSTNAME=offbook # first boot
-deploy: ensure-env
+# pre-deploy-backup: migration-safety hook (#358). Every deploy that could run a
+# migration on a data-bearing instance takes a backup FIRST — down-migrations are
+# a dev/rollback tool, not a data-recovery tool; backups are the recovery path.
+# The backup implementation is the M13 `backup` target (#357). Until that target
+# exists this is a loud no-op so deploy still works, but a data-bearing instance
+# MUST NOT run migrations without it once #357 lands. First-boot instances have
+# no data yet, so a warning there is harmless.
+pre-deploy-backup:
+	@if $(MAKE) -n backup >/dev/null 2>&1; then \
+		echo "Taking pre-migration backup (migration safety, #358)…"; \
+		FLAVOR="$(FLAVOR)" ENV_FILE="$(ENV_FILE)" $(MAKE) backup; \
+	else \
+		echo "⚠️  No 'backup' target yet (#357) — skipping pre-migration backup." >&2; \
+		echo "   Do not run migrations on an instance holding real data until #357 lands." >&2; \
+	fi
+
+deploy: ensure-env pre-deploy-backup
 	@SHA="$$(git rev-parse --short HEAD)"; \
 	if [ -n "$$($(COMPOSE) ps -q tailscale 2>/dev/null)" ]; then \
 		echo "Deploying $(OFFBOOK_PROJECT) @ $$SHA from $(ENV_FILE) (app update; sidecar up)…"; \

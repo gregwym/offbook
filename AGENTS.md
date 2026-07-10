@@ -58,6 +58,13 @@ pacing so an autonomous session can resume the program across quota windows.
 - NEVER `git commit --amend`, `git reset --hard`, or `git push --force` (any variant). No exceptions.
 - Fix mistakes with new commits, not history rewrites.
 
+## Migration Safety
+The pre-prod "wipe dev DBs and rebuild" era ends at M13 (#358). Once an instance holds real financial data, every schema change must be safe to take without risking that data.
+- **Expand → migrate → contract.** Never rename or drop a column/table in the same migration that stops writing to it. Split any breaking change into stages that each work against the *currently deployed* code: (1) **expand** — add the new column/table/index, backfill, and start writing both old and new (deploy); (2) **migrate** — move reads to the new shape (deploy); (3) **contract** — drop the old column/table once nothing reads it (deploy). Each stage is independently deployable and independently reversible.
+- **Destructive migrations need an explicit PR callout.** Any migration that drops or rewrites a column/table, or is otherwise not a pure additive expand, must say so in the PR description (a `**Destructive migration:**` line naming what it drops and why it's safe now). Reviewers gate on it.
+- **Down-migrations are a dev/rollback tool, not a data-recovery tool.** A `down` reverses schema for local iteration and staged rollback; it does **not** restore data a contract step deleted. **Backups** are the recovery path (`make backup`/`make restore`, #357). `make deploy` takes an automatic backup *before* migrations run for exactly this reason.
+- **Every migration ships a working `down`.** `make verify` (and CI) runs `make migrate-roundtrip` — a fresh `offbook_test` DB taken up → down → up, asserting clean completion and seed integrity. A missing or broken down file, or a seed that doesn't re-land, fails the build. Do not disable this to land a migration; fix the down file.
+
 ## Dev Dependencies
 - Run all dev infrastructure (Postgres, Redis, queues, etc.) via Docker / `docker compose`, never native installs.
 - Native installs only for language toolchains (Go, Node, etc.) — universal tooling, not project state.
