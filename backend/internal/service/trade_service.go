@@ -28,6 +28,12 @@ var (
 	ErrSecurityEqualsQuote = errors.New("trade asset must differ from the account's cash asset")
 )
 
+// priceSourceTrade tags price observations derived from a user-entered
+// trade (Tier-1 manual price entry, ADR-0013 §5). Distinct from provider
+// sources ('coingecko', 'frankfurter') and 'manual' (the standalone
+// set-price surface, #373) so provenance stays inspectable.
+const priceSourceTrade = "trade"
+
 // Brokerage-style accounts are the only ones that accept trades. The
 // list mirrors the position-model intent: bank-style accounts hold a
 // single cash position and don't need trade pairing.
@@ -209,9 +215,30 @@ func (s *TradeService) Record(ctx context.Context, userID, accountID int64, in R
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepo := repository.NewTransactionRepository(tx)
 		posRepo := repository.NewPositionRepository(tx)
+		priceRepo := repository.NewPriceRepository(tx)
 
 		if err := txRepo.CreateTradePair(ctx, secLeg, cashLeg); err != nil {
 			return fmt.Errorf("create trade pair: %w", err)
+		}
+
+		// Persist the user-supplied trade price as a Tier-1 price
+		// observation (source='trade') so the security position values at
+		// last-trade price with the existing staleness flagging (#352).
+		// Without this, a manually tracked equity is permanently unpriceable
+		// — there is no equity price provider (ADR-0014 ships crypto+FX only)
+		// — and its position would value at $0-but-partial forever. The price
+		// is quoted in the account's cash sleeve (in.Price is per-unit in the
+		// account's primary quote asset), which is exactly the direct hop
+		// valuation.Value tries first (asset → account quote → user currency).
+		tradePrice := &model.Price{
+			AssetID:      in.AssetID,
+			QuoteAssetID: acct.PrimaryQuoteAssetID,
+			AsOf:         in.TradeDate,
+			Price:        in.Price,
+			Source:       priceSourceTrade,
+		}
+		if err := priceRepo.Insert(ctx, tradePrice); err != nil {
+			return fmt.Errorf("insert trade price: %w", err)
 		}
 
 		// Recompute the security position from history (quantity + cost
