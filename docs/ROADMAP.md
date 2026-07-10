@@ -249,68 +249,67 @@ Owner direction (July 2026): make the project production ready for six product m
 
 ## M13 — Production Baseline [NEXT]
 
-**Goal:** An instance you'd trust with real money and a family member's data. No new product surface. (Phase 0 of the production-readiness plan.)
+**Goal:** An instance you'd trust with real money and a family member's data. No new product surface. (Phase 0 of the production-readiness plan.) Tracked in epic #383.
 
-- [ ] Backups & restore: nightly `pg_dump` (compose sidecar or systemd timer), retention, optional off-host copy; `make backup` / `make restore`; **scripted restore verification**; runbook.
-- [ ] Migration safety: expand→migrate→contract policy in AGENTS.md; automatic pre-migration backup in `make deploy`; up→down→up round-trip test in `make verify`. The pre-prod "wipe and rebuild" era ends here.
-- [ ] Fix #351 (P1: spending by_category leaks opening balances/trade legs — missing `kind='flow'` predicate) + regression tests.
-- [ ] Fix #352 minimum slice (P2: write trade prices as `prices` rows, `source='trade'`; full Tier-1 manual entry lands in M15).
-- [ ] Job scheduling: generalize the in-app price scheduler (or systemd timers) to run `cmd/household-purge` daily and the ingestion-jobs purge (#337). Grace-period purge is a privacy promise — it must actually run.
-- [ ] Monitoring & alerting: structured logs + notifier seam (ntfy/webhook/email) for failed jobs, Plaid item errors, failed deploys, low disk, backup failures.
-- [ ] CI promotion: #272 (acceptance baseline smoke required on PR), #275 (frontend vitest + RTL + msw incl. the #266 regression test).
-- [ ] Plaid **production** application submitted (long lead time — start day one). Sandbox stays the dev/QA default.
-- [ ] Deploy/rollback runbook: pin-previous-image rollback, post-deploy SHA smoke.
+- [ ] #357 — Backups & restore: nightly `pg_dump` (compose sidecar or systemd timer), retention, optional off-host copy; `make backup` / `make restore`; **scripted restore verification**; runbook.
+- [ ] #358 — Migration safety: expand→migrate→contract policy in AGENTS.md; automatic pre-migration backup in `make deploy`; up→down→up round-trip test in `make verify`. The pre-prod "wipe and rebuild" era ends here.
+- [ ] #351 — Fix P1: spending by_category leaks opening balances/trade legs (missing `kind='flow'` predicate) + regression tests.
+- [ ] #352 — Fix P2 minimum slice: write trade prices as `prices` rows, `source='trade'` (full Tier-1 manual entry lands in M15 as #373).
+- [ ] #359 — Job scheduling: generalize the in-app price scheduler (or systemd timers) to run `cmd/household-purge` daily and the ingestion-jobs purge (#337). Grace-period purge is a privacy promise — it must actually run.
+- [ ] #360 — Monitoring & alerting: structured logs + notifier seam (ntfy/webhook/email) for failed jobs, Plaid item errors, failed deploys, low disk, backup failures.
+- [ ] #272 / #275 — CI promotion: acceptance baseline smoke required on PR; frontend vitest + RTL + msw incl. the #266 regression test.
+- [ ] #362 — Plaid **production** application submitted (long lead time — start day one). Sandbox stays the dev/QA default.
+- [ ] #361 — Deploy/rollback runbook: pin-previous-image rollback, post-deploy SHA smoke.
 
 **Done criteria:** Simulated volume loss recovered from last night's backup by runbook alone. A killed scheduler or errored Plaid item produces a notification. #351/#352 fixed with regression coverage. PRs gated by contract-check + unit + acceptance smoke. Plaid production application in flight.
 
 ## M14 — Spending Analysis GA (Milestone A)
 
-**Goal:** Transactions flow in unattended, get categorized without user effort, and Insights answers "where does my money go."
+**Goal:** Transactions flow in unattended, get categorized without user effort, and Insights answers "where does my money go." Tracked in epic #384.
 
-- [ ] Scheduled background transaction sync per `plaid_item` (daily, jittered; **polling, not webhooks** — Tailscale-private hosts can't expose a public endpoint; record as ADR).
-- [ ] Re-auth flow: `ITEM_LOGIN_REQUIRED`/`PENDING_EXPIRATION` → item `reauth_required` → Settings banner → Plaid Link update mode → resume.
-- [ ] Sync-health UX + notifier hook on item error (DLQ badge already shipped).
+- [ ] #363 — Scheduled background transaction sync per `plaid_item` (daily, jittered; **polling, not webhooks** — Tailscale-private hosts can't expose a public endpoint; record as ADR).
+- [ ] #364 — Re-auth flow: `ITEM_LOGIN_REQUIRED`/`PENDING_EXPIRATION` → item `reauth_required` → Settings banner → Plaid Link update mode → resume.
+- [ ] #365 — Sync-health UX + notifier hook on item error (DLQ badge already shipped).
 - [ ] #195 — full Plaid PFC taxonomy sweep into `plaid_category_map`.
-- [ ] **AI auto-categorization** (new ADR): `TransactionCategorizer` capability in `service/ai` mirroring the `DocumentExtractor` seam (Claude/OpenAI-compatible/Ollama). Precedence: manual > rule > AI > plaid_default. Batch pass over uncategorized only; PII ban enforced by `noimport`-style test; confidence-gated into the existing "Needs review" flow; merchant-verdict cache + "promote to rule"; per-instance daily AI budget.
-- [ ] Analysis depth: month-over-month category trends, top merchants, income vs. spending trend; deterministic recurring/subscription detection (read-only band — never invents transactions).
-- [ ] Mobile fixes: #190 (+ #192 if the advisor surface stays routed).
+- [ ] #366 — **AI auto-categorization** (new ADR): `TransactionCategorizer` capability in `service/ai` mirroring the `DocumentExtractor` seam (Claude/OpenAI-compatible/Ollama). Precedence: manual > rule > AI > plaid_default. Batch pass over uncategorized only; PII ban enforced by `noimport`-style test; confidence-gated into the existing "Needs review" flow; merchant-verdict cache + "promote to rule"; per-instance daily AI budget.
+- [ ] #367 / #368 — Analysis depth: month-over-month category trends, top merchants, income vs. spending trend; deterministic recurring/subscription detection (read-only band — never invents transactions).
+- [ ] #190 — Mobile fixes (+ #192 if the advisor surface stays routed).
 
 **Done criteria:** A production institution syncs daily unattended ≥2 weeks including one forced re-auth. ≥90% of new transactions land categorized (map+rules+AI) with AI never overriding manual/rule picks. Insights answers trend/merchant/recurring questions.
 
 ## M15 — Combined Asset View GA (Milestone B)
 
-**Goal:** Net worth you can defend — every number traceable to positions × prices, every unexplained delta visible.
+**Goal:** Net worth you can defend — every number traceable to positions × prices, every unexplained delta visible. Tracked in epic #385.
 
-- [ ] Extend scheduled sync to balances + holdings; verify liability (credit card/loan) reconciliation signs; per-account "as of" provenance.
-- [ ] **Reconciliation view** per account: balance-observation history, fold-vs-reported, every `opening_balance`/`adjustment` row linked to its causing observation.
-- [ ] Unexplained-delta flag: adjustments above a threshold mark the account "needs attention" (adjustments are suspense entries to explain, not absorb).
-- [ ] Transfer-matching pass proposing `is_transfer` pairs (opposite amounts, ±N days, cross-account).
-- [ ] Equity/ETF price provider behind the ADR-0014 seam (keyless default, keyed opt-in) + scheduled refresh.
-- [ ] Tier-1 manual price entry (finishes #352 properly): asset-level "set price" endpoint + UI, `source='manual'`.
-- [ ] Historical net worth from observation + price history; date-range selector; asset-class drill-in.
+- [ ] #369 — Extend scheduled sync to balances + holdings; verify liability (credit card/loan) reconciliation signs; per-account "as of" provenance.
+- [ ] #370 — **Reconciliation view** per account (balance-observation history, fold-vs-reported, every `opening_balance`/`adjustment` row linked to its causing observation) + unexplained-delta flag: adjustments above a threshold mark the account "needs attention" (adjustments are suspense entries to explain, not absorb).
+- [ ] #371 — Transfer-matching pass proposing `is_transfer` pairs (opposite amounts, ±N days, cross-account).
+- [ ] #372 — Equity/ETF price provider behind the ADR-0014 seam (keyless default, keyed opt-in) + scheduled refresh.
+- [ ] #373 — Tier-1 manual price entry (finishes #352 properly): asset-level "set price" endpoint + UI, `source='manual'`.
+- [ ] #374 — Historical net worth from observation + price history; date-range selector; asset-class drill-in.
 
 **Done criteria:** Mixed cash/brokerage/crypto/multi-currency portfolio shows complete, unflagged net worth after scheduled refresh with zero manual re-import. A deliberately skipped statement surfaces as a flagged unexplained delta, never a silent number change.
 
 ## M16 — Statement Import GA (Milestone C)
 
-**Goal:** A non-Plaid institution is first-class: one PDF a month keeps accounts, balances, and positions current.
+**Goal:** A non-Plaid institution is first-class: one PDF a month keeps accounts, balances, and positions current. Tracked in epic #386.
 
-- [ ] Positions + statement-balance extraction (extends ADR-0019): `ParsedPosition[]` alongside `ParsedRow[]`; deterministic re-validation; commit path reconciles via the existing `ReconcilePosition`; preview shows txns + positions + resulting adjustments.
+- [ ] #375 — Positions + statement-balance extraction (extends ADR-0019): `ParsedPosition[]` alongside `ParsedRow[]`; deterministic re-validation; commit path reconciles via the existing `ReconcilePosition`; preview shows txns + positions + resulting adjustments.
 - [ ] #336 — Ollama vision extractor (image-only first; PDF stays Claude-only, documented) for zero-egress import.
-- [ ] Import ergonomics: per-account import history with doc-total reconciliation results; duplicate-statement detection via content hash.
+- [ ] #376 — Import ergonomics: per-account import history with doc-total reconciliation results; duplicate-statement detection via content hash.
 
 **Done criteria:** A brokerage PDF from an unsupported institution yields transactions + positions + a reconciled balance through preview→commit; re-import is a no-op; an Ollama-only user imports statement photos with zero egress.
 
 ## M17 — Family & Plans GA (Milestones D + E + F)
 
-**Goal:** The already-built household + budgets/goals surfaces get mechanical proof and the last UX gaps. Parallelizable after M13.
+**Goal:** The already-built household + budgets/goals surfaces get mechanical proof and the last UX gaps. Parallelizable after M13. Tracked in epic #387.
 
-- [ ] Promote QA suites 6 (household privacy) + 7 (member lifecycle) to required CI.
-- [ ] Invite UX: copyable invite link + surfaced expiry (no SMTP dependency).
-- [ ] Two-user concurrent-sync race test (per-user Plaid item/ingestion isolation).
-- [ ] Household Insights parity: aggregator privacy tests extended to allocation/net-worth bands (`balance_only` vs `balance_and_txns`).
-- [ ] E: verify/fix budget `rollover` (or remove the column), near/over-budget notification via the M13 notifier, goal contribution history.
-- [ ] F: per-member contribution attribution where visibility permits; shared over-budget alerts honoring `balance_only` exclusions; acceptance coverage.
+- [ ] #377 — Promote QA suites 6 (household privacy) + 7 (member lifecycle) to required CI.
+- [ ] #378 — Invite UX: copyable invite link + surfaced expiry (no SMTP dependency).
+- [ ] #379 — Two-user concurrent-sync race test (per-user Plaid item/ingestion isolation).
+- [ ] #380 — Household Insights parity: aggregator privacy tests extended to allocation/net-worth bands (`balance_only` vs `balance_and_txns`).
+- [ ] #381 — E: verify/fix budget `rollover` (or remove the column), near/over-budget notification via the M13 notifier, goal contribution history.
+- [ ] #382 — F: per-member contribution attribution where visibility permits; shared over-budget alerts honoring `balance_only` exclusions; acceptance coverage.
 
 **Done criteria:** QA.md suites 1–9 green in CI (cold-start stays opt-in). A two-user family runs both books + a shared budget/goal for a full statement cycle with correct aggregates and zero privacy-test regressions.
 
