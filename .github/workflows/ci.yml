@@ -81,6 +81,40 @@ jobs:
         # DATABASE_URL, so parallel packages step on each other's rows.
         run: go test -race -p 1 ./...
 
+  migration-roundtrip:
+    name: Migration round-trip (up→down→up)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: offbook
+          POSTGRES_PASSWORD: offbook
+          POSTGRES_DB: offbook_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U offbook"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgres://offbook:offbook@localhost:5432/offbook_test?sslmode=disable
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      # Asserts every migration reverses cleanly and seed data re-lands (#358).
+      # Runs against the throwaway offbook_test DB — the tool refuses any other.
+      - name: Migration round-trip
+        run: go run ./cmd/migrate-roundtrip
+
   schema-check:
     name: Schema report up-to-date
     runs-on: ubuntu-latest

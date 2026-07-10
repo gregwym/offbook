@@ -19,7 +19,7 @@ HEALTH_URL  = http://localhost:$(PORT)/api/v1/health
 # DATABASE_URL on either if you need to point at a non-local Postgres.
 TEST_DATABASE_URL ?= postgres://offbook:offbook@localhost:5432/offbook_test?sslmode=disable
 
-.PHONY: help dev stop restart smoke test test-v test-fast lint vet build verify contract-check schema schema-check clean routes logs
+.PHONY: help dev stop restart smoke test test-v test-fast lint vet build verify contract-check schema schema-check migrate-roundtrip clean routes logs
 
 # Checked-in schema report (#304). Regenerated from the migrated DB by
 # cmd/schema-report; CI enforces it via schema-check.
@@ -40,6 +40,7 @@ help:
 	@echo "make contract-check - assert every frontend apiClient URL maps to a registered backend route (#273)"
 	@echo "make schema     - regenerate $(SCHEMA_FILE) from the migrated DB (#304)"
 	@echo "make schema-check - fail if $(SCHEMA_FILE) is stale vs the migrations (CI mirror)"
+	@echo "make migrate-roundtrip - assert every migration reverses cleanly: up->down->up + seed integrity (#358)"
 	@echo "make routes     - print routes from the last server log"
 	@echo "make logs       - tail $(LOGFILE)"
 
@@ -111,6 +112,8 @@ verify:
 	@$(MAKE) test
 	@echo "== schema check =="
 	@$(MAKE) schema-check
+	@echo "== migration round-trip =="
+	@$(MAKE) migrate-roundtrip
 	@if [ -d ../frontend ] && [ -f ../frontend/package.json ]; then \
 		echo "== frontend lint =="; \
 		(cd ../frontend && pnpm lint) || exit 1; \
@@ -144,6 +147,14 @@ schema:
 schema-check:
 	@APP_ENV=test DATABASE_URL='$(TEST_DATABASE_URL)' go run ./cmd/migrate up >/dev/null
 	@APP_ENV=test DATABASE_URL='$(TEST_DATABASE_URL)' go run ./cmd/schema-report --check --out $(SCHEMA_FILE)
+
+# Migration reversibility gate (#358). Runs against offbook_test only (the tool
+# refuses any other DB — it drops every table): reset → up → down → up, asserting
+# clean completion and that seed data (system categories, plaid_category_map)
+# re-lands. This is what makes down-migrations a trustworthy rollback tool and
+# ends the pre-prod "wipe and rebuild" era. It leaves the DB at head.
+migrate-roundtrip:
+	@APP_ENV=test DATABASE_URL='$(TEST_DATABASE_URL)' go run ./cmd/migrate-roundtrip
 
 logs:
 	@tail -f $(LOGFILE)
