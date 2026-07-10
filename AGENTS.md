@@ -36,6 +36,12 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 8. Commit, push, `gh pr create --body "Closes #{issue-number}"`.
 9. Move to next issue.
 
+**Large multi-milestone delivery (production-readiness plan):** when working the
+M13–M17 program from `docs/PRODUCTION-READINESS.md`, follow the self-paced,
+model-tiered loop defined in [`docs/dev/autonomous-delivery.md`](docs/dev/autonomous-delivery.md)
+— it pins the delivery order, the Opus/Sonnet/Fable tiering, and the quota-bound
+pacing so an autonomous session can resume the program across quota windows.
+
 ## Autonomous QA
 - QA is manually triggered only. Do not run a standalone QA pass unless the user explicitly asks for it.
 - The same agent session should not be both developer and QA for the same change. Developer agents may run targeted verification, but they do not QA-certify their own work.
