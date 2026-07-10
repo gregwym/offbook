@@ -12,6 +12,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/service/valuation"
 	"github.com/gregwym/offbook/backend/internal/testutil"
 )
 
@@ -105,6 +106,57 @@ func TestTradeService_Record_Buy_WritesPairAndPositions(t *testing.T) {
 		Where("user_id = ? AND account_id = ?", userID, accountID).Count(&n)
 	if n != 2 {
 		t.Errorf("got %d transactions, want 2", n)
+	}
+}
+
+// TestTradeService_Record_WritesTradePriceForValuation is the #352
+// regression: a manually recorded equity trade must write its user-entered
+// price as a Tier-1 `prices` row (source='trade') so the position values at
+// last-trade price instead of being permanently $0/partial (there is no
+// equity price provider — ADR-0014 ships only crypto + FX).
+func TestTradeService_Record_WritesTradePriceForValuation(t *testing.T) {
+	svc, userID, accountID, aapl, g := seedTradeFixture(t)
+	ctx := context.Background()
+	usdID := testutil.LookupUSDAssetID(t, g)
+	tradeDate := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+
+	rec, err := svc.Record(ctx, userID, accountID, service.RecordTradeInput{
+		Kind: "buy", AssetID: aapl,
+		Quantity: decimal.NewFromInt(10), Price: decimal.NewFromInt(150),
+		TradeDate: tradeDate,
+	})
+	if err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	// A Tier-1 price observation is written for the security quoted in the
+	// account's cash sleeve.
+	var p model.Price
+	if err := g.Where("asset_id = ? AND quote_asset_id = ? AND source = ?", aapl, usdID, "trade").
+		First(&p).Error; err != nil {
+		t.Fatalf("expected a source='trade' price row: %v", err)
+	}
+	if !p.Price.Equal(decimal.NewFromInt(150)) {
+		t.Errorf("trade price = %s, want 150", p.Price)
+	}
+	if !p.AsOf.Equal(tradeDate) {
+		t.Errorf("trade price as_of = %s, want %s", p.AsOf, tradeDate)
+	}
+
+	// Valuation now prices the equity position fresh at the trade price —
+	// never silently $0 for a fully-described manual holding.
+	val := valuation.NewService(
+		repository.NewPositionRepository(g),
+		repository.NewPriceRepository(g),
+		repository.NewAssetRepository(g),
+		repository.NewAccountRepository(g),
+	)
+	got, err := val.Value(ctx, *rec.SecurityPosition, tradeDate, usdID)
+	if err != nil {
+		t.Fatalf("value security position: %v", err)
+	}
+	if !got.Equal(decimal.NewFromInt(1500)) {
+		t.Errorf("security value = %s, want 1500", got)
 	}
 }
 
