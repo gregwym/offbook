@@ -51,37 +51,65 @@ Driven by the `/loop` skill in self-paced (no-interval) mode. Each iteration:
 Pacing: the loop is quota-bound, not time-bound. Use a long fallback wake
 (1200s+) only as a heartbeat; the real signal is subagent completion.
 
-## Delivery order — Milestone B (Epic #385 / M15)
+## Delivery scope — everything up to Milestone B
 
-Correctness prerequisites first (Phase-0 trust bugs that poison B's numbers),
-then the self-contained B issues, deferring the one that needs infra we don't
-have yet.
+Owner direction: deliver the plan **in sequence up to and including Milestone B**,
+i.e. the whole of **Phase 0 (M13) → Phase 1 (M14 / Milestone A) → Phase 2 (M15 /
+Milestone B)**. This is the plan's strict ordering ("Phase 0 first … then 1 → 2");
+it also makes #369 reachable rather than deferred, because M14 supplies the
+background sync it needs. M16/M17 (C, D/E/F) are out of scope for this run.
 
-1. **#351** (M13, trivial) — add `AND kind='flow'` to the dashboard by-category
-   query + regression test. *Fable/Sonnet.*
-2. **#352** (M13, small) — write manual/CSV trade prices as `prices` rows
-   (`source='trade'`) so equities stop valuing at $0. *Sonnet.*
-3. **#372** — equity/ETF price provider behind the ADR-0014 seam (keyless
-   default) + manual-refresh wiring. *Sonnet; Opus picks the provider + ADR note.*
-4. **#373** — Tier-1 manual price entry endpoint + UI (`source='manual'`). *Sonnet.*
-5. **#370** — per-account reconciliation view + unexplained-delta "needs
-   attention" flag (+ small acknowledge column, ADR-0017 addendum). *Opus design + Sonnet impl.*
-6. **#371** — transfer-matching pass proposing `is_transfer` pairs. *Sonnet.*
-7. **#374** — historical net worth from observation + price history; date range;
-   asset-class drill-in (needs #372/#373 price history first). *Sonnet.*
+Two issues are **human-gated** — an agent prepares them but cannot complete them
+solo; do the agent-completable slice, then stop and flag the owner:
+- **#362** Plaid production application — a real-world process (application,
+  security questionnaire, OAuth per-institution registration). Agent deliverable =
+  the application checklist/ADR + `.env.prod` wiring; actual approval is the owner's
+  and has weeks of lead time. **Start its paperwork day one; never block on it.**
+- Any step needing owner-only secrets/infra (off-host backup target, notifier
+  endpoint URL) ships with a working default + documented config seam, not a
+  fabricated credential.
 
-**Deferred out of this window:** **#369** (scheduled balance/holdings sync) depends
-on the M13 job runner (#359) and M14 background sync (#363). B's done-criteria are
-demonstrable through the manual "Refresh prices" path meanwhile; true daily
-scheduling lands when Phase-0/1 infra exists.
+### Delivery order (dependency-sequenced)
 
-**B is "shippable" when** #351, #352, #372, #373, #370, #371, #374 are merged and a
-mixed cash/brokerage/crypto/multi-currency portfolio shows a complete, unflagged
-net worth after a manual refresh, with every adjustment inspectable and a skipped
+**Phase 0 — M13 (Epic #383), strictly first; every later item inherits its guarantees.**
+1. **#351** — dashboard by-category `kind='flow'` filter + regression test. *(in flight, Sonnet)*
+2. **#352** — write trade prices as `prices` rows (`source='trade'`); unblocks equity valuation. *Sonnet.*
+3. **#358** — migration safety: expand→migrate→contract policy + up→down→up round-trip test in `make verify`. *Sonnet.* (Lands before any later migration.)
+4. **#357** — backups & restore: nightly `pg_dump`, retention, `make backup`/`make restore`, scripted restore verification. *Sonnet; Opus reviews the restore-test design.*
+5. **#359** — job runner (generalize `prices.Scheduler`): schedule household-purge + ingestion-jobs purge. **Prerequisite for #337, #363, #369.** *Opus design + Sonnet impl.*
+6. **#337** — purge stale uncommitted AI-import staging jobs (a runner #359 schedules). *Sonnet.*
+7. **#360** — monitoring & alerting: structured JSON logs + notifier seam (ntfy/webhook). **Prerequisite for #365.** *Sonnet.*
+8. **#272** — CI: acceptance baseline smoke required on PR. *Fable/Sonnet.*
+9. **#275** — CI: frontend unit-test setup (vitest + RTL + msw) + #266 regression. *Sonnet.*
+10. **#361** — deploy/rollback runbook + post-deploy SHA smoke. *Fable draft + Opus review.*
+11. **#362** — Plaid production application paperwork (human-gated; draft + flag). *Fable draft.*
+
+**Phase 1 — M14 / Milestone A (Epic #384), needs #359 scheduler + #360 notifier.**
+12. **#363** — scheduled background transaction sync per `plaid_item` (polling) + ADR. **Prerequisite for #369.** *Opus ADR + Sonnet impl.*
+13. **#364** — Plaid re-auth flow: `ITEM_LOGIN_REQUIRED` → Link update mode → resume. *Sonnet.*
+14. **#365** — sync-health UX (last-synced age) + notifier hook on item error (uses #360). *Sonnet.*
+15. **#195** — Plaid PFC taxonomy sweep into `plaid_category_map`. *Fable.*
+16. **#366** — AI auto-categorization `TransactionCategorizer` (ADR + impl; PII-banned like the advisor). *Opus ADR + Sonnet impl.*
+17. **#367** — spending-analysis depth: MoM trends, top merchants, income vs. spending. *Sonnet.*
+18. **#368** — deterministic recurring/subscription detection (read-only band). *Sonnet.*
+19. **#190** — Rules page mobile overflow. *Fable.*
+20. **#192** — AI Advisor mobile layout (only if the advisor stays routed; else skip + note). *Fable.*
+
+**Phase 2 — M15 / Milestone B (Epic #385).**
+21. **#372** — equity/ETF price provider behind the ADR-0014 seam (keyless default) + refresh wiring. *Sonnet; Opus picks provider + ADR note.*
+22. **#373** — Tier-1 manual price entry endpoint + UI (`source='manual'`). *Sonnet.*
+23. **#369** — extend scheduled sync (#363) to balances + holdings; liability signs; as-of provenance. *Sonnet.*
+24. **#370** — per-account reconciliation view + unexplained-delta flag (+ acknowledge column, ADR-0017 addendum). *Opus design + Sonnet impl.*
+25. **#371** — transfer-matching pass proposing `is_transfer` pairs. *Sonnet.*
+26. **#374** — historical net worth from observation + price history; date range; asset-class drill-in. *Sonnet.*
+
+**Up to B is "done" when** all of the above (minus the human-gated remainder of #362)
+are merged, the M13/M14/M15 epic done-criteria hold, and a mixed
+cash/brokerage/crypto/multi-currency portfolio syncs unattended and shows a
+complete, unflagged net worth with every adjustment inspectable and a skipped
 statement surfacing as a flagged unexplained delta.
 
 ## After B
 
-Continue with the epic order in `docs/PRODUCTION-READINESS.md`: Phase 0 (M13)
-backup/restore + migration-safety + CI gates are the real production blockers and
-should interleave; Phase 1 (M14) unblocks #369; Phases 3–4 (M16/M17) follow.
+M16 (Statement Import / C) and M17 (Family & Plans / D-E-F) follow the same loop;
+resume from `docs/PRODUCTION-READINESS.md` Phases 3–4 when the owner green-lights.
