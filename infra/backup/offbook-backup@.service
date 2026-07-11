@@ -1,0 +1,18 @@
+# User-level templated unit. The instance name (%i) is the FLAVOR, e.g.
+#   offbook-backup@dev    offbook-backup@prod
+#
+# Installed (not run) from the repo by infra/backup/install.sh, which
+# substitutes __OFFBOOK_REPO__ with this checkout's absolute path. Don't edit by
+# hand — re-run `command make backup-install` to regenerate.
+[Unit]
+Description=Offbook nightly backup (%i): pg_dump + restore-verify
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=OFFBOOK_FLAVOR=%i
+WorkingDirectory=__OFFBOOK_REPO__
+ExecStart=__OFFBOOK_REPO__/infra/backup/run.sh
+# A dump + scratch restore can take a while on a large DB; don't kill it early.
+TimeoutStartSec=3600

@@ -21,6 +21,9 @@ frontend/dist/
 # Database
 data/
 
+# Backups — pg_dump archives (#357). Never commit real data dumps.
+backups/
+
 # IDE
 .idea/
 .vscode/

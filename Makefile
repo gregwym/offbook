@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help verify acceptance qa-smoke qa-suite require-env ensure-env pre-deploy-backup deploy deployed-sha down teardown auto-deploy-install auto-deploy-uninstall
+.PHONY: help verify acceptance qa-smoke qa-suite require-env ensure-env pre-deploy-backup deploy deployed-sha down teardown auto-deploy-install auto-deploy-uninstall backup restore backup-verify backup-list backup-install backup-uninstall
 
 # ─── Deploy configuration (ADR-0016) ─────────────────────────────────────────
 # Near-zero config by convention. The common case — one instance, behind
@@ -43,6 +43,19 @@ OFFBOOK_FILES := $(or $(shell sed -n 's/^OFFBOOK_COMPOSE_FILES=//p' $(ENV_FILE) 
 # with the env file as the interpolation/secret source.
 COMPOSE := docker compose --env-file $(ENV_FILE) -p $(OFFBOOK_PROJECT) $(foreach f,$(OFFBOOK_FILES),-f $(f))
 
+# ─── Backup configuration (#357) ─────────────────────────────────────────────
+# Dumps land here, deliberately OUTSIDE the postgres data volume (so losing the
+# volume never loses the backups). Per-project so dev and prod don't mix.
+# Retention: keep the newest N dailies + one dump per week for M weeks.
+BACKUP_DIR ?= backups/$(OFFBOOK_PROJECT)
+BACKUP_KEEP_DAILY ?= 7
+BACKUP_KEEP_WEEKLY ?= 4
+# Exported to the infra/backup scripts so they can reach THIS instance's
+# postgres container without re-deriving the compose invocation.
+BACKUP_ENV = OFFBOOK_COMPOSE='$(COMPOSE)' OFFBOOK_PROJECT='$(OFFBOOK_PROJECT)' \
+	BACKUP_DIR='$(BACKUP_DIR)' BACKUP_KEEP_DAILY='$(BACKUP_KEEP_DAILY)' \
+	BACKUP_KEEP_WEEKLY='$(BACKUP_KEEP_WEEKLY)'
+
 ACCEPTANCE_DIR := acceptance
 ACCEPTANCE_BASE_URL ?= http://localhost:15173
 ACCEPTANCE_API_URL ?= http://localhost:18000/api/v1
@@ -61,6 +74,12 @@ help:
 	@printf '%s\n' '  command make teardown [FLAVOR=prod]      Destroy an instance: containers + volumes (DB + tailnet identity).'
 	@printf '%s\n' '  command make auto-deploy-install         Install the user-level systemd poll-and-redeploy timer.'
 	@printf '%s\n' '  command make auto-deploy-uninstall       Remove the auto-deploy timer.'
+	@printf '%s\n' '  command make backup [FLAVOR=prod]        Dump the DB now (+ prune, + off-host if configured).'
+	@printf '%s\n' '  command make backup-verify               Prove the latest dump restores (into a scratch DB).'
+	@printf '%s\n' '  command make restore BACKUP=<file>       Recover the DB from a dump (destructive; typed confirm).'
+	@printf '%s\n' '  command make backup-list                 List the dumps on hand for this instance.'
+	@printf '%s\n' '  command make backup-install              Install the user-level nightly backup timer.'
+	@printf '%s\n' '  command make backup-uninstall            Remove the nightly backup timer.'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Backend-only targets live in backend/Makefile; run them from backend/ with command make <target>.'
 
@@ -112,20 +131,18 @@ ensure-env:
 #   command make deploy                                          # dev
 #   command make deploy FLAVOR=prod                              # prod
 #   command make deploy TS_AUTHKEY=tskey-... TS_HOSTNAME=offbook # first boot
-# pre-deploy-backup: migration-safety hook (#358). Every deploy that could run a
-# migration on a data-bearing instance takes a backup FIRST — down-migrations are
-# a dev/rollback tool, not a data-recovery tool; backups are the recovery path.
-# The backup implementation is the M13 `backup` target (#357). Until that target
-# exists this is a loud no-op so deploy still works, but a data-bearing instance
-# MUST NOT run migrations without it once #357 lands. First-boot instances have
-# no data yet, so a warning there is harmless.
+# pre-deploy-backup: migration-safety hook (#358), backed by the #357 backup
+# target. Every deploy of a data-bearing instance takes a backup FIRST — a deploy
+# can run a migration, and down-migrations are a dev/rollback tool, not a
+# data-recovery tool; backups are the recovery path. On FIRST boot the postgres
+# service isn't up yet (nothing to back up), so this skips cleanly; on an update
+# it backs up and a failure aborts the deploy (don't migrate what you can't restore).
 pre-deploy-backup:
-	@if $(MAKE) -n backup >/dev/null 2>&1; then \
-		echo "Taking pre-migration backup (migration safety, #358)…"; \
+	@if [ -n "$$($(COMPOSE) ps -q postgres 2>/dev/null)" ]; then \
+		echo "Taking pre-migration backup (migration safety, #357/#358)…"; \
 		FLAVOR="$(FLAVOR)" ENV_FILE="$(ENV_FILE)" $(MAKE) backup; \
 	else \
-		echo "⚠️  No 'backup' target yet (#357) — skipping pre-migration backup." >&2; \
-		echo "   Do not run migrations on an instance holding real data until #357 lands." >&2; \
+		echo "First boot / postgres not running — nothing to back up before deploy."; \
 	fi
 
 deploy: ensure-env pre-deploy-backup
@@ -187,6 +204,43 @@ auto-deploy-install:
 
 auto-deploy-uninstall:
 	@OFFBOOK_FLAVOR="$(FLAVOR)" infra/auto-deploy/uninstall.sh
+
+# ─── Backups & restore (#357) ────────────────────────────────────────────────
+# backup: dump this instance's DB (pg_dump -Fc) to $(BACKUP_DIR), prune old
+# dumps, and (if BACKUP_REMOTE is set) copy off-host. Runs nightly via the
+# offbook-backup@<flavor>.timer; run it by hand any time before risky changes.
+backup: require-env
+	@$(BACKUP_ENV) infra/backup/backup.sh
+
+# restore: recover the DB from a dump. DESTRUCTIVE — drops & recreates the live
+# database. Guarded by a typed confirmation (skip with FORCE=1).
+#   command make restore BACKUP=backups/offbook/offbook-YYYYmmdd-HHMMSS.dump
+restore: require-env
+	@test -n "$(BACKUP)" || { echo "Set BACKUP=<file>. List them: command make backup-list" >&2; exit 2; }
+	@test -f "$(BACKUP)" || { echo "Backup file '$(BACKUP)' not found." >&2; exit 2; }
+	@if [ -z "$(FORCE)" ]; then \
+		printf '⚠️  This REPLACES the %s database with %s (all current data is lost).\n' "$(OFFBOOK_PROJECT)" "$(BACKUP)"; \
+		printf 'Type the project name (%s) to confirm: ' "$(OFFBOOK_PROJECT)"; \
+		read ans; [ "$$ans" = "$(OFFBOOK_PROJECT)" ] || { echo "Aborted."; exit 1; }; \
+	fi
+	@$(BACKUP_ENV) infra/backup/restore.sh "$(BACKUP)"
+
+# backup-verify: prove the LATEST dump restores — into a throwaway scratch DB,
+# never the live one. An unrestored backup is not a backup. Part of the nightly run.
+backup-verify: require-env
+	@$(BACKUP_ENV) infra/backup/verify.sh $(BACKUP)
+
+# backup-list: show the dumps on hand for this instance, newest last.
+backup-list:
+	@ls -lh "$(BACKUP_DIR)"/$(OFFBOOK_PROJECT)-*.dump 2>/dev/null || echo "No backups yet in $(BACKUP_DIR)."
+
+# backup-install / -uninstall: manage the user-level nightly backup timer for
+# this FLAVOR (mirrors auto-deploy). No file editing, no sudo. See infra/backup/README.md.
+backup-install:
+	@OFFBOOK_FLAVOR="$(FLAVOR)" infra/backup/install.sh
+
+backup-uninstall:
+	@OFFBOOK_FLAVOR="$(FLAVOR)" infra/backup/uninstall.sh
 
 acceptance:
 	@./scripts/qa-assert-role.sh
