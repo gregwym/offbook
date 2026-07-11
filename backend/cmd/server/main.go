@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"github.com/gregwym/offbook/backend/internal/db"
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/router"
+	"github.com/gregwym/offbook/backend/internal/service/household"
+	"github.com/gregwym/offbook/backend/internal/service/jobs"
 	"github.com/gregwym/offbook/backend/internal/service/prices"
 )
 
@@ -42,13 +45,18 @@ func main() {
 
 	r := router.New(cfg, gormDB)
 
-	// Scheduled price refresh (#338 Phase 3): daily background pass over
-	// users who opted in via Settings (ADR-0014 §3 — background egress
-	// needs stored consent). Stops with the server context below.
+	// Background job runner (#359, ADR-0020). One in-app scheduler owns every
+	// periodic maintenance task; each job logs its outcome and alerts the
+	// Notifier on failure. Stops with the server context below. The M13 notifier
+	// (#360) will replace jobs.LogNotifier here — nothing else changes.
 	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
 	defer stopScheduler()
+	runner := jobs.NewRunner(log.Printf, jobs.LogNotifier{})
+
+	// price-refresh (#338 Phase 3): daily background pass over users who opted
+	// in via Settings (ADR-0014 §3 — background egress needs stored consent).
 	settingsRepo := repository.NewUserSettingsRepository(gormDB)
-	prices.NewScheduler(
+	priceScheduler := prices.NewScheduler(
 		prices.NewService(
 			repository.NewUserRepository(gormDB),
 			repository.NewPositionRepository(gormDB),
@@ -57,7 +65,39 @@ func main() {
 			prices.NewCoinGecko(), prices.NewFrankfurter(),
 		),
 		settingsRepo.ListAutoRefreshUserIDs,
-	).Start(schedulerCtx)
+	)
+	runner.Register(jobs.Job{
+		Name:         "price-refresh",
+		Interval:     24 * time.Hour,
+		InitialDelay: time.Minute, // let boot settle before upstream calls
+		Run: func(ctx context.Context) (string, error) {
+			// RunOnce logs per-user detail and never aborts the pass on one
+			// user's provider failure; the pass itself has no fatal error.
+			priceScheduler.RunOnce(ctx)
+			return "refresh pass complete", nil
+		},
+	})
+
+	// household-purge (#359): grace-period purge is a privacy promise
+	// (ADR-0007) — it must run without the owner remembering the CLI.
+	runner.Register(jobs.Job{
+		Name:         "household-purge",
+		Interval:     24 * time.Hour,
+		InitialDelay: time.Minute,
+		Run: func(ctx context.Context) (string, error) {
+			res, err := household.RunPurge(ctx, gormDB, time.Now())
+			if err != nil {
+				return "", err
+			}
+			if res.MembersPurged == 0 && res.SharesDeleted == 0 {
+				return "nothing to purge", nil
+			}
+			return fmt.Sprintf("purged %d members, removed %d account_shares",
+				res.MembersPurged, res.SharesDeleted), nil
+		},
+	})
+
+	runner.Start(schedulerCtx)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
