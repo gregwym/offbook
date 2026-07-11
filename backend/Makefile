@@ -36,7 +36,7 @@ help:
 	@echo "make lint       - golangci-lint via Docker"
 	@echo "make vet        - go vet ./..."
 	@echo "make build      - go build ./..."
-	@echo "make verify     - full CI mirror: contract-check, backend vet+test, frontend lint+build"
+	@echo "make verify     - full CI mirror: contract-check, backend vet+test, frontend lint+test+build"
 	@echo "make contract-check - assert every frontend apiClient URL maps to a registered backend route (#273)"
 	@echo "make schema     - regenerate $(SCHEMA_FILE) from the migrated DB (#304)"
 	@echo "make schema-check - fail if $(SCHEMA_FILE) is stale vs the migrations (CI mirror)"
@@ -117,6 +117,8 @@ verify:
 	@if [ -d ../frontend ] && [ -f ../frontend/package.json ]; then \
 		echo "== frontend lint =="; \
 		(cd ../frontend && pnpm lint) || exit 1; \
+		echo "== frontend test =="; \
+		(cd ../frontend && pnpm test) || exit 1; \
 		echo "== frontend build =="; \
 		(cd ../frontend && pnpm build) || exit 1; \
 	else \
