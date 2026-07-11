@@ -12,7 +12,7 @@ must survive an app crash.
 |---|---|---|
 | `household-purge` | daily | Seals in-grace member rows whose grace window elapsed and removes their `account_shares` (privacy promise, ADR-0007). Idempotent. |
 | `price-refresh` | daily | Refreshes prices/FX for users who opted in via Settings (ADR-0014 §3). |
-| `ingestion-jobs purge` | daily *(lands with #337)* | Purges stale, uncommitted AI-import staging jobs. |
+| `ingestion-jobs-purge` | daily | Reclaims abandoned AI-import staging payloads: an `ingestion_jobs` row left at `status='extracted'` past the retention window (7 days) has its staged `extraction` JSONB nulled and moves to a terminal `failed` state. The audit row survives (append-only). |
 
 Each runs ~1 minute after boot, then every 24h, and stops on clean shutdown.
 
@@ -57,11 +57,16 @@ wired, a real notification):
 
 ## Running a job manually
 
-`household-purge` also has a standalone CLI for an out-of-band run (the in-app
-job doesn't replace it):
+Two jobs also have standalone CLIs for an out-of-band run (the in-app jobs don't
+replace them):
 
 ```sh
 cd backend && go run ./cmd/household-purge
+
+# AI-staging purge — dry-run by default; --apply to execute:
+cd backend && go run ./cmd/ingestion-jobs-purge                     # dry run
+cd backend && go run ./cmd/ingestion-jobs-purge --apply             # purge
+cd backend && go run ./cmd/ingestion-jobs-purge --retention-days 14 # custom window
 ```
 
 ## Failure handling
