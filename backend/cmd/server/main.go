@@ -15,6 +15,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/db"
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/router"
+	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/household"
 	"github.com/gregwym/offbook/backend/internal/service/jobs"
 	"github.com/gregwym/offbook/backend/internal/service/prices"
@@ -94,6 +95,24 @@ func main() {
 			}
 			return fmt.Sprintf("purged %d members, removed %d account_shares",
 				res.MembersPurged, res.SharesDeleted), nil
+		},
+	})
+
+	// ingestion-jobs-purge (#337): reclaim abandoned AI-import staging payloads
+	// (status='extracted' past retention) so their JSONB doesn't accumulate.
+	runner.Register(jobs.Job{
+		Name:         "ingestion-jobs-purge",
+		Interval:     24 * time.Hour,
+		InitialDelay: time.Minute,
+		Run: func(ctx context.Context) (string, error) {
+			res, err := service.PurgeStaleAIStaging(ctx, gormDB, time.Now(), service.DefaultAIStagingRetention)
+			if err != nil {
+				return "", err
+			}
+			if res.JobsPurged == 0 {
+				return "nothing to purge", nil
+			}
+			return fmt.Sprintf("purged %d stale AI-staging job(s)", res.JobsPurged), nil
 		},
 	})
 
