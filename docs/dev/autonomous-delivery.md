@@ -33,8 +33,9 @@ it is Sonnet or Opus, never Fable.
 
 ## The loop (one iteration = one shipped PR)
 
-The durable driver is a cloud cron routine (see **Durability** below), not the
-local `/loop` skill — but each firing runs the same iteration. Each iteration:
+The durable driver is a local launchd timer running headless `claude -p` (see
+**Durability** below), not the interactive `/loop` skill — but each firing runs
+the same iteration. Each iteration:
 
 1. **Pick** the next unchecked issue from the active epic in dependency order
    (below). Skip issues whose prerequisites are unmerged.
@@ -52,24 +53,29 @@ local `/loop` skill — but each firing runs the same iteration. Each iteration:
 Pacing: the loop is quota-bound, not time-bound. Use a long fallback wake
 (1200s+) only as a heartbeat; the real signal is subagent completion.
 
-## Durability — the engine is a cloud cron routine, not the local session
+## Durability — the engine is a local launchd timer, not a live session
 
-**The failure this section fixes:** an interactive Claude session driving the
-loop dies when the 5-hour quota cap is hit (or the laptop sleeps, or the REPL is
-closed). `ScheduleWakeup` and `CronCreate` both re-invoke *this* session and only
-fire while the local REPL is alive — so neither survives quota exhaustion. If the
-loop depends on them alone, it silently stops and never resumes.
+**The failures this section fixes.** (1) An interactive Claude session driving
+the loop dies when the 5-hour quota cap is hit (or the REPL is closed) —
+`ScheduleWakeup`/`CronCreate` only fire while that session is alive, so the loop
+silently stops. (2) The claude.ai **cloud-routine** experiment (July 2026) fixed
+the survival problem and did ship five issues, but each firing pushed
+interactive permission approvals to the owner's phone (not autonomous) and its
+sessions were unobservable in the Claude app.
 
-**The fix:** the durable driver is a **claude.ai cloud routine** (managed via the
-`RemoteTrigger` tool / the `/schedule` skill), created on the **bridge
-environment** so it executes against this repo's working tree with the local git
-+ `gh` credentials and the local Docker/Colima Postgres that `make verify` needs.
-The cloud scheduler fires it on a wall-clock cron **independently of any local
-session**. When quota is exhausted a firing no-ops (or fails cheaply) and the
-*next* scheduled firing — after the window resets — picks up exactly where the
-last left off. That is the self-healing property the local loop lacked.
+**The engine:** a user-level **macOS LaunchAgent** (`com.offbook.delivery`,
+managed by `command make delivery-install` / `delivery-uninstall`; implementation
+in [`infra/delivery-loop/`](../../infra/delivery-loop/README.md)). Every ~3 h it
+runs one headless iteration — `claude -p` with the prompt in
+`infra/delivery-loop/iteration-prompt.md`, Sonnet, `--dangerously-skip-permissions`
+so nothing ever waits on a human — inside a dedicated delivery clone
+(`~/src/offbook-delivery`), never the owner's working checkout. Logs land in
+`~/Library/Logs/offbook-delivery/`. A quota-capped firing fails cheaply and the
+next firing — after the window resets — picks up exactly where the last left
+off. That is the self-healing property: wall-clock scheduling outside any Claude
+session, on the machine where git/gh/Docker are already warm.
 
-Routine invariants (encoded in the routine's prompt):
+Iteration invariants (encoded in the iteration prompt):
 
 - **One iteration per firing.** Each firing ships *at most one* PR, then exits.
   This bounds per-firing cost and lets quota back-pressure throttle naturally —
@@ -82,20 +88,21 @@ Routine invariants (encoded in the routine's prompt):
 - **State lives in GitHub, not the session.** The epic checklists (#383/#384/#385)
   plus merged PRs are the source of truth for "what's done." A cold firing
   reconstructs position from them + this file — never from prior session memory.
-- **Cadence** ≈ every 2h so each rolling 5-hour window gets ≥2 attempts; a capped
-  firing simply retries next window. Recurring routines auto-expire after 7 days —
-  re-arm (or bump the schedule) to continue a multi-week run.
-- **Model:** the routine runs as Sonnet (the workhorse tier). Issues flagged
+- **Cadence** ≈ every 3h (tunable at install: `OFFBOOK_DELIVERY_INTERVAL`); a
+  capped firing simply retries next window. launchd persists across reboots —
+  no expiry, no re-arming.
+- **Model:** the iteration runs as Sonnet (the workhorse tier). Issues flagged
   Opus-design in the delivery order get their ADR/design slice written first, then
   implemented; money/valuation correctness is never downgraded to Fable.
 - **Human-gated stops** (#362 and any owner-secret step) are done to their
-  agent-completable slice, then the routine comments on the issue and advances —
+  agent-completable slice, then the iteration comments on the issue and advances —
   never blocks the loop.
 
 An interactive session may still hand-drive iterations (e.g. to burn a live quota
-window faster), but it must not run concurrently with the routine on the *same*
-issue — the idempotency guard above is the tie-breaker. The routine is the thing
-that guarantees the plan keeps moving when no one is watching.
+window faster), but it must not run concurrently with the timer on the *same*
+issue — the idempotency guard above is the tie-breaker. The launchd timer is the
+thing that guarantees the plan keeps moving when no one is watching. (The retired
+cloud routine `trig_01BGrffWSrKTmYrMoTETRkgD` is kept disabled as a fallback.)
 
 ## Delivery scope — everything up to Milestone B
 

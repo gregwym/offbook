@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help verify acceptance qa-smoke qa-suite require-env ensure-env pre-deploy-backup deploy deployed-sha down teardown auto-deploy-install auto-deploy-uninstall backup restore backup-verify backup-list backup-install backup-uninstall
+.PHONY: help verify acceptance qa-smoke qa-suite require-env ensure-env pre-deploy-backup deploy deployed-sha down teardown auto-deploy-install auto-deploy-uninstall backup restore backup-verify backup-list backup-install backup-uninstall delivery-install delivery-uninstall
 
 # ─── Deploy configuration (ADR-0016) ─────────────────────────────────────────
 # Near-zero config by convention. The common case — one instance, behind
@@ -80,6 +80,8 @@ help:
 	@printf '%s\n' '  command make backup-list                 List the dumps on hand for this instance.'
 	@printf '%s\n' '  command make backup-install              Install the user-level nightly backup timer.'
 	@printf '%s\n' '  command make backup-uninstall            Remove the nightly backup timer.'
+	@printf '%s\n' '  command make delivery-install            Install the launchd autonomous-delivery loop (macOS).'
+	@printf '%s\n' '  command make delivery-uninstall          Remove the delivery-loop LaunchAgent.'
 	@printf '%s\n' ''
 	@printf '%s\n' 'Backend-only targets live in backend/Makefile; run them from backend/ with command make <target>.'
 
@@ -241,6 +243,15 @@ backup-install:
 
 backup-uninstall:
 	@OFFBOOK_FLAVOR="$(FLAVOR)" infra/backup/uninstall.sh
+
+# delivery-install / -uninstall: manage the user-level launchd agent that runs
+# the autonomous delivery loop headless on the owner's Mac. See
+# infra/delivery-loop/README.md and docs/dev/autonomous-delivery.md § Durability.
+delivery-install:
+	@infra/delivery-loop/install.sh
+
+delivery-uninstall:
+	@infra/delivery-loop/uninstall.sh
 
 acceptance:
 	@./scripts/qa-assert-role.sh

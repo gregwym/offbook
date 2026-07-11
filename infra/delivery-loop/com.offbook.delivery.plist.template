@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.offbook.delivery</string>
+
+    <!-- Login shell so brew/go/node/claude land on PATH exactly as in the
+         owner's terminal — launchd's default env is nearly empty. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-l</string>
+        <string>-c</string>
+        <string>exec "__RUNNER__"</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>OFFBOOK_DELIVERY_DIR</key>
+        <string>__DELIVERY_DIR__</string>
+    </dict>
+
+    <!-- Fire every __INTERVAL__ seconds. launchd never double-starts a label,
+         so a long iteration simply absorbs the next tick. -->
+    <key>StartInterval</key>
+    <integer>__INTERVAL__</integer>
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- The runner redirects its own output to a per-iteration log; these
+         catch launchd-level failures (e.g. zsh itself failing to start). -->
+    <key>StandardOutPath</key>
+    <string>__LOG_DIR__/launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG_DIR__/launchd.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
