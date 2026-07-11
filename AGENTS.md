@@ -49,7 +49,7 @@ pacing so an autonomous session can resume the program across quota windows.
 - QA browser automation uses Playwright headless Chromium. Run from a `*-qa` worktree or set `OFFBOOK_ROLE=qa` so QA helper scripts can tell the role apart from development.
 - QA persona emails and credential derivation are defined in @docs/QA.md and are for the isolated QA stack only.
 - Follow @docs/QA.md for QA runs: use GitHub Discussion #199 as the QA Ledger, compare against the last QAed commit with `scripts/qa-last-reviewed.sh`, and include the "found at" commit when filing or commenting on bugs.
-- Acceptance tests live outside unit tests. They start as optional, manually run suites and are not merge-required until the owner explicitly promotes them.
+- Acceptance tests live outside unit tests. They start as optional, manually run suites and are not merge-required until the owner explicitly promotes them. **Exception:** `acceptance/smoke/baseline.spec.ts` is promoted — it runs as the required `QA acceptance baseline smoke` CI check on every PR (#272). Every other suite stays opt-in.
 
 ## Git Discipline
 - Auto-commit completed work without asking.

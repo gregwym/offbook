@@ -174,3 +174,66 @@ jobs:
         run: pnpm lint
       - name: Build
         run: pnpm build
+
+  qa-smoke:
+    name: QA acceptance baseline smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: acceptance/pnpm-lock.yaml
+      # Ephemeral QA secrets for this run only — never committed, never reused
+      # across runs. qa-preflight.sh refuses placeholder SESSION_SECRET values,
+      # so these must be real random ones even in CI.
+      - name: Generate QA env
+        run: |
+          cp .env.qa.example .env.qa
+          {
+            echo "SESSION_SECRET=$(openssl rand -hex 32)"
+            echo "QA_SECRET=$(openssl rand -hex 32)"
+          } >> .env.qa
+      - name: Boot QA stack
+        run: docker compose -p offbook-qa -f docker-compose.yml -f docker-compose.qa.yml up -d --build
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:18000/api/v1/health >/dev/null; then
+              echo "backend healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "backend did not become healthy in time" >&2
+          docker compose -p offbook-qa -f docker-compose.yml -f docker-compose.qa.yml logs --no-color
+          exit 1
+      - name: Install acceptance deps
+        working-directory: acceptance
+        run: pnpm install --frozen-lockfile
+      # PLAYWRIGHT_BROWSERS_PATH must match what `make qa-smoke` uses
+      # (Makefile default: acceptance/.cache/ms-playwright) or the test run
+      # can't find the browser it just installed.
+      - name: Install Playwright Chromium
+        working-directory: acceptance
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: .cache/ms-playwright
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Bootstrap QA personas
+        env:
+          OFFBOOK_ROLE: qa
+        run: node acceptance/fixtures/bootstrap.mjs
+      - name: Run baseline smoke
+        env:
+          OFFBOOK_ROLE: qa
+        run: make qa-smoke
+      - name: QA stack logs
+        if: failure()
+        run: docker compose -p offbook-qa -f docker-compose.yml -f docker-compose.qa.yml logs --no-color
+      - name: Tear down QA stack
+        if: always()
+        run: docker compose -p offbook-qa -f docker-compose.yml -f docker-compose.qa.yml down -v

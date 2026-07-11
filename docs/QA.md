@@ -271,6 +271,8 @@ Browser checks:
 
 Acceptance tests are separate from unit tests and from `make verify`. They exercise user-level product requirements through the running app and API. They start as optional, manually run checks and are not required for merging until the owner explicitly promotes them.
 
+**Exception — the baseline suite is promoted (#272).** `acceptance/smoke/baseline.spec.ts` runs as the required `QA acceptance baseline smoke` GitHub Actions check on every PR: it boots the isolated `docker-compose.qa.yml` stack, bootstraps QA personas, and visits the full public + authenticated + household route list, asserting no console errors, no runtime exceptions, and no API 4xx/5xx (the #266/#268 regression class). Every other suite (`auth/`, `plaid/`, household privacy/lifecycle, etc.) remains opt-in and manually triggered until the owner promotes it too.
+
 Location:
 
 - Browser/API acceptance tests: `acceptance/`.
