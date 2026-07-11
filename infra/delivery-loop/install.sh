@@ -54,6 +54,19 @@ UID_NUM="$(id -u)"
 launchctl bootout "gui/$UID_NUM/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$UID_NUM" "$PLIST_DST"
 
+# Claude Code ignores the repo's permissions.allow list in an untrusted
+# workspace, which starves the auto-mode iteration of its pre-approvals.
+# Trust is the owner's to grant — detect and instruct, never self-modify.
+if command -v jq >/dev/null && [ -f "$HOME/.claude.json" ]; then
+  trusted="$(jq -r --arg d "$DELIVERY_DIR" '.projects[$d].hasTrustDialogAccepted // false' "$HOME/.claude.json")"
+  if [ "$trusted" != "true" ]; then
+    echo
+    echo "⚠️  $DELIVERY_DIR is not a trusted Claude workspace — the repo allowlist"
+    echo "   will be ignored. Trust it once (owner action):"
+    echo "     cd $DELIVERY_DIR && claude   # accept the trust dialog, then exit"
+  fi
+fi
+
 echo
 echo "Installed. The loop fires every $((INTERVAL / 60)) minutes."
 echo "  runner:   $RUNNER"
