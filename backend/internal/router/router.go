@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"crypto/sha256"
+	"log"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -16,6 +17,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/service/auth"
 	"github.com/gregwym/offbook/backend/internal/service/household"
 	"github.com/gregwym/offbook/backend/internal/service/ingestion"
+	"github.com/gregwym/offbook/backend/internal/service/notify"
 	plaidsvc "github.com/gregwym/offbook/backend/internal/service/plaid"
 	"github.com/gregwym/offbook/backend/internal/service/prices"
 	"github.com/gregwym/offbook/backend/internal/service/valuation"
@@ -134,7 +136,12 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	// registers either way so the frontend gets a clear PLAID_NOT_CONFIGURED
 	// error rather than a 404.
 	plaidSyncErrRepo := repository.NewPlaidSyncErrorRepository(gormDB)
-	plaidSvc := newPlaidService(cfg, gormDB, plaidItemRepo, accountRepo, transactionRepo, plaidSyncErrRepo, assetRepo, positionRepo, piiSvc).WithRuleRepo(ruleRepo)
+	// Item sync-error alerting (#360). A separate Throttled instance from the
+	// one main.go builds for the job runner — each throttles on its own
+	// subject strings ("Plaid item sync error: <id>" vs "offbook job failed:
+	// <name>"), so independent throttle state is correct, not redundant.
+	notifier := notify.Build(cfg, log.Printf)
+	plaidSvc := newPlaidService(cfg, gormDB, plaidItemRepo, accountRepo, transactionRepo, plaidSyncErrRepo, assetRepo, positionRepo, piiSvc).WithRuleRepo(ruleRepo).WithNotifier(notifier)
 	plaidHandler := handler.NewPlaidHandler(plaidSvc)
 
 	// User settings: per-user AI provider config (Claude key, Ollama URL,

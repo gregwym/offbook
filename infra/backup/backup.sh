@@ -39,11 +39,13 @@ echo "Backing up '$(db_name)' (project $PROJECT) → $out"
 if ! pg_sh 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > "$tmp"; then
 	rm -f "$tmp"
 	echo "error: pg_dump failed" >&2
+	"$HERE/../notify/notify.sh" "offbook backup failed ($PROJECT)" "pg_dump failed or produced an empty file"
 	exit 1
 fi
 if [ ! -s "$tmp" ]; then
 	rm -f "$tmp"
 	echo "error: pg_dump produced an empty file" >&2
+	"$HERE/../notify/notify.sh" "offbook backup failed ($PROJECT)" "pg_dump failed or produced an empty file"
 	exit 1
 fi
 mv "$tmp" "$out"

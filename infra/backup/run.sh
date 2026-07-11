@@ -8,11 +8,12 @@
 #   OFFBOOK_REPO      repo checkout path (default: this script's repo root)
 #   OFFBOOK_FLAVOR    flavor -> make …  (default: dev)
 #
-# Failure handling is a SEAM for the M13 notifier (#360): on any failure we call
-# notify_failure, which today logs and, if BACKUP_NOTIFY_CMD is set, shells out
-# to it with a message. Exiting non-zero also lets systemd's OnFailure= (or the
-# journal) surface the problem. When #360 lands, point BACKUP_NOTIFY_CMD at the
-# notifier (or replace the body here) — no other change needed.
+# Failure handling: on any failure we call notify_failure, which logs and
+# delivers via infra/notify/notify.sh (the #360 ntfy/webhook seam — reads
+# NOTIFY_NTFY_URL / NOTIFY_WEBHOOK_URL from the environment) by default.
+# BACKUP_NOTIFY_CMD, if set, overrides that default with an arbitrary command
+# that receives the message as $1. Exiting non-zero also lets systemd's
+# OnFailure= (or the journal) surface the problem independently.
 set -euo pipefail
 
 REPO="${OFFBOOK_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
@@ -31,8 +32,13 @@ notify_failure() {
 	local msg="offbook backup[$FLAVOR] FAILED: $1"
 	echo "$msg" >&2
 	if [ -n "${BACKUP_NOTIFY_CMD:-}" ]; then
-		# Seam for #360. BACKUP_NOTIFY_CMD receives the message as $1.
+		# Explicit override: BACKUP_NOTIFY_CMD receives the message as $1.
 		sh -c "$BACKUP_NOTIFY_CMD" _ "$msg" || echo "backup[$FLAVOR]: notifier command failed" >&2
+	else
+		# Default (#360): deliver via the shared ntfy/webhook helper. A no-op,
+		# exit 0, when neither NOTIFY_NTFY_URL nor NOTIFY_WEBHOOK_URL is set.
+		"$REPO/infra/notify/notify.sh" "offbook backup[$FLAVOR] failed" "$msg" \
+			|| echo "backup[$FLAVOR]: notifier command failed" >&2
 	fi
 }
 

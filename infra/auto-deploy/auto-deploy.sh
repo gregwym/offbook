@@ -46,4 +46,7 @@ fi
 echo "auto-deploy[$FLAVOR]: deployed=${deployed:-none} -> origin/$BRANCH=$remote; redeploying"
 git checkout --quiet "$BRANCH"
 git merge --ff-only --quiet "origin/$BRANCH"
-make deploy FLAVOR="$FLAVOR"
+if ! make deploy FLAVOR="$FLAVOR"; then
+	"$REPO/infra/notify/notify.sh" "offbook deploy failed ($FLAVOR)" "make deploy FLAVOR=$FLAVOR failed for $REPO at $remote"
+	exit 1
+fi
