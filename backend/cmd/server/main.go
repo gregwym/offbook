@@ -13,15 +13,20 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/config"
 	"github.com/gregwym/offbook/backend/internal/db"
+	"github.com/gregwym/offbook/backend/internal/logging"
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/router"
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/service/diskspace"
 	"github.com/gregwym/offbook/backend/internal/service/household"
 	"github.com/gregwym/offbook/backend/internal/service/jobs"
+	"github.com/gregwym/offbook/backend/internal/service/notify"
 	"github.com/gregwym/offbook/backend/internal/service/prices"
 )
 
 func main() {
+	logging.Init()
+
 	cfg := config.MustLoad()
 
 	if cfg.SessionSecret == "" {
@@ -48,11 +53,13 @@ func main() {
 
 	// Background job runner (#359, ADR-0020). One in-app scheduler owns every
 	// periodic maintenance task; each job logs its outcome and alerts the
-	// Notifier on failure. Stops with the server context below. The M13 notifier
-	// (#360) will replace jobs.LogNotifier here — nothing else changes.
+	// Notifier on failure. Stops with the server context below. The M13
+	// notifier (#360) is wired here: ntfy/webhook when configured, log-only
+	// otherwise (see internal/service/notify.Build).
 	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
 	defer stopScheduler()
-	runner := jobs.NewRunner(log.Printf, jobs.LogNotifier{})
+	notifier := notify.Build(cfg, log.Printf)
+	runner := jobs.NewRunner(log.Printf, notifier)
 
 	// price-refresh (#338 Phase 3): daily background pass over users who opted
 	// in via Settings (ADR-0014 §3 — background egress needs stored consent).
@@ -113,6 +120,24 @@ func main() {
 				return "nothing to purge", nil
 			}
 			return fmt.Sprintf("purged %d stale AI-staging job(s)", res.JobsPurged), nil
+		},
+	})
+
+	// disk-space-check (#360): a full data volume degrades silently otherwise
+	// (Postgres refuses writes, backups fail) — alert well before that.
+	runner.Register(jobs.Job{
+		Name:         "disk-space-check",
+		Interval:     6 * time.Hour,
+		InitialDelay: 2 * time.Minute,
+		Run: func(ctx context.Context) (string, error) {
+			free, err := diskspace.FreePercent(cfg.DiskCheckPath)
+			if err != nil {
+				return "", fmt.Errorf("check disk space: %w", err)
+			}
+			if free < cfg.LowDiskThresholdPercent {
+				return "", fmt.Errorf("low disk space: %.1f%% free on %s (threshold %.1f%%)", free, cfg.DiskCheckPath, cfg.LowDiskThresholdPercent)
+			}
+			return fmt.Sprintf("%.1f%% free on %s", free, cfg.DiskCheckPath), nil
 		},
 	})
 

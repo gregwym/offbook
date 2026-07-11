@@ -13,6 +13,7 @@ must survive an app crash.
 | `household-purge` | daily | Seals in-grace member rows whose grace window elapsed and removes their `account_shares` (privacy promise, ADR-0007). Idempotent. |
 | `price-refresh` | daily | Refreshes prices/FX for users who opted in via Settings (ADR-0014 §3). |
 | `ingestion-jobs-purge` | daily | Reclaims abandoned AI-import staging payloads: an `ingestion_jobs` row left at `status='extracted'` past the retention window (7 days) has its staged `extraction` JSONB nulled and moves to a terminal `failed` state. The audit row survives (append-only). |
+| `disk-space-check` | every 6h | Alerts when free disk space on `DISK_CHECK_PATH` (default `/`) drops below `LOW_DISK_THRESHOLD_PCT` (default 10%). |
 
 Each runs ~1 minute after boot, then every 24h, and stops on clean shutdown.
 
@@ -28,12 +29,18 @@ Every run logs one line with a `[job]` prefix — outcome and duration on succes
 [job] household-purge: FAILED after 40ms: purge: <error>
 ```
 
-A failure also emits a distinct alert line (and, once the M13 notifier #360 is
-wired, a real notification):
+A failure also emits a distinct alert line and, when a notifier is configured
+(#360, see `docs/ops/monitoring.md`), a real push notification via ntfy and/or
+a generic webhook:
 
 ```
 [job][ALERT] offbook job failed: household-purge: purge: <error>
 ```
+
+Set `NOTIFY_NTFY_URL` and/or `NOTIFY_WEBHOOK_URL` to enable real delivery;
+neither set means alerts are logged only. Alerts are throttled per-subject
+(`NOTIFY_THROTTLE_MINUTES`, default 360) so a repeatedly failing job pages once
+per window, not every run.
 
 ### Reading the logs
 
@@ -72,6 +79,8 @@ cd backend && go run ./cmd/ingestion-jobs-purge --retention-days 14 # custom win
 ## Failure handling
 
 A job failure is logged, alerted through the `Notifier` seam, and — because
-panics are recovered per run — never crashes the server or the other jobs. Wire
-real alerting by injecting the M13 notifier (#360) in place of
-`jobs.LogNotifier` in `cmd/server/main.go`.
+panics are recovered per run — never crashes the server or the other jobs. The
+M13 notifier (#360) is wired in `cmd/server/main.go` via
+`internal/service/notify.Build(cfg, log.Printf)`, replacing `jobs.LogNotifier`;
+see `docs/ops/monitoring.md` for the full alerting surface (job failures,
+Plaid item errors, backup/deploy failures, low disk) and env vars.

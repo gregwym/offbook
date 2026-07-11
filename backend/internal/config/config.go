@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -39,6 +40,18 @@ type Config struct {
 	// provider is unavailable in the settings UI rather than fatal at boot.
 	ClaudeAPIKey  string
 	OllamaBaseURL string
+
+	// Monitoring & alerting (#360). All optional; when neither notifier URL
+	// is set, alerts are logged only (see service/notify.Build). No fatal
+	// validation here — a broken monitoring config should never block boot.
+	NotifyNtfyURL         string // NOTIFY_NTFY_URL — ntfy topic URL (ntfy.sh or self-hosted)
+	NotifyWebhookURL      string // NOTIFY_WEBHOOK_URL — generic JSON webhook
+	NotifyThrottleMinutes int    // NOTIFY_THROTTLE_MINUTES — 0 means "use the 6h default"
+
+	// LowDiskThresholdPercent and DiskCheckPath drive the disk-space-check
+	// scheduled job (#360).
+	LowDiskThresholdPercent float64 // LOW_DISK_THRESHOLD_PCT — default 10.0
+	DiskCheckPath           string  // DISK_CHECK_PATH — default "/"
 }
 
 // PlaidConfigured reports whether the Plaid surface is enabled.
@@ -128,6 +141,12 @@ func Load() (Config, error) {
 		PlaidEnv:       getenv("PLAID_ENV", "sandbox"),
 		ClaudeAPIKey:   os.Getenv("CLAUDE_API_KEY"),
 		OllamaBaseURL:  getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+
+		NotifyNtfyURL:           os.Getenv("NOTIFY_NTFY_URL"),
+		NotifyWebhookURL:        os.Getenv("NOTIFY_WEBHOOK_URL"),
+		NotifyThrottleMinutes:   getenvInt("NOTIFY_THROTTLE_MINUTES", 0),
+		LowDiskThresholdPercent: getenvFloat("LOW_DISK_THRESHOLD_PCT", 10.0),
+		DiskCheckPath:           getenv("DISK_CHECK_PATH", "/"),
 	}
 
 	if isPlaceholderSecret(cfg.SessionSecret) {
@@ -195,4 +214,33 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// getenvInt parses an optional integer env var. Empty or unparseable values
+// silently fall back to the default — these are non-fatal tuning knobs, never
+// worth blocking boot over.
+func getenvInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+// getenvFloat parses an optional float env var, same non-fatal fallback
+// behavior as getenvInt.
+func getenvFloat(key string, fallback float64) float64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return fallback
+	}
+	return f
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -169,6 +170,101 @@ func TestPlaidSync_StatusFlipsOnErrorThenClearsOnSuccess(t *testing.T) {
 	}
 	if afterOK.Cursor == nil || *afterOK.Cursor != "cursor-recovered" {
 		t.Errorf("cursor = %v, want cursor-recovered", afterOK.Cursor)
+	}
+}
+
+// recordingNotifier is a test double satisfying plaidsvc.Notifier, recording
+// every call for assertion.
+type recordingNotifier struct {
+	mu    sync.Mutex
+	calls []recordedNotification
+}
+
+type recordedNotification struct {
+	subject string
+	detail  string
+}
+
+func (n *recordingNotifier) Notify(_ context.Context, subject, detail string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.calls = append(n.calls, recordedNotification{subject: subject, detail: detail})
+}
+
+func (n *recordingNotifier) snapshot() []recordedNotification {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]recordedNotification, len(n.calls))
+	copy(out, n.calls)
+	return out
+}
+
+// TestPlaidSync_NotifiesOnErrorStatus proves the #360 wiring: when
+// SyncTransactions ends in the error path (and UpdateSyncStatus flips the
+// item to "error"), a WithNotifier-installed Notifier receives exactly one
+// Notify call whose subject contains the plaid item ID.
+func TestPlaidSync_NotifiesOnErrorStatus(t *testing.T) {
+	g := openPlaidTestDB(t)
+	userID := seedPlaidTestUser(t, g)
+	const plaidAcctID = "pacct-notify-1"
+	const plaidItemID = "item-notify"
+
+	acct := &model.Account{
+		UserID: userID, Name: "Notify Acct", InstitutionSlug: "ins_test",
+		AccountType: "checking", Currency: "USD",
+		PlaidAccountID: ptr(plaidAcctID), IsActive: true,
+	}
+	if err := g.Create(acct).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("user_id = ?", userID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, acct.ID)
+	})
+
+	srv, _ := flippableSyncServer(t, plaidAcctID)
+	client, _ := plaidsvc.NewSDKClient(plaidsvc.Config{ClientID: "cid", Secret: "csec", Env: srv.URL})
+	box, _ := crypto.NewSecretBox(newTestKey())
+	itemRepo := repository.NewPlaidItemRepository(g)
+	acctRepo := repository.NewAccountRepository(g)
+	txRepo := repository.NewTransactionRepository(g)
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
+
+	enc, _ := box.Encrypt([]byte("access-sandbox-fake"))
+	item := &model.PlaidItem{
+		UserID: userID, PlaidItemID: plaidItemID, AccessTokenEnc: enc,
+		Status: "active", LastSyncStatus: "never",
+	}
+	if err := itemRepo.Create(context.Background(), item); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+
+	fake := &recordingNotifier{}
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g).
+		WithNotifier(fake)
+
+	// First sync call hits the forced 500 → error path → notifier fires.
+	if _, err := svc.SyncTransactions(context.Background(), userID, plaidItemID); err == nil {
+		t.Fatal("sync #1: expected error from upstream 500")
+	}
+
+	calls := fake.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("notifier calls = %d, want 1 (calls: %+v)", len(calls), calls)
+	}
+	if !containsSubstring(calls[0].subject, plaidItemID) {
+		t.Errorf("notify subject = %q, want it to contain plaid item id %q", calls[0].subject, plaidItemID)
+	}
+	if calls[0].detail == "" {
+		t.Error("notify detail is empty")
+	}
+
+	// Second sync call succeeds → no additional notification.
+	if _, err := svc.SyncTransactions(context.Background(), userID, plaidItemID); err != nil {
+		t.Fatalf("sync #2: %v", err)
+	}
+	if got := len(fake.snapshot()); got != 1 {
+		t.Errorf("notifier calls after successful retry = %d, want still 1", got)
 	}
 }
 

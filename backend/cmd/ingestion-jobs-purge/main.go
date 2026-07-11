@@ -21,10 +21,13 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/config"
 	"github.com/gregwym/offbook/backend/internal/db"
+	"github.com/gregwym/offbook/backend/internal/logging"
 	"github.com/gregwym/offbook/backend/internal/service"
 )
 
 func main() {
+	logging.Init()
+
 	apply := flag.Bool("apply", false, "actually purge (default is dry-run)")
 	retentionDays := flag.Int("retention-days", 7, "purge extracted stages older than this many days")
 	flag.Parse()

@@ -16,10 +16,13 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/config"
 	"github.com/gregwym/offbook/backend/internal/db"
+	"github.com/gregwym/offbook/backend/internal/logging"
 	"github.com/gregwym/offbook/backend/internal/service/household"
 )
 
 func main() {
+	logging.Init()
+
 	cfg := config.MustLoad()
 	if cfg.DatabaseURL == "" {
 		log.Fatal("DATABASE_URL is empty")

@@ -42,6 +42,17 @@ var (
 	ErrItemNotFound = errors.New("plaid item not found")
 )
 
+// Notifier is alerted when a Plaid item's sync status enters "error" (and,
+// later, "reauth_required" — #364 can reuse this seam unchanged). Matches the
+// method shape of internal/service/jobs.Notifier and internal/service/notify.
+// Notifier by structural typing; this package deliberately does not import
+// either, to stay decoupled from the alerting implementation.
+type Notifier interface {
+	// Notify delivers a failure alert. Implementations must return promptly
+	// and must not panic.
+	Notify(ctx context.Context, subject, detail string)
+}
+
 // SyncAccountsResult summarizes what changed on a discovery run.
 // Created + updated together cover every Plaid account on the item.
 type SyncAccountsResult struct {
@@ -91,6 +102,9 @@ type Service struct {
 	// once per drain and apply them ahead of the Plaid PFC default.
 	// Nil = rules feature not wired in this build; sync still works.
 	ruleRepo repository.CategorizationRuleRepository
+	// notifier is alerted when an item's sync status flips to "error" (#360).
+	// Nil = no alerting wired; the status column is still updated either way.
+	notifier Notifier
 	// db is a deliberate exception to the "services don't see *gorm.DB"
 	// guideline. SyncTransactions needs to wrap the per-item drain in a
 	// single Postgres transaction so it can use savepoints around each
@@ -143,6 +157,25 @@ func NewService(
 func (s *Service) WithRuleRepo(r repository.CategorizationRuleRepository) *Service {
 	s.ruleRepo = r
 	return s
+}
+
+// WithNotifier wires the alerting seam for item sync errors (#360). Optional;
+// without it, sync-status transitions still happen, just without an alert.
+func (s *Service) WithNotifier(n Notifier) *Service {
+	s.notifier = n
+	return s
+}
+
+// notifyItemError alerts the wired Notifier that a Plaid item's sync just
+// entered "error" status. No-op when no notifier is wired (nil receiver or
+// nil s.notifier). Never panics — a broken alert must not affect sync itself.
+func (s *Service) notifyItemError(ctx context.Context, plaidItemID, detail string) {
+	if s == nil || s.notifier == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	subject := fmt.Sprintf("Plaid item sync error: %s", plaidItemID)
+	s.notifier.Notify(ctx, subject, detail)
 }
 
 // loadUserRules returns the user's active rules in priority order,
@@ -528,11 +561,13 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 		if r := recover(); r != nil {
 			msg := fmt.Sprintf("panic during sync: %v", r)
 			_ = s.itemRepo.UpdateSyncStatus(statusCtx, userID, item.ID, "error", &msg)
+			s.notifyItemError(statusCtx, plaidItemID, msg)
 			panic(r)
 		}
 		if retErr != nil {
 			msg := safeSyncErrorMessage(retErr)
 			_ = s.itemRepo.UpdateSyncStatus(statusCtx, userID, item.ID, "error", &msg)
+			s.notifyItemError(statusCtx, plaidItemID, msg)
 		}
 	}()
 
