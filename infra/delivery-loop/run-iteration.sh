@@ -58,6 +58,10 @@ git pull --ff-only -q || { log "FATAL: ff-only pull failed"; exit 1; }
 [ -f "$PROMPT_FILE" ] || { log "FATAL: prompt file missing at $PROMPT_FILE"; exit 1; }
 
 # ── Run one iteration, with a wall-clock watchdog ────────────────────────────
+# Headless print mode kills lingering background tasks (subagents, `--watch`es)
+# after 600s by default — that aborted a real iteration mid-implementation.
+# Wait indefinitely instead; OUR watchdog below is the runaway bound.
+export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
 log "starting iteration: model=$MODEL max=${MAX_SECONDS}s"
 claude -p "$(cat "$PROMPT_FILE")" \
   --model "$MODEL" \

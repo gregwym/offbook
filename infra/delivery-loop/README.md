@@ -61,6 +61,10 @@ tail -f ~/Library/Logs/offbook-delivery/iteration-*.log # watch a run
   is deliberately NOT used). A denied call means the iteration adapts or stops
   cleanly; it never waits on a phone prompt. Still: run this only on the
   owner's own machine.
+- **Trust the delivery clone once** (owner action; install.sh warns if
+  missing): `cd ~/src/offbook-delivery && claude`, accept the trust dialog,
+  exit. Untrusted workspaces ignore the repo's `permissions.allow` list, which
+  starves auto mode of its pre-approvals.
 - Logs older than 14 days are pruned automatically.
 
 ## Files
