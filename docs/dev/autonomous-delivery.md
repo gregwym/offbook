@@ -67,8 +67,9 @@ sessions were unobservable in the Claude app.
 managed by `command make delivery-install` / `delivery-uninstall`; implementation
 in [`infra/delivery-loop/`](../../infra/delivery-loop/README.md)). Every ~3 h it
 runs one headless iteration — `claude -p` with the prompt in
-`infra/delivery-loop/iteration-prompt.md`, Sonnet, `--dangerously-skip-permissions`
-so nothing ever waits on a human — inside a dedicated delivery clone
+`infra/delivery-loop/iteration-prompt.md`, Sonnet, `--permission-mode auto`
+(classifier-gated auto mode — never `--dangerously-skip-permissions`, owner
+decision) so nothing ever waits on a human — inside a dedicated delivery clone
 (`~/src/offbook-delivery`), never the owner's working checkout. Logs land in
 `~/Library/Logs/offbook-delivery/`. A quota-capped firing fails cheaply and the
 next firing — after the window resets — picks up exactly where the last left

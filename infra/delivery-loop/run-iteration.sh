@@ -2,9 +2,10 @@
 # One firing of the Offbook autonomous delivery loop.
 #
 # Invoked by the com.offbook.delivery LaunchAgent (see install.sh) on a
-# StartInterval cadence. Runs headless `claude -p` with permissions bypassed
-# in a DEDICATED delivery clone — never the owner's working checkout — so an
-# active dev session and the loop can't fight over branches or the index.
+# StartInterval cadence. Runs headless `claude -p` in auto mode (classifier-
+# gated, no interactive prompts — NOT skip-permissions) in a DEDICATED delivery
+# clone — never the owner's working checkout — so an active dev session and
+# the loop can't fight over branches or the index.
 #
 # Design (mirrors docs/dev/autonomous-delivery.md § Durability):
 #   * one iteration = at most one shipped PR, then exit
@@ -60,7 +61,7 @@ git pull --ff-only -q || { log "FATAL: ff-only pull failed"; exit 1; }
 log "starting iteration: model=$MODEL max=${MAX_SECONDS}s"
 claude -p "$(cat "$PROMPT_FILE")" \
   --model "$MODEL" \
-  --dangerously-skip-permissions \
+  --permission-mode auto \
   --output-format text &
 CLAUDE_PID=$!
 ( sleep "$MAX_SECONDS"; kill "$CLAUDE_PID" 2>/dev/null && echo "WATCHDOG: killed iteration after ${MAX_SECONDS}s" ) &
