@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gregwym/offbook/backend/internal/config"
+	"github.com/gregwym/offbook/backend/internal/crypto"
 	"github.com/gregwym/offbook/backend/internal/db"
 	"github.com/gregwym/offbook/backend/internal/logging"
 	"github.com/gregwym/offbook/backend/internal/repository"
@@ -21,6 +22,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/service/household"
 	"github.com/gregwym/offbook/backend/internal/service/jobs"
 	"github.com/gregwym/offbook/backend/internal/service/notify"
+	plaidsvc "github.com/gregwym/offbook/backend/internal/service/plaid"
 	"github.com/gregwym/offbook/backend/internal/service/prices"
 )
 
@@ -122,6 +124,58 @@ func main() {
 			return fmt.Sprintf("purged %d stale AI-staging job(s)", res.JobsPurged), nil
 		},
 	})
+
+	// plaid-transaction-sync (#363, docs/ADR/0021): daily jittered polling
+	// pass over every active plaid_item, since a Tailscale-private host
+	// can't receive Plaid webhooks (ADR-0016). Builds its own plaid.Service
+	// instance — the same construction router.go's newPlaidService and
+	// cmd/plaid-resync already duplicate — so the job runner doesn't share
+	// mutable state with the HTTP-facing service. No-op when Plaid isn't
+	// configured on this instance.
+	if cfg.PlaidConfigured() {
+		plaidClient, err := plaidsvc.NewSDKClient(plaidsvc.Config{
+			ClientID: cfg.PlaidClientID,
+			Secret:   cfg.PlaidSecret,
+			Env:      cfg.PlaidEnv,
+		})
+		if err != nil {
+			log.Fatalf("plaid: sdk client: %v", err)
+		}
+		plaidBox, err := crypto.NewSecretBox(cfg.PlaidTokenKey)
+		if err != nil {
+			log.Fatalf("plaid: secretbox: %v", err)
+		}
+		plaidMapper, err := plaidsvc.NewCategoryMapper(context.Background(), repository.NewPlaidCategoryMapRepository(gormDB))
+		if err != nil {
+			log.Fatalf("plaid: load category map: %v", err)
+		}
+		plaidAccountRepo := repository.NewAccountRepository(gormDB)
+		plaidAssetRepo := repository.NewAssetRepository(gormDB)
+		plaidPositionRepo := repository.NewPositionRepository(gormDB)
+		plaidPiiSvc := service.NewPIIService(
+			repository.NewPIIRepository(gormDB),
+			service.NewAccountService(gormDB, plaidAccountRepo, plaidAssetRepo, plaidPositionRepo),
+		)
+		plaidItemRepo := repository.NewPlaidItemRepository(gormDB)
+		plaidSyncSvc := plaidsvc.NewService(
+			plaidClient, plaidBox, plaidItemRepo, plaidAccountRepo,
+			repository.NewTransactionRepository(gormDB),
+			repository.NewPlaidSyncErrorRepository(gormDB),
+			plaidAssetRepo, plaidPositionRepo, plaidPiiSvc, plaidMapper, gormDB,
+		).WithRuleRepo(repository.NewCategorizationRuleRepository(gormDB)).
+			WithNotifier(notify.Build(cfg, log.Printf))
+
+		plaidScheduler := plaidsvc.NewSyncScheduler(plaidSyncSvc, plaidItemRepo)
+		runner.Register(jobs.Job{
+			Name:         "plaid-transaction-sync",
+			Interval:     24 * time.Hour,
+			InitialDelay: 3 * time.Minute,
+			Run: func(ctx context.Context) (string, error) {
+				res := plaidScheduler.RunOnce(ctx)
+				return fmt.Sprintf("synced %d, skipped %d, failed %d", res.Synced, res.Skipped, res.Failed), nil
+			},
+		})
+	}
 
 	// disk-space-check (#360): a full data volume degrades silently otherwise
 	// (Postgres refuses writes, backups fail) — alert well before that.
