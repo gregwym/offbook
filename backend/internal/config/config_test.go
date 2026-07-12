@@ -181,3 +181,49 @@ func TestLoad_ProdRequiresExplicitDatabaseURL(t *testing.T) {
 		t.Fatal("want error when APP_ENV=prod and DATABASE_URL is empty; got nil")
 	}
 }
+
+// TestLoad_PlaidProductionEnv smoke-tests the PLAID_ENV=production config
+// path (#362): a self-hoster's own production credentials load the same way
+// sandbox credentials do, and PlaidConfigured()/PlaidEnv reflect production
+// once the required trio (client ID, secret, token key) is present.
+func TestLoad_PlaidProductionEnv(t *testing.T) {
+	t.Setenv("APP_ENV", AppEnvProd)
+	t.Setenv("DATABASE_URL", "postgres://prod:prod@db.internal/offbook?sslmode=require")
+	t.Setenv("SESSION_SECRET", "a-real-generated-secret")
+	t.Setenv("PLAID_CLIENT_ID", "prod-client-id")
+	t.Setenv("PLAID_SECRET", "prod-secret")
+	t.Setenv("PLAID_ENV", "production")
+	t.Setenv("PLAID_TOKEN_KEY", strings.Repeat("ab", 32)) // 32 bytes hex-encoded
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PlaidEnv != "production" {
+		t.Errorf("PlaidEnv = %q, want %q", cfg.PlaidEnv, "production")
+	}
+	if !cfg.PlaidConfigured() {
+		t.Error("PlaidConfigured() = false, want true with client ID + secret + 32-byte token key set")
+	}
+	if len(cfg.PlaidTokenKey) != 32 {
+		t.Errorf("PlaidTokenKey length = %d, want 32", len(cfg.PlaidTokenKey))
+	}
+}
+
+// TestLoad_PlaidProductionEnvRequiresTokenKey mirrors the sandbox-path
+// validation but for production: an operator can't accidentally run
+// production Plaid without the encryption key any more than they can in
+// sandbox (ADR-0010 applies uniformly across PLAID_ENV values).
+func TestLoad_PlaidProductionEnvRequiresTokenKey(t *testing.T) {
+	t.Setenv("APP_ENV", AppEnvProd)
+	t.Setenv("DATABASE_URL", "postgres://prod:prod@db.internal/offbook?sslmode=require")
+	t.Setenv("SESSION_SECRET", "a-real-generated-secret")
+	t.Setenv("PLAID_CLIENT_ID", "prod-client-id")
+	t.Setenv("PLAID_SECRET", "prod-secret")
+	t.Setenv("PLAID_ENV", "production")
+	t.Setenv("PLAID_TOKEN_KEY", "")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PLAID_TOKEN_KEY") {
+		t.Fatalf("Load error = %v, want PLAID_TOKEN_KEY error", err)
+	}
+}
