@@ -13,9 +13,10 @@ must survive an app crash.
 | `household-purge` | daily | Seals in-grace member rows whose grace window elapsed and removes their `account_shares` (privacy promise, ADR-0007). Idempotent. |
 | `price-refresh` | daily | Refreshes prices/FX for users who opted in via Settings (ADR-0014 §3). |
 | `ingestion-jobs-purge` | daily | Reclaims abandoned AI-import staging payloads: an `ingestion_jobs` row left at `status='extracted'` past the retention window (7 days) has its staged `extraction` JSONB nulled and moves to a terminal `failed` state. The audit row survives (append-only). |
+| `plaid-transaction-sync` | daily, jittered 0–30min | Polls `/transactions/sync` for every active `plaid_item` across every user — a Tailscale-private host can't receive Plaid webhooks ([ADR-0021](../ADR/0021-plaid-polling-sync.md)). Per-item isolated; skips items already mid-sync or in `error` status (needs #364's re-auth flow first). No-op when Plaid isn't configured on this instance. |
 | `disk-space-check` | every 6h | Alerts when free disk space on `DISK_CHECK_PATH` (default `/`) drops below `LOW_DISK_THRESHOLD_PCT` (default 10%). |
 
-Each runs ~1 minute after boot, then every 24h, and stops on clean shutdown.
+Each runs ~1 to 3 minutes after boot, then on its interval, and stops on clean shutdown.
 
 ## How to see when a job last ran
 

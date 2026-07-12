@@ -31,6 +31,23 @@ type PlaidItemRepository interface {
 	// the rest of the sync, so there's no separate UpdateSyncStatus('ok').
 	UpdateSyncStatus(ctx context.Context, userID, id int64, status string, syncError *string) error
 	SoftDelete(ctx context.Context, userID, id int64) error
+	// ListAllActive returns every non-deleted, status='active' plaid_item
+	// across all users, ordered by id. It exists for the scheduled background
+	// sync job (#363) — the one caller expected to iterate cross-user, the
+	// same pattern UserSettingsRepository.ListAutoRefreshUserIDs and
+	// household.RunPurge already use for their own periodic jobs. Every other
+	// read on this repository stays scoped to a single session's user_id.
+	ListAllActive(ctx context.Context) ([]model.PlaidItem, error)
+	// TryStartSync atomically flips last_sync_status to 'syncing' unless it
+	// is already 'syncing' or 'error' ('error' is skipped until #364's
+	// re-auth flow lands — retrying it blind would just retry-storm a
+	// broken item). Returns false (no error) when the CAS didn't apply,
+	// meaning the caller should skip this item this pass. The scheduled
+	// sync job (#363) uses this to avoid racing a concurrent manual resync
+	// of the same item; SyncTransactions itself still calls
+	// UpdateSyncStatus("syncing", ...) right after, which is a harmless
+	// idempotent overwrite.
+	TryStartSync(ctx context.Context, userID, id int64) (bool, error)
 }
 
 type plaidItemRepo struct {
@@ -137,6 +154,28 @@ func (r *plaidItemRepo) UpdateSyncStatus(ctx context.Context, userID, id int64, 
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *plaidItemRepo) ListAllActive(ctx context.Context) ([]model.PlaidItem, error) {
+	var items []model.PlaidItem
+	if err := r.db.WithContext(ctx).
+		Where("status = ?", "active").
+		Order("id").
+		Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *plaidItemRepo) TryStartSync(ctx context.Context, userID, id int64) (bool, error) {
+	res := r.db.WithContext(ctx).
+		Model(&model.PlaidItem{}).
+		Where("user_id = ? AND id = ? AND last_sync_status NOT IN (?, ?)", userID, id, "syncing", "error").
+		Updates(map[string]any{"last_sync_status": "syncing"})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
 }
 
 func (r *plaidItemRepo) SoftDelete(ctx context.Context, userID, id int64) error {

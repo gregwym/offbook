@@ -93,6 +93,8 @@ func (r *fakeRepo) UpdateCursor(context.Context, int64, int64, string, time.Time
 func (r *fakeRepo) UpdateSyncStatus(context.Context, int64, int64, string, *string) error {
 	return nil
 }
+func (r *fakeRepo) ListAllActive(context.Context) ([]model.PlaidItem, error) { return nil, nil }
+func (r *fakeRepo) TryStartSync(context.Context, int64, int64) (bool, error) { return true, nil }
 
 // (fakeRepo implements PlaidItemRepository — the transaction-repo methods
 // added in #62 / #63 live on a separate interface and aren't exercised here.)
