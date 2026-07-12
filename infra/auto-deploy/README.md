@@ -3,6 +3,13 @@
 Auto-redeploys an Offbook instance on a self-hosted host (e.g. a Raspberry Pi)
 whenever `origin/main` moves — **no GitHub Actions, no inbound webhook.**
 
+Every `make deploy` (this timer or a manual run) ends with a post-deploy smoke
+check and supports pinning/rolling back to a prior commit via
+`GIT_REF=<sha>`. User-facing runbook — normal deploy, failed-deploy triage,
+rollback, and the interaction with pre-migration backups — lives in
+**[docs/ops/deploy-rollback.md](../../docs/ops/deploy-rollback.md)**. This file
+covers the auto-deploy timer specifically.
+
 A user-level systemd timer polls `origin/main` every ~2 minutes. When the
 running build's SHA (reported by `GET /health`, see
 [ADR-0016](../../docs/ADR/0016-tailscale-per-instance-deployment.md) and `#310`)

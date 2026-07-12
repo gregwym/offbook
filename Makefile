@@ -70,6 +70,7 @@ help:
 	@printf '%s\n' '  command make verify              Run the backend CI mirror from backend/'
 	@printf '%s\n' '  command make deploy [FLAVOR=prod]        Deploy/update an instance (default dev). First boot only:'
 	@printf '%s\n' '                                           add TS_AUTHKEY=tskey-... TS_HOSTNAME=<name> to register the sidecar.'
+	@printf '%s\n' '  command make deploy GIT_REF=<sha>        Pin/roll back to a prior commit (see docs/ops/deploy-rollback.md).'
 	@printf '%s\n' '  command make down [FLAVOR=prod]          Stop an instance (data preserved).'
 	@printf '%s\n' '  command make teardown [FLAVOR=prod]      Destroy an instance: containers + volumes (DB + tailnet identity).'
 	@printf '%s\n' '  command make auto-deploy-install         Install the user-level systemd poll-and-redeploy timer.'
@@ -117,10 +118,11 @@ ensure-env:
 		echo "Generated a SESSION_SECRET into $(ENV_FILE)"; \
 	fi
 
-# deploy is the single command for an instance — first boot AND updates. It
-# stamps the build with the current short SHA (surfaced at GET /health and
-# Settings → About, #310), then prunes dangling images (so repeated deploys
-# don't fill the disk — matters on the Pi's SD card) and reports /health.
+# deploy is the single command for an instance — first boot, updates, AND
+# rollback/pin. It stamps the build with the current short SHA (surfaced at
+# GET /health and Settings → About, #310), then prunes dangling images (so
+# repeated deploys don't fill the disk — matters on the Pi's SD card) and
+# runs a post-deploy smoke check (#361, see below).
 #
 # It auto-detects the Tailscale sidecar:
 #   • Sidecar already up  -> app-only update: recreate ONLY backend+frontend
@@ -128,6 +130,15 @@ ensure-env:
 #   • Sidecar not up (first boot) -> bring up the FULL stack. This needs the
 #     Tailscale identity ONCE to register the node; pass it on the command line
 #     and don't store it:  make deploy TS_AUTHKEY=tskey-... TS_HOSTNAME=offbook
+#
+# GIT_REF pins/rolls back the deploy to a specific commit/tag instead of
+# whatever HEAD currently is (#361; see docs/ops/deploy-rollback.md). Compose
+# builds from the working tree, so "deploy an older build" is just "check out
+# an older commit, then deploy" — scripted here rather than inventing an
+# image registry. Refuses if the checkout has uncommitted changes (would
+# silently fold them into the "rollback"). This does NOT touch the database —
+# see the runbook for when a restore is needed instead.
+#   command make deploy GIT_REF=<sha-or-tag> [FLAVOR=prod]
 #
 # FLAVOR picks the instance:
 #   command make deploy                                          # dev
@@ -148,6 +159,19 @@ pre-deploy-backup:
 	fi
 
 deploy: ensure-env pre-deploy-backup
+	@if [ -n "$(GIT_REF)" ]; then \
+		git fetch --quiet origin >/dev/null 2>&1 || true; \
+		git rev-parse --verify --quiet "$(GIT_REF)^{commit}" >/dev/null 2>&1 || { \
+			echo "GIT_REF '$(GIT_REF)' is not a known commit/tag in this checkout (try 'git fetch origin' first)." >&2; exit 2; \
+		}; \
+		if ! git diff --quiet HEAD --; then \
+			echo "This deploy checkout has uncommitted changes — commit or stash before pinning/rolling back." >&2; exit 2; \
+		fi; \
+		echo "Pinning $(OFFBOOK_PROJECT) to $(GIT_REF)."; \
+		echo "If the auto-deploy timer is active for this flavor, pause it first — it will fast-forward back to origin/main on its next tick:"; \
+		echo "    systemctl --user disable --now offbook-deploy@$(FLAVOR).timer"; \
+		git checkout --quiet "$(GIT_REF)"; \
+	fi
 	@SHA="$$(git rev-parse --short HEAD)"; \
 	if [ -n "$$($(COMPOSE) ps -q tailscale 2>/dev/null)" ]; then \
 		echo "Deploying $(OFFBOOK_PROJECT) @ $$SHA from $(ENV_FILE) (app update; sidecar up)…"; \
@@ -168,9 +192,10 @@ deploy: ensure-env pre-deploy-backup
 		TS_AUTHKEY="$(TS_AUTHKEY)" TS_HOSTNAME="$(TS_HOSTNAME)" GIT_SHA="$$SHA" $(COMPOSE) up -d --build; \
 	fi
 	@printf 'Pruning dangling images… '; docker image prune -f | tail -1
-	@printf 'Deployed $(OFFBOOK_PROJECT) → '; \
-		$(COMPOSE) exec -T backend wget -qO- http://localhost:8000/api/v1/health 2>/dev/null && echo \
-		|| echo '(backend still starting — check /health shortly)'
+	@SHA="$$(git rev-parse --short HEAD)"; \
+		OFFBOOK_COMPOSE='$(COMPOSE)' OFFBOOK_PROJECT='$(OFFBOOK_PROJECT)' \
+		infra/deploy/post-deploy-smoke.sh "$$SHA"
+	@echo "Deployed $(OFFBOOK_PROJECT) @ $$(git rev-parse --short HEAD)."
 
 # deployed-sha: the build SHA the running backend reports at /health (#310), via
 # a container exec so it works whether or not host ports are published (prod
