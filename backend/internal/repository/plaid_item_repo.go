@@ -39,12 +39,13 @@ type PlaidItemRepository interface {
 	// read on this repository stays scoped to a single session's user_id.
 	ListAllActive(ctx context.Context) ([]model.PlaidItem, error)
 	// TryStartSync atomically flips last_sync_status to 'syncing' unless it
-	// is already 'syncing' or 'error' ('error' is skipped until #364's
-	// re-auth flow lands — retrying it blind would just retry-storm a
-	// broken item). Returns false (no error) when the CAS didn't apply,
-	// meaning the caller should skip this item this pass. The scheduled
-	// sync job (#363) uses this to avoid racing a concurrent manual resync
-	// of the same item; SyncTransactions itself still calls
+	// is already 'syncing', 'error', or 'reauth_required' — blindly retrying
+	// an item stuck in any of those would just retry-storm a broken or
+	// stale-credential item (see #364: 'reauth_required' needs a Link
+	// update-mode session, not a retry). Returns false (no error) when the
+	// CAS didn't apply, meaning the caller should skip this item this pass.
+	// The scheduled sync job (#363) uses this to avoid racing a concurrent
+	// manual resync of the same item; SyncTransactions itself still calls
 	// UpdateSyncStatus("syncing", ...) right after, which is a harmless
 	// idempotent overwrite.
 	TryStartSync(ctx context.Context, userID, id int64) (bool, error)
@@ -170,7 +171,7 @@ func (r *plaidItemRepo) ListAllActive(ctx context.Context) ([]model.PlaidItem, e
 func (r *plaidItemRepo) TryStartSync(ctx context.Context, userID, id int64) (bool, error) {
 	res := r.db.WithContext(ctx).
 		Model(&model.PlaidItem{}).
-		Where("user_id = ? AND id = ? AND last_sync_status NOT IN (?, ?)", userID, id, "syncing", "error").
+		Where("user_id = ? AND id = ? AND last_sync_status NOT IN (?, ?, ?)", userID, id, "syncing", "error", "reauth_required").
 		Updates(map[string]any{"last_sync_status": "syncing"})
 	if res.Error != nil {
 		return false, res.Error

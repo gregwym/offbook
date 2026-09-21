@@ -42,11 +42,32 @@ var (
 	ErrItemNotFound = errors.New("plaid item not found")
 )
 
-// Notifier is alerted when a Plaid item's sync status enters "error" (and,
-// later, "reauth_required" — #364 can reuse this seam unchanged). Matches the
-// method shape of internal/service/jobs.Notifier and internal/service/notify.
-// Notifier by structural typing; this package deliberately does not import
-// either, to stay decoupled from the alerting implementation.
+// reauthErrorCodes are Plaid `error_code` values that mean the stored
+// access_token's credentials are stale — retrying the same token just fails
+// forever, and only a fresh Link "update mode" session (see
+// CreateUpdateLinkToken) can resolve it. See #364.
+var reauthErrorCodes = map[string]bool{
+	"ITEM_LOGIN_REQUIRED": true,
+	"PENDING_EXPIRATION":  true,
+}
+
+// isReauthRequired reports whether the error chain contains a structured
+// Plaid error whose error_code names a credential problem that requires
+// Link update mode, as opposed to a transient/generic failure.
+func isReauthRequired(err error) bool {
+	for cur := err; cur != nil; cur = errors.Unwrap(cur) {
+		if pe, convErr := plaid.ToPlaidError(cur); convErr == nil {
+			return reauthErrorCodes[pe.ErrorCode]
+		}
+	}
+	return false
+}
+
+// Notifier is alerted when a Plaid item's sync status enters "error" or
+// "reauth_required". Matches the method shape of internal/service/jobs.Notifier
+// and internal/service/notify.Notifier by structural typing; this package
+// deliberately does not import either, to stay decoupled from the alerting
+// implementation.
 type Notifier interface {
 	// Notify delivers a failure alert. Implementations must return promptly
 	// and must not panic.
@@ -178,6 +199,19 @@ func (s *Service) notifyItemError(ctx context.Context, plaidItemID, detail strin
 	s.notifier.Notify(ctx, subject, detail)
 }
 
+// notifyItemReauth alerts the wired Notifier that a Plaid item's sync just
+// entered "reauth_required" status (#364) — distinct subject line from
+// notifyItemError so the alert is actionable ("go reconnect it") rather than
+// read as a generic failure. No-op when no notifier is wired. Never panics.
+func (s *Service) notifyItemReauth(ctx context.Context, plaidItemID, detail string) {
+	if s == nil || s.notifier == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	subject := fmt.Sprintf("Plaid item needs reconnect: %s", plaidItemID)
+	s.notifier.Notify(ctx, subject, detail)
+}
+
 // loadUserRules returns the user's active rules in priority order,
 // precompiled. Returns nil when the rule repo isn't wired or the user has
 // no rules — callers feed nil straight into MapPlaidTransaction.
@@ -207,6 +241,55 @@ func (s *Service) CreateLinkToken(ctx context.Context, userID int64) (LinkToken,
 		return LinkToken{}, ErrNotConfigured
 	}
 	return s.client.CreateLinkToken(ctx, userID)
+}
+
+// CreateUpdateLinkToken returns a link_token that launches Plaid Link in
+// update mode against plaidItemID's existing access_token — used to resolve
+// a "reauth_required" item (#364). Ownership is enforced the same way as
+// every other item-scoped call: GetByPlaidItemID is userID-scoped, so a
+// caller can't request an update-mode token for someone else's item.
+func (s *Service) CreateUpdateLinkToken(ctx context.Context, userID int64, plaidItemID string) (LinkToken, error) {
+	if !s.Configured() {
+		return LinkToken{}, ErrNotConfigured
+	}
+	item, err := s.itemRepo.GetByPlaidItemID(ctx, userID, plaidItemID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return LinkToken{}, ErrItemNotFound
+		}
+		return LinkToken{}, fmt.Errorf("plaid: lookup item: %w", err)
+	}
+	tokenBytes, err := s.box.Decrypt(item.AccessTokenEnc)
+	if err != nil {
+		return LinkToken{}, fmt.Errorf("plaid: decrypt access_token: %w", err)
+	}
+	defer zeroBytes(tokenBytes)
+	return s.client.CreateUpdateLinkToken(ctx, userID, string(tokenBytes))
+}
+
+// ResetSandboxItemLogin forces plaidItemID into ITEM_LOGIN_REQUIRED via
+// Plaid's sandbox-only /sandbox/item/reset_login, so acceptance tests can
+// exercise the #364 re-auth flow without a real bank forcing it. Callers
+// (the handler) must additionally gate this on PLAID_ENV=sandbox — Plaid's
+// own API already rejects the call outside sandbox, but failing fast avoids
+// leaking that round trip to a production caller.
+func (s *Service) ResetSandboxItemLogin(ctx context.Context, userID int64, plaidItemID string) error {
+	if !s.Configured() {
+		return ErrNotConfigured
+	}
+	item, err := s.itemRepo.GetByPlaidItemID(ctx, userID, plaidItemID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrItemNotFound
+		}
+		return fmt.Errorf("plaid: lookup item: %w", err)
+	}
+	tokenBytes, err := s.box.Decrypt(item.AccessTokenEnc)
+	if err != nil {
+		return fmt.Errorf("plaid: decrypt access_token: %w", err)
+	}
+	defer zeroBytes(tokenBytes)
+	return s.client.ResetSandboxItemLogin(ctx, string(tokenBytes))
 }
 
 // ListItems returns the user's linked Plaid items (excluding soft-deleted).
@@ -566,8 +649,13 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 		}
 		if retErr != nil {
 			msg := safeSyncErrorMessage(retErr)
-			_ = s.itemRepo.UpdateSyncStatus(statusCtx, userID, item.ID, "error", &msg)
-			s.notifyItemError(statusCtx, plaidItemID, msg)
+			if isReauthRequired(retErr) {
+				_ = s.itemRepo.UpdateSyncStatus(statusCtx, userID, item.ID, "reauth_required", &msg)
+				s.notifyItemReauth(statusCtx, plaidItemID, msg)
+			} else {
+				_ = s.itemRepo.UpdateSyncStatus(statusCtx, userID, item.ID, "error", &msg)
+				s.notifyItemError(statusCtx, plaidItemID, msg)
+			}
 		}
 	}()
 

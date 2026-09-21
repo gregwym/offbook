@@ -43,6 +43,12 @@ func (f *fakePlaidClient) FetchInvestmentTransactions(context.Context, string, t
 func (f *fakePlaidClient) FetchHoldings(context.Context, string) (plaidsvc.HoldingsResult, error) {
 	return f.holdings, nil
 }
+func (f *fakePlaidClient) CreateUpdateLinkToken(context.Context, int64, string) (plaidsvc.LinkToken, error) {
+	return plaidsvc.LinkToken{}, fmt.Errorf("not used in test")
+}
+func (f *fakePlaidClient) ResetSandboxItemLogin(context.Context, string) error {
+	return fmt.Errorf("not used in test")
+}
 
 // seedHoldingsFixture provisions a user + brokerage account + AAPL
 // asset + a starting AAPL position of 10 shares, and returns the

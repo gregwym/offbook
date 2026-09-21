@@ -21,11 +21,19 @@ import (
 //	call 1 → 500 (forces sync into the error path)
 //	call 2 → 200 with one txn, has_more=false (success path)
 //
-// All other paths 500 with an error in the body so we can verify the
-// safeSyncErrorMessage redaction path handles raw error strings (no
-// PlaidError extraction available since httptest doesn't echo their
-// canonical shape).
+// The forced failure uses a generic ITEM_ERROR code (not one of the #364
+// reauth codes) so this fixture stays a test of the *generic* error
+// lifecycle; TestPlaidSync_ReauthRequiredOnItemLoginRequired below covers
+// the reauth_required branch specifically. All other paths 500 with an
+// error in the body so we can verify the safeSyncErrorMessage redaction
+// path handles raw error strings (no PlaidError extraction available since
+// httptest doesn't echo their canonical shape).
 func flippableSyncServer(t *testing.T, plaidAcctID string) (*httptest.Server, *int32) {
+	t.Helper()
+	return flippableSyncServerWithCode(t, plaidAcctID, "INTERNAL_SERVER_ERROR")
+}
+
+func flippableSyncServerWithCode(t *testing.T, plaidAcctID, errorCode string) (*httptest.Server, *int32) {
 	t.Helper()
 	var calls int32
 	mux := http.NewServeMux()
@@ -38,7 +46,7 @@ func flippableSyncServer(t *testing.T, plaidAcctID string) (*httptest.Server, *i
 			// pluck error_code + display_message via the PlaidError path.
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"error_type":      "ITEM_ERROR",
-				"error_code":      "ITEM_LOGIN_REQUIRED",
+				"error_code":      errorCode,
 				"error_message":   "the login details of this item have changed",
 				"display_message": "Please reconnect your account.",
 				"request_id":      "req-secret-123",
@@ -265,6 +273,134 @@ func TestPlaidSync_NotifiesOnErrorStatus(t *testing.T) {
 	}
 	if got := len(fake.snapshot()); got != 1 {
 		t.Errorf("notifier calls after successful retry = %d, want still 1", got)
+	}
+}
+
+// TestPlaidSync_ReauthRequiredOnItemLoginRequired proves the #364
+// classification: an ITEM_LOGIN_REQUIRED sync failure flips the item to the
+// distinct 'reauth_required' status (not generic 'error'), and a
+// subsequent TryStartSync call skips it — retrying a stale access_token
+// blind would just retry-storm forever until the user completes Link
+// update mode.
+func TestPlaidSync_ReauthRequiredOnItemLoginRequired(t *testing.T) {
+	g := openPlaidTestDB(t)
+	userID := seedPlaidTestUser(t, g)
+	const plaidAcctID = "pacct-reauth-1"
+	const plaidItemID = "item-reauth"
+
+	acct := &model.Account{
+		UserID: userID, Name: "Reauth Acct", InstitutionSlug: "ins_test",
+		AccountType: "checking", Currency: "USD",
+		PlaidAccountID: ptr(plaidAcctID), IsActive: true,
+	}
+	if err := g.Create(acct).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("user_id = ?", userID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, acct.ID)
+	})
+
+	srv, _ := flippableSyncServerWithCode(t, plaidAcctID, "ITEM_LOGIN_REQUIRED")
+	client, _ := plaidsvc.NewSDKClient(plaidsvc.Config{ClientID: "cid", Secret: "csec", Env: srv.URL})
+	box, _ := crypto.NewSecretBox(newTestKey())
+	itemRepo := repository.NewPlaidItemRepository(g)
+	acctRepo := repository.NewAccountRepository(g)
+	txRepo := repository.NewTransactionRepository(g)
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
+
+	enc, _ := box.Encrypt([]byte("access-sandbox-fake"))
+	item := &model.PlaidItem{
+		UserID: userID, PlaidItemID: plaidItemID, AccessTokenEnc: enc,
+		Status: "active", LastSyncStatus: "never",
+	}
+	if err := itemRepo.Create(context.Background(), item); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g)
+
+	if _, err := svc.SyncTransactions(context.Background(), userID, plaidItemID); err == nil {
+		t.Fatal("expected error from forced ITEM_LOGIN_REQUIRED response")
+	}
+
+	var after model.PlaidItem
+	if err := g.First(&after, item.ID).Error; err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if after.LastSyncStatus != "reauth_required" {
+		t.Errorf("last_sync_status = %q, want reauth_required", after.LastSyncStatus)
+	}
+	if after.LastSyncError == nil || *after.LastSyncError == "" {
+		t.Fatal("last_sync_error empty")
+	}
+
+	ok, err := itemRepo.TryStartSync(context.Background(), userID, item.ID)
+	if err != nil {
+		t.Fatalf("TryStartSync: %v", err)
+	}
+	if ok {
+		t.Error("TryStartSync should skip an item stuck in reauth_required")
+	}
+}
+
+// TestPlaidSync_NotifiesOnReauthRequired proves the #364 notifier wiring:
+// entering reauth_required fires the distinct "needs reconnect" subject
+// (not the generic error subject) so an operator alert reads as
+// actionable.
+func TestPlaidSync_NotifiesOnReauthRequired(t *testing.T) {
+	g := openPlaidTestDB(t)
+	userID := seedPlaidTestUser(t, g)
+	const plaidAcctID = "pacct-reauth-notify-1"
+	const plaidItemID = "item-reauth-notify"
+
+	acct := &model.Account{
+		UserID: userID, Name: "Reauth Notify Acct", InstitutionSlug: "ins_test",
+		AccountType: "checking", Currency: "USD",
+		PlaidAccountID: ptr(plaidAcctID), IsActive: true,
+	}
+	if err := g.Create(acct).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("user_id = ?", userID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, acct.ID)
+	})
+
+	srv, _ := flippableSyncServerWithCode(t, plaidAcctID, "ITEM_LOGIN_REQUIRED")
+	client, _ := plaidsvc.NewSDKClient(plaidsvc.Config{ClientID: "cid", Secret: "csec", Env: srv.URL})
+	box, _ := crypto.NewSecretBox(newTestKey())
+	itemRepo := repository.NewPlaidItemRepository(g)
+	acctRepo := repository.NewAccountRepository(g)
+	txRepo := repository.NewTransactionRepository(g)
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
+
+	enc, _ := box.Encrypt([]byte("access-sandbox-fake"))
+	item := &model.PlaidItem{
+		UserID: userID, PlaidItemID: plaidItemID, AccessTokenEnc: enc,
+		Status: "active", LastSyncStatus: "never",
+	}
+	if err := itemRepo.Create(context.Background(), item); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+
+	fake := &recordingNotifier{}
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g).
+		WithNotifier(fake)
+
+	if _, err := svc.SyncTransactions(context.Background(), userID, plaidItemID); err == nil {
+		t.Fatal("expected error from forced ITEM_LOGIN_REQUIRED response")
+	}
+
+	calls := fake.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("notifier calls = %d, want 1 (calls: %+v)", len(calls), calls)
+	}
+	if !containsSubstring(calls[0].subject, "reconnect") {
+		t.Errorf("notify subject = %q, want it to signal reconnect (distinct from generic error)", calls[0].subject)
+	}
+	if !containsSubstring(calls[0].subject, plaidItemID) {
+		t.Errorf("notify subject = %q, want it to contain plaid item id %q", calls[0].subject, plaidItemID)
 	}
 }
 

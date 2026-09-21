@@ -88,6 +88,7 @@ POST /api/v1/households/:id/transfer-owner
 POST /api/v1/invites/:token/accept
 POST /api/v1/plaid/errors/:error_id/dismiss
 POST /api/v1/plaid/errors/:error_id/retry
+POST /api/v1/plaid/items/:item_id/sandbox/reset-login
 POST /api/v1/plaid/items/:item_id/sync-accounts
 POST /api/v1/plaid/items/:item_id/sync-holdings
 POST /api/v1/plaid/items/:item_id/sync-investment-transactions
