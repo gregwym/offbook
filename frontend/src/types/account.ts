@@ -31,9 +31,10 @@ export type Account = {
   last_sync_error: string | null
 }
 
-// SyncStatus mirrors the CHECK constraint in migration 000006 on
-// plaid_items.last_sync_status.
-export const SYNC_STATUSES = ['never', 'syncing', 'ok', 'error'] as const
+// SyncStatus mirrors the CHECK constraint in migration 000027 on
+// plaid_items.last_sync_status (widened from the original 4-state enum by
+// #364's reauth_required + the earlier ok_with_errors DLQ terminus).
+export const SYNC_STATUSES = ['never', 'syncing', 'ok', 'ok_with_errors', 'error', 'reauth_required'] as const
 export type SyncStatus = (typeof SYNC_STATUSES)[number]
 
 // Mirrors the CHECK constraint in migration 000001 + service.validAccountTypes.

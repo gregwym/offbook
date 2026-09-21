@@ -636,6 +636,14 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 	// On error/panic, the defer flips to 'error' with a user-safe message.
 	// Use a background ctx for the status writes so a request cancel doesn't
 	// leave the row stuck in 'syncing'.
+	//
+	// prevStatus is the item's status *before* this attempt — captured here
+	// so the defer can tell a fresh transition (e.g. ok -> error) apart from
+	// a retry that lands on the same status (error -> error). Only the
+	// former alerts the notifier (#365): a daily scheduler retrying a still-
+	// broken item must not re-page on every pass, only when the state
+	// actually changes.
+	prevStatus := item.LastSyncStatus
 	statusCtx := context.WithoutCancel(ctx)
 	if err := s.itemRepo.UpdateSyncStatus(statusCtx, userID, item.ID, "syncing", nil); err != nil {
 		return SyncTransactionsResult{}, fmt.Errorf("plaid: mark syncing: %w", err)
@@ -644,17 +652,23 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 		if r := recover(); r != nil {
 			msg := fmt.Sprintf("panic during sync: %v", r)
 			_ = s.itemRepo.UpdateSyncStatus(statusCtx, userID, item.ID, "error", &msg)
-			s.notifyItemError(statusCtx, plaidItemID, msg)
+			if prevStatus != "error" {
+				s.notifyItemError(statusCtx, plaidItemID, msg)
+			}
 			panic(r)
 		}
 		if retErr != nil {
 			msg := safeSyncErrorMessage(retErr)
 			if isReauthRequired(retErr) {
 				_ = s.itemRepo.UpdateSyncStatus(statusCtx, userID, item.ID, "reauth_required", &msg)
-				s.notifyItemReauth(statusCtx, plaidItemID, msg)
+				if prevStatus != "reauth_required" {
+					s.notifyItemReauth(statusCtx, plaidItemID, msg)
+				}
 			} else {
 				_ = s.itemRepo.UpdateSyncStatus(statusCtx, userID, item.ID, "error", &msg)
-				s.notifyItemError(statusCtx, plaidItemID, msg)
+				if prevStatus != "error" {
+					s.notifyItemError(statusCtx, plaidItemID, msg)
+				}
 			}
 		}
 	}()

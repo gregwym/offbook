@@ -276,6 +276,122 @@ func TestPlaidSync_NotifiesOnErrorStatus(t *testing.T) {
 	}
 }
 
+// repeatedFailureSyncServer always returns an ITEM_ERROR 500 on
+// /transactions/sync, until toggled to succeed via the returned setter. Used
+// to prove the notifier fires once on entering "error" and stays silent
+// across retries that land on the same status (#365), then fires again on
+// error -> ok -> error (a genuinely new transition).
+func repeatedFailureSyncServer(t *testing.T, plaidAcctID string) (srv *httptest.Server, succeed *atomic.Bool) {
+	t.Helper()
+	succeed = &atomic.Bool{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/transactions/sync", func(w http.ResponseWriter, r *http.Request) {
+		if succeed.Load() {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"added":       []any{},
+				"modified":    []any{},
+				"removed":     []any{},
+				"next_cursor": "cursor-ok",
+				"has_more":    false,
+				"request_id":  "req-ok",
+			})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error_type":    "ITEM_ERROR",
+			"error_code":    "INTERNAL_SERVER_ERROR",
+			"error_message": "temporary upstream failure",
+			"request_id":    "req-secret",
+		})
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected Plaid call: %s %s", r.Method, r.URL.Path)
+		http.Error(w, "unexpected", 500)
+	})
+	srv = httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	_ = plaidAcctID // kept for symmetry with the other server helpers
+	return srv, succeed
+}
+
+// TestPlaidSync_NotifiesOnceAcrossRepeatedErrorRetries proves the #365
+// requirement that a notifier fires once per *transition*, not once per
+// retry: a scheduler that keeps retrying a still-broken item every day must
+// not re-page for every failed attempt, only when the status actually
+// changes (a fresh entry into "error", or a later re-entry after recovering).
+func TestPlaidSync_NotifiesOnceAcrossRepeatedErrorRetries(t *testing.T) {
+	g := openPlaidTestDB(t)
+	userID := seedPlaidTestUser(t, g)
+	const plaidAcctID = "pacct-notify-repeat-1"
+	const plaidItemID = "item-notify-repeat"
+
+	acct := &model.Account{
+		UserID: userID, Name: "Notify Repeat Acct", InstitutionSlug: "ins_test",
+		AccountType: "checking", Currency: "USD",
+		PlaidAccountID: ptr(plaidAcctID), IsActive: true,
+	}
+	if err := g.Create(acct).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("user_id = ?", userID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, acct.ID)
+	})
+
+	srv, succeed := repeatedFailureSyncServer(t, plaidAcctID)
+	client, _ := plaidsvc.NewSDKClient(plaidsvc.Config{ClientID: "cid", Secret: "csec", Env: srv.URL})
+	box, _ := crypto.NewSecretBox(newTestKey())
+	itemRepo := repository.NewPlaidItemRepository(g)
+	acctRepo := repository.NewAccountRepository(g)
+	txRepo := repository.NewTransactionRepository(g)
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)))
+
+	enc, _ := box.Encrypt([]byte("access-sandbox-fake"))
+	item := &model.PlaidItem{
+		UserID: userID, PlaidItemID: plaidItemID, AccessTokenEnc: enc,
+		Status: "active", LastSyncStatus: "never",
+	}
+	if err := itemRepo.Create(context.Background(), item); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+
+	fake := &recordingNotifier{}
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, txRepo, repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g).
+		WithNotifier(fake)
+
+	// Attempts 1-3 all fail (never -> error, then error -> error twice more).
+	// Only the first should notify.
+	for i := 0; i < 3; i++ {
+		if _, err := svc.SyncTransactions(context.Background(), userID, plaidItemID); err == nil {
+			t.Fatalf("attempt %d: expected error from upstream 500", i+1)
+		}
+	}
+	if got := len(fake.snapshot()); got != 1 {
+		t.Fatalf("notifier calls after 3 consecutive failures = %d, want 1", got)
+	}
+
+	// Recover (error -> ok): no notification for a recovery.
+	succeed.Store(true)
+	if _, err := svc.SyncTransactions(context.Background(), userID, plaidItemID); err != nil {
+		t.Fatalf("recovery sync: %v", err)
+	}
+	if got := len(fake.snapshot()); got != 1 {
+		t.Fatalf("notifier calls after recovery = %d, want still 1", got)
+	}
+
+	// Fail again (ok -> error): a genuinely new transition, must notify again.
+	succeed.Store(false)
+	if _, err := svc.SyncTransactions(context.Background(), userID, plaidItemID); err == nil {
+		t.Fatal("expected error from upstream 500 after re-breaking")
+	}
+	if got := len(fake.snapshot()); got != 2 {
+		t.Fatalf("notifier calls after re-entering error = %d, want 2", got)
+	}
+}
+
 // TestPlaidSync_ReauthRequiredOnItemLoginRequired proves the #364
 // classification: an ITEM_LOGIN_REQUIRED sync failure flips the item to the
 // distinct 'reauth_required' status (not generic 'error'), and a
