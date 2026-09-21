@@ -2,6 +2,7 @@
 // the pages/hooks under test call. Kept in one place so a page test and the
 // hook test agree on what "the API returned something sane" looks like.
 import type { Account } from '../types/account'
+import type { AICategorizationVerdict } from '../types/aiCategorizationVerdict'
 import type { Asset } from '../types/asset'
 import type { Budget, BudgetSpend } from '../types/budget'
 import type { Category } from '../types/category'
@@ -16,8 +17,8 @@ import type {
 import type { HouseholdDetail, MembersListing } from '../types/household'
 import type { PlaidItem } from '../types/plaid'
 import type { SavingsGoal } from '../types/savingsGoal'
-import type { UserSettingsView } from '../types/userSettings'
 import type { Transaction } from '../types/transaction'
+import type { UserSettingsView } from '../types/userSettings'
 
 const now = '2026-07-01T00:00:00Z'
 
@@ -192,7 +193,10 @@ export const userSettings: UserSettingsView = {
   api_token_set: false,
   preferred_model: null,
   auto_price_refresh: false,
+  auto_categorize: false,
 }
+
+export const categorizationVerdicts: AICategorizationVerdict[] = []
 
 export const plaidItems: PlaidItem[] = []
 

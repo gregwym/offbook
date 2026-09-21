@@ -74,6 +74,12 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	ruleSvc := service.NewCategorizationRuleService(ruleRepo, categoryRepo).WithBulkApply(transactionRepo, gormDB)
 	ruleHandler := handler.NewCategorizationRuleHandler(ruleSvc)
 
+	// AI verdict cache (#366, ADR-0022 §6): read-only, populated by the
+	// scheduled categorization job (main.go), surfaced here for the
+	// frontend's "promote to rule" affordance.
+	verdictSvc := service.NewAICategorizationVerdictService(repository.NewAICategorizationVerdictRepository(gormDB))
+	verdictHandler := handler.NewAICategorizationVerdictHandler(verdictSvc)
+
 	dashboardRepo := repository.NewDashboardRepository(gormDB)
 	dashboardSvc := service.NewDashboardService(dashboardRepo, transactionRepo, userRepo, valuationSvc)
 
@@ -185,6 +191,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		assetHandler.Register(secured)
 		categoryHandler.Register(secured)
 		ruleHandler.Register(secured)
+		verdictHandler.Register(secured)
 		dashboardHandler.Register(secured)
 		priceHandler.Register(secured)
 		budgetHandler.Register(secured)

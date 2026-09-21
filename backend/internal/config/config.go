@@ -52,6 +52,13 @@ type Config struct {
 	// scheduled job (#360).
 	LowDiskThresholdPercent float64 // LOW_DISK_THRESHOLD_PCT — default 10.0
 	DiskCheckPath           string  // DISK_CHECK_PATH — default "/"
+
+	// AI transaction categorization (#366, ADR-0022 §7). Static instance-wide
+	// tuning knobs — no owner UI yet, just env vars like every other instance
+	// cap in this table.
+	AICategorizeDailyBudget         int     // AI_CATEGORIZE_DAILY_BUDGET — max Categorize() batch calls per day, instance-wide. Default 200.
+	AICategorizeBatchSize           int     // AI_CATEGORIZE_BATCH_SIZE — candidates per Categorize() call. Default 20.
+	AICategorizeConfidenceThreshold float64 // AI_CATEGORIZE_CONFIDENCE_THRESHOLD — verdicts below this are not committed. Default 0.6.
 }
 
 // PlaidConfigured reports whether the Plaid surface is enabled.
@@ -147,6 +154,10 @@ func Load() (Config, error) {
 		NotifyThrottleMinutes:   getenvInt("NOTIFY_THROTTLE_MINUTES", 0),
 		LowDiskThresholdPercent: getenvFloat("LOW_DISK_THRESHOLD_PCT", 10.0),
 		DiskCheckPath:           getenv("DISK_CHECK_PATH", "/"),
+
+		AICategorizeDailyBudget:         getenvInt("AI_CATEGORIZE_DAILY_BUDGET", 200),
+		AICategorizeBatchSize:           getenvInt("AI_CATEGORIZE_BATCH_SIZE", 20),
+		AICategorizeConfidenceThreshold: getenvFloat("AI_CATEGORIZE_CONFIDENCE_THRESHOLD", 0.6),
 	}
 
 	if isPlaceholderSecret(cfg.SessionSecret) {

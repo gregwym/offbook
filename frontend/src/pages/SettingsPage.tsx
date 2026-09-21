@@ -27,6 +27,7 @@ export function SettingsPage() {
       </div>
       <AISettingsSection />
       <PriceSettingsSection />
+      <CategorizationSettingsSection />
       <LinkedInstitutionsSection />
       <AboutSection />
     </div>
@@ -335,6 +336,90 @@ function PriceSettingsSection() {
               rates via the ECB. Only the list of symbols you hold is sent, never quantities or
               balances. Off by default; the manual “Refresh prices” button on Insights works either
               way.
+            </span>
+          </span>
+        </label>
+      </div>
+    </section>
+  )
+}
+
+// CategorizationSettingsSection owns the daily AI transaction-categorization
+// opt-in (#366, ADR-0022 §8). Same stored-consent shape as
+// PriceSettingsSection — a different egress (AI provider, not price
+// providers), kept in its own section for the same reason.
+function CategorizationSettingsSection() {
+  const [settings, setSettings] = useState<UserSettingsView | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [savedFlash, setSavedFlash] = useState(false)
+
+  useEffect(() => {
+    getUserSettings()
+      .then((v) => setSettings(v))
+      .catch((e: unknown) => setError(errMsg(e)))
+  }, [])
+
+  const toggle = async (enabled: boolean) => {
+    setSaving(true)
+    setError(null)
+    try {
+      const v = await updateUserSettings({ auto_categorize: enabled })
+      setSettings(v)
+      setSavedFlash(true)
+      window.setTimeout(() => setSavedFlash(false), 1500)
+    } catch (e) {
+      setError(errMsg(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!settings) {
+    return (
+      <section className="rounded-lg border border-gray-200 bg-white px-5 py-6 text-sm text-gray-400">
+        {error ?? 'Loading categorization settings…'}
+      </section>
+    )
+  }
+
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white">
+      <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+        <div className="flex items-center gap-2">
+          <Bot size={16} className="text-gray-500" />
+          <h2 className="text-base font-medium text-gray-900">AI Categorization</h2>
+        </div>
+        {savedFlash && (
+          <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
+            <Check size={14} /> Saved
+          </span>
+        )}
+      </div>
+
+      {error && (
+        <div className="mx-5 mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      <div className="px-5 py-4">
+        <label className="flex cursor-pointer items-start gap-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={settings.auto_categorize}
+            onChange={(e) => void toggle(e.target.checked)}
+            disabled={saving}
+          />
+          <span>
+            <span className="font-medium text-gray-800">Categorize with AI automatically (daily)</span>
+            <span className="mt-0.5 block text-xs text-gray-500">
+              Once a day, transactions your rules and Plaid couldn't place are sent to your configured
+              AI provider — merchant name and amount direction only, never account details or full
+              descriptions. AI never overrides a manual pick or a rule. Off by default; low-confidence
+              guesses are left for the "Needs review" filter on Transactions rather than committed
+              silently.
             </span>
           </span>
         </label>

@@ -19,6 +19,10 @@ type UserSettingsRepository interface {
 	// the scheduled price refresh (#338 Phase 3). Ordered by user_id so the
 	// scheduler's pass order is deterministic.
 	ListAutoRefreshUserIDs(ctx context.Context) ([]int64, error)
+	// ListAutoCategorizeUserIDs returns the ids of every user who opted in to
+	// the daily AI categorization batch pass (#366, ADR-0022 §8). Ordered by
+	// user_id so the job's pass order is deterministic.
+	ListAutoCategorizeUserIDs(ctx context.Context) ([]int64, error)
 }
 
 type userSettingsRepo struct {
@@ -45,6 +49,16 @@ func (r *userSettingsRepo) ListAutoRefreshUserIDs(ctx context.Context) ([]int64,
 	err := r.db.WithContext(ctx).
 		Model(&model.UserSettings{}).
 		Where("auto_price_refresh = TRUE").
+		Order("user_id").
+		Pluck("user_id", &ids).Error
+	return ids, err
+}
+
+func (r *userSettingsRepo) ListAutoCategorizeUserIDs(ctx context.Context) ([]int64, error) {
+	var ids []int64
+	err := r.db.WithContext(ctx).
+		Model(&model.UserSettings{}).
+		Where("auto_categorize = TRUE").
 		Order("user_id").
 		Pluck("user_id", &ids).Error
 	return ids, err

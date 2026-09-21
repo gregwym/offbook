@@ -271,7 +271,7 @@ Owner direction (July 2026): make the project production ready for six product m
 - [ ] #364 — Re-auth flow: `ITEM_LOGIN_REQUIRED`/`PENDING_EXPIRATION` → item `reauth_required` → Settings banner → Plaid Link update mode → resume.
 - [ ] #365 — Sync-health UX + notifier hook on item error (DLQ badge already shipped).
 - [ ] #195 — full Plaid PFC taxonomy sweep into `plaid_category_map`.
-- [ ] #366 — **AI auto-categorization** (new ADR): `TransactionCategorizer` capability in `service/ai` mirroring the `DocumentExtractor` seam (Claude/OpenAI-compatible/Ollama). Precedence: manual > rule > AI > plaid_default. Batch pass over uncategorized only; PII ban enforced by `noimport`-style test; confidence-gated into the existing "Needs review" flow; merchant-verdict cache + "promote to rule"; per-instance daily AI budget.
+- [x] #366 — **AI auto-categorization** (new ADR): `TransactionCategorizer` capability in `service/ai` mirroring the `DocumentExtractor` seam (Claude/OpenAI-compatible/Ollama). Precedence: manual > rule > AI > plaid_default. Batch pass over uncategorized only; PII ban enforced by `noimport`-style test; confidence-gated into the existing "Needs review" flow; merchant-verdict cache + "promote to rule"; per-instance daily AI budget.
 - [ ] #367 / #368 — Analysis depth: month-over-month category trends, top merchants, income vs. spending trend; deterministic recurring/subscription detection (read-only band — never invents transactions).
 - [ ] #190 — Mobile fixes (+ #192 if the advisor surface stays routed).
 

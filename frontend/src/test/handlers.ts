@@ -32,6 +32,7 @@ export const handlers = [
   // Transactions / rules
   http.get(`${API}/transactions`, () => list(fx.transactions)),
   http.get(`${API}/categorization-rules`, () => list(fx.rules)),
+  http.get(`${API}/categorization-verdicts`, () => list(fx.categorizationVerdicts)),
 
   // Dashboard (personal Insights band)
   http.get(`${API}/dashboard/summary`, () => item(fx.dashboardSummary)),
