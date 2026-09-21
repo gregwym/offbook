@@ -63,9 +63,9 @@ type SyncScheduleResult struct {
 // every user. Per-item isolation: one item's failure (network blip, revoked
 // consent) is logged and counted, never aborting the pass for the rest —
 // same rationale as prices.Scheduler.RunOnce. TryStartSync is the
-// concurrency guard: an item already mid-sync (manual resync in flight) or
-// sitting in 'error' (needs #364's re-auth flow first) is atomically skipped
-// rather than raced or retry-stormed.
+// concurrency guard: an item already mid-sync (manual resync in flight), in
+// generic 'error', or in 'reauth_required' (needs a Link update-mode session
+// — see #364) is atomically skipped rather than raced or retry-stormed.
 func (s *SyncScheduler) RunOnce(ctx context.Context) SyncScheduleResult {
 	var res SyncScheduleResult
 	if s.jitter > 0 {

@@ -10,8 +10,14 @@ import type {
 
 // createLinkToken issues a one-shot link_token for Plaid Link. Tokens are
 // safe to discard after one open() call; the page re-fetches on retry.
-export async function createLinkToken(): Promise<LinkTokenResponse> {
-  const res = await apiClient.post<ApiItem<LinkTokenResponse>>('/plaid/link/token')
+// Passing plaidItemID switches the token to Plaid Link "update mode" against
+// that existing item — the #364 reconnect flow — instead of creating a new
+// Item.
+export async function createLinkToken(plaidItemID?: string): Promise<LinkTokenResponse> {
+  const res = await apiClient.post<ApiItem<LinkTokenResponse>>(
+    '/plaid/link/token',
+    plaidItemID ? { plaid_item_id: plaidItemID } : undefined,
+  )
   return res.data.data
 }
 
@@ -68,4 +74,12 @@ export async function retrySyncError(errorID: number): Promise<void> {
 
 export async function dismissSyncError(errorID: number): Promise<void> {
   await apiClient.post(`/plaid/errors/${errorID}/dismiss`)
+}
+
+// resetSandboxItemLogin forces plaidItemID into ITEM_LOGIN_REQUIRED via
+// Plaid's sandbox-only endpoint. 404s on any non-sandbox instance — only
+// used by acceptance tests to exercise the #364 reconnect flow
+// deterministically, never a normal-user code path.
+export async function resetSandboxItemLogin(itemID: string): Promise<void> {
+  await apiClient.post(`/plaid/items/${encodeURIComponent(itemID)}/sandbox/reset-login`)
 }

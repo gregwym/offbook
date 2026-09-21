@@ -24,8 +24,9 @@ type PlaidItem struct {
 	Cursor          *string    `json:"-"`
 	LastSyncedAt    *time.Time `gorm:"column:last_synced_at" json:"last_synced_at,omitempty"`
 	LastSyncError   *string    `gorm:"column:last_sync_error" json:"last_sync_error,omitempty"`
-	// LastSyncStatus: 'never' | 'syncing' | 'ok' | 'error'. The lifecycle
-	// is owned by service/plaid — handlers should not write this directly.
+	// LastSyncStatus: 'never' | 'syncing' | 'ok' | 'ok_with_errors' | 'error' |
+	// 'reauth_required'. The lifecycle is owned by service/plaid — handlers
+	// should not write this directly.
 	LastSyncStatus string         `gorm:"column:last_sync_status;not null;default:never" json:"last_sync_status"`
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`

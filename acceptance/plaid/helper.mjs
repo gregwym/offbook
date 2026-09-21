@@ -70,3 +70,48 @@ export async function listTransactions(cookie) {
   if (!res.ok) throw new Error(`Offbook transactions list failed: HTTP ${res.status} ${await res.text()}`)
   return res.json()
 }
+
+export async function listPlaidItems(cookie) {
+  const res = await fetch(`${acceptanceAPIURL()}/plaid/items`, {
+    headers: { cookie },
+  })
+  if (!res.ok) throw new Error(`Offbook Plaid items list failed: HTTP ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+// resetSandboxItemLogin forces plaidItemID into ITEM_LOGIN_REQUIRED via
+// Plaid's sandbox-only /sandbox/item/reset_login, routed through Offbook's
+// own sandbox-gated endpoint (#364) rather than calling Plaid directly —
+// this exercises the same access_token lookup + ownership scoping the real
+// reconnect flow uses.
+export async function resetSandboxItemLogin(cookie, plaidItemID) {
+  const res = await fetch(`${acceptanceAPIURL()}/plaid/items/${encodeURIComponent(plaidItemID)}/sandbox/reset-login`, {
+    method: 'POST',
+    headers: { cookie },
+  })
+  if (!res.ok) throw new Error(`Offbook sandbox reset-login failed: HTTP ${res.status} ${await res.text()}`)
+}
+
+// attemptSyncTransactions is like syncPlaidTransactions but returns the raw
+// Response instead of throwing on a non-2xx status — used to observe the
+// expected failure once an item's access_token has been forced stale.
+export async function attemptSyncTransactions(cookie, plaidItemID) {
+  return fetch(`${acceptanceAPIURL()}/plaid/items/${encodeURIComponent(plaidItemID)}/sync-transactions`, {
+    method: 'POST',
+    headers: { cookie },
+  })
+}
+
+// createUpdateLinkToken requests a Plaid Link "update mode" token scoped to
+// plaidItemID — the #364 reconnect flow. Browser automation must not drive
+// the Plaid Link iframe (see docs/QA.md), so this only proves the API seam
+// that the Settings "Reconnect" CTA calls, not the full Link round trip.
+export async function createUpdateLinkToken(cookie, plaidItemID) {
+  const res = await fetch(`${acceptanceAPIURL()}/plaid/link/token`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie },
+    body: JSON.stringify({ plaid_item_id: plaidItemID }),
+  })
+  if (!res.ok) throw new Error(`Offbook update-mode link token failed: HTTP ${res.status} ${await res.text()}`)
+  return res.json()
+}

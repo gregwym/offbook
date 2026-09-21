@@ -14,10 +14,14 @@ import (
 
 type PlaidHandler struct {
 	svc *plaidsvc.Service
+	// env gates the sandbox-only reset-login endpoint (#364 acceptance
+	// tests). Plaid itself already rejects that call outside sandbox; this
+	// is a fast, clear 404 instead of a round trip to find that out.
+	env string
 }
 
-func NewPlaidHandler(s *plaidsvc.Service) *PlaidHandler {
-	return &PlaidHandler{svc: s}
+func NewPlaidHandler(s *plaidsvc.Service, plaidEnv string) *PlaidHandler {
+	return &PlaidHandler{svc: s, env: plaidEnv}
 }
 
 // Register wires the Plaid Link flow under the secured /api/v1 group.
@@ -36,11 +40,33 @@ func (h *PlaidHandler) Register(g *gin.RouterGroup) {
 	g.GET("/plaid/items/:item_id/errors", h.ListSyncErrors)
 	g.POST("/plaid/errors/:error_id/retry", h.RetrySyncError)
 	g.POST("/plaid/errors/:error_id/dismiss", h.DismissSyncError)
+	g.POST("/plaid/items/:item_id/sandbox/reset-login", h.ResetSandboxItemLogin)
+}
+
+// createLinkTokenRequest is optional — an empty/absent body requests a
+// normal (new-Item) link_token. Setting plaid_item_id switches to update
+// mode against that existing item (#364 re-auth flow).
+type createLinkTokenRequest struct {
+	PlaidItemID string `json:"plaid_item_id,omitempty"`
 }
 
 func (h *PlaidHandler) CreateLinkToken(c *gin.Context) {
 	userID := auth.MustUserID(c.Request.Context())
-	tok, err := h.svc.CreateLinkToken(c.Request.Context(), userID)
+
+	var req createLinkTokenRequest
+	// Body is optional (see struct comment) — an empty/absent body is not
+	// an error, so bind failures are deliberately swallowed here.
+	_ = c.ShouldBindJSON(&req)
+
+	var (
+		tok plaidsvc.LinkToken
+		err error
+	)
+	if req.PlaidItemID != "" {
+		tok, err = h.svc.CreateUpdateLinkToken(c.Request.Context(), userID, req.PlaidItemID)
+	} else {
+		tok, err = h.svc.CreateLinkToken(c.Request.Context(), userID)
+	}
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -51,6 +77,27 @@ func (h *PlaidHandler) CreateLinkToken(c *gin.Context) {
 			"expiration": tok.Expiration,
 		},
 	})
+}
+
+// ResetSandboxItemLogin forces the item into ITEM_LOGIN_REQUIRED via
+// Plaid's sandbox-only endpoint, so acceptance tests can exercise the #364
+// re-auth flow deterministically. 404s on any non-sandbox instance.
+func (h *PlaidHandler) ResetSandboxItemLogin(c *gin.Context) {
+	if h.env != "" && h.env != "sandbox" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found", "code": "NOT_FOUND"})
+		return
+	}
+	plaidItemID := c.Param("item_id")
+	if plaidItemID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "item_id is required", "code": "INVALID_REQUEST"})
+		return
+	}
+	userID := auth.MustUserID(c.Request.Context())
+	if err := h.svc.ResetSandboxItemLogin(c.Request.Context(), userID, plaidItemID); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 type exchangePublicTokenRequest struct {

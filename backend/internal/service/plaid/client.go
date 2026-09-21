@@ -24,6 +24,12 @@ type Client interface {
 	// stable per-user identifier for fraud signal.
 	CreateLinkToken(ctx context.Context, userID int64) (LinkToken, error)
 
+	// CreateUpdateLinkToken returns a link_token that launches Plaid Link in
+	// "update mode" against an existing Item's accessToken — used by the
+	// #364 re-auth flow to resolve a reauth_required item. Plaid's update-
+	// mode contract omits `products`.
+	CreateUpdateLinkToken(ctx context.Context, userID int64, accessToken string) (LinkToken, error)
+
 	// ExchangePublicToken trades the public_token Plaid Link returns to the
 	// frontend for the durable access_token + item_id that future API calls
 	// use. The access_token is bearer-equivalent — never log it.
@@ -54,6 +60,13 @@ type Client interface {
 	// our derived positions and adjusts on mismatch (never synthesizes
 	// transactions to bridge a gap; see ADR-0013 §3).
 	FetchHoldings(ctx context.Context, accessToken string) (HoldingsResult, error)
+
+	// ResetSandboxItemLogin forces a sandbox-environment Item into
+	// ITEM_LOGIN_REQUIRED via Plaid's sandbox-only /sandbox/item/reset_login,
+	// so acceptance tests can exercise the #364 re-auth flow without a real
+	// bank forcing it. Plaid rejects this call outside the sandbox
+	// environment; callers must additionally gate it on PLAID_ENV=sandbox.
+	ResetSandboxItemLogin(ctx context.Context, accessToken string) error
 }
 
 // InvestmentTransactionsResult is the flattened output of one
@@ -251,6 +264,22 @@ func (c *SDKClient) CreateLinkToken(ctx context.Context, userID int64) (LinkToke
 	resp, _, err := c.api.PlaidApi.LinkTokenCreate(ctx).LinkTokenCreateRequest(*req).Execute()
 	if err != nil {
 		return LinkToken{}, fmt.Errorf("plaid: link/token/create: %w", err)
+	}
+	return LinkToken{
+		Token:      resp.GetLinkToken(),
+		Expiration: resp.GetExpiration(),
+	}, nil
+}
+
+func (c *SDKClient) CreateUpdateLinkToken(ctx context.Context, userID int64, accessToken string) (LinkToken, error) {
+	req := plaid.NewLinkTokenCreateRequest(c.clientName, c.language, c.countryCode)
+	req.SetUser(*plaid.NewLinkTokenCreateRequestUser(fmt.Sprintf("user-%d", userID)))
+	req.SetAccessToken(accessToken)
+	// Update mode omits `products` per Plaid's Link update-mode contract.
+
+	resp, _, err := c.api.PlaidApi.LinkTokenCreate(ctx).LinkTokenCreateRequest(*req).Execute()
+	if err != nil {
+		return LinkToken{}, fmt.Errorf("plaid: link/token/create (update mode): %w", err)
 	}
 	return LinkToken{
 		Token:      resp.GetLinkToken(),
@@ -460,6 +489,15 @@ func (c *SDKClient) FetchHoldings(ctx context.Context, accessToken string) (Hold
 		out.Securities = append(out.Securities, convertPlaidSecurity(s))
 	}
 	return out, nil
+}
+
+func (c *SDKClient) ResetSandboxItemLogin(ctx context.Context, accessToken string) error {
+	req := plaid.NewSandboxItemResetLoginRequest(accessToken)
+	_, _, err := c.api.PlaidApi.SandboxItemResetLogin(ctx).SandboxItemResetLoginRequest(*req).Execute()
+	if err != nil {
+		return fmt.Errorf("plaid: sandbox/item/reset_login: %w", err)
+	}
+	return nil
 }
 
 func convertPlaidInvestmentTransaction(it plaid.InvestmentTransaction) PlaidInvestmentTransaction {

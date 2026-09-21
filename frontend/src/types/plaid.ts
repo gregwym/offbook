@@ -12,7 +12,7 @@ export type PlaidItem = {
   status: string
   last_synced_at?: string | null
   last_sync_error?: string | null
-  last_sync_status: 'never' | 'syncing' | 'ok' | 'ok_with_errors' | 'error'
+  last_sync_status: 'never' | 'syncing' | 'ok' | 'ok_with_errors' | 'error' | 'reauth_required'
   unresolved_sync_errors?: number
   created_at: string
   updated_at: string

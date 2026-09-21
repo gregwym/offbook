@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { usePlaidLink } from 'react-plaid-link'
 import { AlertTriangle, Bot, Check, Info, Landmark, Plug, RefreshCw, Trash2, X } from 'lucide-react'
 import { TimeAgo } from '../components/TimeAgo'
 import {
+  createLinkToken,
   disconnectItem,
   dismissSyncError,
   listItems,
@@ -349,6 +351,14 @@ function LinkedInstitutionsSection() {
   const [syncing, setSyncing] = useState<string | null>(null)
   const [errorModalItem, setErrorModalItem] = useState<PlaidItem | null>(null)
 
+  // Reconnect (#364): a reauth_required item needs a fresh Plaid Link
+  // session in "update mode" (link_token scoped to its existing item) before
+  // syncing can resume. Mirrors AccountsAddPage's Plaid sub-flow, but scoped
+  // to one item at a time here.
+  const [reconnectItemID, setReconnectItemID] = useState<string | null>(null)
+  const [reconnectToken, setReconnectToken] = useState<string | null>(null)
+  const [reconnectError, setReconnectError] = useState<string | null>(null)
+
   const refresh = useCallback(() => {
     return listItems()
       .then((r) => {
@@ -397,6 +407,51 @@ function LinkedInstitutionsSection() {
     }
   }
 
+  const onReconnectSuccess = useCallback(() => {
+    // Update-mode Link doesn't need a public_token exchange — the item's
+    // access_token is unchanged. Resuming a sync is what actually clears
+    // reauth_required once the credentials verify.
+    const itemID = reconnectItemID
+    setReconnectItemID(null)
+    setReconnectToken(null)
+    if (!itemID) return
+    setSyncing(itemID)
+    syncAccounts(itemID)
+      .then(() => syncTransactions(itemID))
+      .then(() => refresh())
+      .catch((e: unknown) => setError(errMsg(e)))
+      .finally(() => setSyncing(null))
+  }, [reconnectItemID, refresh])
+
+  const onReconnectExit = useCallback(() => {
+    setReconnectItemID(null)
+    setReconnectToken(null)
+  }, [])
+
+  const { open: openReconnectLink, ready: reconnectLinkReady } = usePlaidLink({
+    token: reconnectToken,
+    onSuccess: onReconnectSuccess,
+    onExit: onReconnectExit,
+  })
+
+  useEffect(() => {
+    if (reconnectToken && reconnectLinkReady) {
+      openReconnectLink()
+    }
+  }, [reconnectToken, reconnectLinkReady, openReconnectLink])
+
+  const onReconnect = async (item: PlaidItem) => {
+    setReconnectError(null)
+    setReconnectItemID(item.plaid_item_id)
+    try {
+      const t = await createLinkToken(item.plaid_item_id)
+      setReconnectToken(t.link_token)
+    } catch (e) {
+      setReconnectError(errMsg(e))
+      setReconnectItemID(null)
+    }
+  }
+
   return (
     <section className="rounded-lg border border-gray-200 bg-white">
       <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
@@ -429,53 +484,73 @@ function LinkedInstitutionsSection() {
         )}
         {items.map((it) => {
           const errCount = it.unresolved_sync_errors ?? 0
+          const needsReconnect = it.last_sync_status === 'reauth_required'
+          const label = it.institution_name ?? it.plaid_item_id
           return (
-            <div key={it.id} className="flex items-center gap-4 px-5 py-3">
-              <div className="rounded-md bg-gray-50 p-2 text-gray-500">
-                <Landmark size={18} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <div className="truncate font-medium text-gray-900">
-                    {it.institution_name ?? it.plaid_item_id}
+            <div key={it.id} className={needsReconnect ? 'bg-amber-50/50' : undefined}>
+              <div className="flex items-center gap-4 px-5 py-3">
+                <div className="rounded-md bg-gray-50 p-2 text-gray-500">
+                  <Landmark size={18} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className="truncate font-medium text-gray-900">{label}</div>
+                    {errCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setErrorModalItem(it)}
+                        className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-200"
+                        aria-label={`Review ${errCount} sync errors for ${label}`}
+                      >
+                        <AlertTriangle size={12} />
+                        {errCount}
+                      </button>
+                    )}
                   </div>
-                  {errCount > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setErrorModalItem(it)}
-                      className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-200"
-                      aria-label={`Review ${errCount} sync errors for ${it.institution_name ?? it.plaid_item_id}`}
-                    >
-                      <AlertTriangle size={12} />
-                      {errCount}
-                    </button>
-                  )}
+                  <div className="mt-0.5 text-xs text-gray-500">
+                    {statusSummary(it)}
+                    {it.last_sync_error ? ` · ${it.last_sync_error}` : ''}
+                  </div>
                 </div>
-                <div className="mt-0.5 text-xs text-gray-500">
-                  {statusSummary(it)}
-                  {it.last_sync_error ? ` · ${it.last_sync_error}` : ''}
-                </div>
+                {needsReconnect ? (
+                  <button
+                    type="button"
+                    onClick={() => void onReconnect(it)}
+                    disabled={reconnectItemID === it.plaid_item_id || disconnecting === it.plaid_item_id}
+                    className="inline-flex items-center gap-1 rounded-md bg-amber-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                    aria-label={`Reconnect ${label}`}
+                  >
+                    <AlertTriangle size={14} />
+                    {reconnectItemID === it.plaid_item_id ? 'Reconnecting…' : 'Reconnect'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onSync(it)}
+                    disabled={syncing === it.plaid_item_id || disconnecting === it.plaid_item_id}
+                    className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                    aria-label={`Sync ${label}`}
+                  >
+                    <RefreshCw size={14} className={syncing === it.plaid_item_id ? 'animate-spin' : ''} />
+                    {syncing === it.plaid_item_id ? 'Syncing…' : 'Sync'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onDisconnect(it)}
+                  disabled={disconnecting === it.plaid_item_id || syncing === it.plaid_item_id}
+                  className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  aria-label={`Disconnect ${label}`}
+                >
+                  <Trash2 size={14} />
+                  {disconnecting === it.plaid_item_id ? 'Disconnecting…' : 'Disconnect'}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => onSync(it)}
-                disabled={syncing === it.plaid_item_id || disconnecting === it.plaid_item_id}
-                className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                aria-label={`Sync ${it.institution_name ?? it.plaid_item_id}`}
-              >
-                <RefreshCw size={14} className={syncing === it.plaid_item_id ? 'animate-spin' : ''} />
-                {syncing === it.plaid_item_id ? 'Syncing…' : 'Sync'}
-              </button>
-              <button
-                type="button"
-                onClick={() => onDisconnect(it)}
-                disabled={disconnecting === it.plaid_item_id || syncing === it.plaid_item_id}
-                className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                aria-label={`Disconnect ${it.institution_name ?? it.plaid_item_id}`}
-              >
-                <Trash2 size={14} />
-                {disconnecting === it.plaid_item_id ? 'Disconnecting…' : 'Disconnect'}
-              </button>
+              {needsReconnect && reconnectItemID === it.plaid_item_id && reconnectError && (
+                <div className="mx-5 mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {reconnectError}
+                </div>
+              )}
             </div>
           )
         })}
@@ -648,6 +723,8 @@ function statusSummary(it: PlaidItem): ReactNode {
       return 'Syncing…'
     case 'error':
       return 'Last sync failed'
+    case 'reauth_required':
+      return 'Your bank needs you to reconnect'
     case 'never':
       return 'Not yet synced'
     default:

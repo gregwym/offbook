@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/crypto"
 	"github.com/gregwym/offbook/backend/internal/model"
+	"github.com/gregwym/offbook/backend/internal/repository"
 	plaidsvc "github.com/gregwym/offbook/backend/internal/service/plaid"
 )
 
@@ -46,6 +48,16 @@ func fakePlaid(t *testing.T) (*httptest.Server, *recordedRequests) {
 			"request_id":   "req-2",
 		})
 	})
+	mux.HandleFunc("/sandbox/item/reset_login", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		rec.resetLoginBody = body
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"request_id":  "req-3",
+			"reset_login": true,
+		})
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected Plaid call: %s %s", r.Method, r.URL.Path)
 		http.Error(w, "unexpected", 500)
@@ -57,8 +69,9 @@ func fakePlaid(t *testing.T) (*httptest.Server, *recordedRequests) {
 }
 
 type recordedRequests struct {
-	linkBody     map[string]any
-	exchangeBody map[string]any
+	linkBody       map[string]any
+	exchangeBody   map[string]any
+	resetLoginBody map[string]any
 }
 
 // fakeRepo is an in-memory PlaidItemRepository sufficient for service tests.
@@ -79,8 +92,13 @@ func (r *fakeRepo) Create(_ context.Context, item *model.PlaidItem) error {
 func (r *fakeRepo) GetByID(context.Context, int64, int64) (*model.PlaidItem, error) {
 	return nil, nil
 }
-func (r *fakeRepo) GetByPlaidItemID(context.Context, int64, string) (*model.PlaidItem, error) {
-	return nil, nil
+func (r *fakeRepo) GetByPlaidItemID(_ context.Context, userID int64, plaidItemID string) (*model.PlaidItem, error) {
+	for _, item := range r.created {
+		if item.UserID == userID && item.PlaidItemID == plaidItemID {
+			return item, nil
+		}
+	}
+	return nil, repository.ErrNotFound
 }
 func (r *fakeRepo) ListByUser(context.Context, int64) ([]model.PlaidItem, error) { return nil, nil }
 func (r *fakeRepo) UpdateStatus(context.Context, int64, int64, string, *string) error {
@@ -202,5 +220,85 @@ func TestService_NotConfigured(t *testing.T) {
 	}
 	if _, err := svc.ExchangePublicToken(context.Background(), 1, "p"); err != plaidsvc.ErrNotConfigured {
 		t.Errorf("exchange: %v", err)
+	}
+	if _, err := svc.CreateUpdateLinkToken(context.Background(), 1, "item-x"); err != plaidsvc.ErrNotConfigured {
+		t.Errorf("update link token: %v", err)
+	}
+	if err := svc.ResetSandboxItemLogin(context.Background(), 1, "item-x"); err != plaidsvc.ErrNotConfigured {
+		t.Errorf("reset sandbox login: %v", err)
+	}
+}
+
+// TestService_CreateUpdateLinkToken_HappyPath proves the #364 reconnect
+// flow: an update-mode link_token request is scoped to the caller's own
+// item (decrypts *that* item's access_token) and forwards it to Plaid's
+// link/token/create call so Link opens directly into "update this Item"
+// mode instead of creating a new one.
+func TestService_CreateUpdateLinkToken_HappyPath(t *testing.T) {
+	srv, rec := fakePlaid(t)
+	client, _ := plaidsvc.NewSDKClient(plaidsvc.Config{ClientID: "cid", Secret: "csec", Env: srv.URL})
+	box, _ := crypto.NewSecretBox(newTestKey())
+	repo := &fakeRepo{}
+	svc := plaidsvc.NewService(client, box, repo, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	// Seed an item the same way ExchangePublicToken would.
+	item, err := svc.ExchangePublicToken(context.Background(), 9, "public-sandbox-abc")
+	if err != nil {
+		t.Fatalf("seed ExchangePublicToken: %v", err)
+	}
+
+	tok, err := svc.CreateUpdateLinkToken(context.Background(), 9, item.PlaidItemID)
+	if err != nil {
+		t.Fatalf("CreateUpdateLinkToken: %v", err)
+	}
+	if tok.Token != "link-sandbox-fake-token" {
+		t.Errorf("token = %q", tok.Token)
+	}
+	if rec.linkBody["access_token"] != "access-sandbox-fake-secret" {
+		t.Errorf("access_token forwarded = %v, want the item's decrypted token", rec.linkBody["access_token"])
+	}
+}
+
+// TestService_CreateUpdateLinkToken_WrongOwner proves ownership scoping:
+// a caller can't request an update-mode token for an item belonging to a
+// different user_id — GetByPlaidItemID is user-scoped, so this must come
+// back as ErrItemNotFound, not leak someone else's item.
+func TestService_CreateUpdateLinkToken_WrongOwner(t *testing.T) {
+	srv, _ := fakePlaid(t)
+	client, _ := plaidsvc.NewSDKClient(plaidsvc.Config{ClientID: "cid", Secret: "csec", Env: srv.URL})
+	box, _ := crypto.NewSecretBox(newTestKey())
+	repo := &fakeRepo{}
+	svc := plaidsvc.NewService(client, box, repo, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	item, err := svc.ExchangePublicToken(context.Background(), 9, "public-sandbox-abc")
+	if err != nil {
+		t.Fatalf("seed ExchangePublicToken: %v", err)
+	}
+
+	if _, err := svc.CreateUpdateLinkToken(context.Background(), 999, item.PlaidItemID); !errors.Is(err, plaidsvc.ErrItemNotFound) {
+		t.Fatalf("CreateUpdateLinkToken for wrong owner = %v, want ErrItemNotFound", err)
+	}
+}
+
+// TestService_ResetSandboxItemLogin_HappyPath proves the acceptance-test
+// seam: ResetSandboxItemLogin decrypts the caller's own item and forwards
+// its access_token to Plaid's sandbox-only reset_login call.
+func TestService_ResetSandboxItemLogin_HappyPath(t *testing.T) {
+	srv, rec := fakePlaid(t)
+	client, _ := plaidsvc.NewSDKClient(plaidsvc.Config{ClientID: "cid", Secret: "csec", Env: srv.URL})
+	box, _ := crypto.NewSecretBox(newTestKey())
+	repo := &fakeRepo{}
+	svc := plaidsvc.NewService(client, box, repo, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	item, err := svc.ExchangePublicToken(context.Background(), 3, "public-sandbox-def")
+	if err != nil {
+		t.Fatalf("seed ExchangePublicToken: %v", err)
+	}
+
+	if err := svc.ResetSandboxItemLogin(context.Background(), 3, item.PlaidItemID); err != nil {
+		t.Fatalf("ResetSandboxItemLogin: %v", err)
+	}
+	if rec.resetLoginBody["access_token"] != "access-sandbox-fake-secret" {
+		t.Errorf("access_token forwarded = %v, want the item's decrypted token", rec.resetLoginBody["access_token"])
 	}
 }

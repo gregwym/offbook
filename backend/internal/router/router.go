@@ -142,7 +142,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	// <name>"), so independent throttle state is correct, not redundant.
 	notifier := notify.Build(cfg, log.Printf)
 	plaidSvc := newPlaidService(cfg, gormDB, plaidItemRepo, accountRepo, transactionRepo, plaidSyncErrRepo, assetRepo, positionRepo, piiSvc).WithRuleRepo(ruleRepo).WithNotifier(notifier)
-	plaidHandler := handler.NewPlaidHandler(plaidSvc)
+	plaidHandler := handler.NewPlaidHandler(plaidSvc, cfg.PlaidEnv)
 
 	// User settings: per-user AI provider config (Claude key, Ollama URL,
 	// preferred provider). The Claude key is encrypted with a SecretBox
