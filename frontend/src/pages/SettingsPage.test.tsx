@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { server } from '../test/server'
@@ -48,5 +48,34 @@ describe('SettingsPage smoke', () => {
     expect(await screen.findByRole('button', { name: 'Reconnect Test Bank' })).toBeInTheDocument()
     expect(screen.getByText(/needs you to reconnect/)).toBeInTheDocument()
     await expectHealthySmoke()
+  })
+
+  // #366: the AI categorization opt-in persists via PATCH /me/settings, same
+  // shape as the existing price-refresh toggle.
+  it('toggles AI auto-categorization on', async () => {
+    server.use(
+      http.patch(`${API}/me/settings`, () =>
+        HttpResponse.json({
+          data: {
+            user_id: 1,
+            preferred_provider: 'claude',
+            api_endpoint: null,
+            api_token_set: false,
+            preferred_model: null,
+            auto_price_refresh: false,
+            auto_categorize: true,
+          },
+        }),
+      ),
+    )
+
+    renderPage(<SettingsPage />)
+    await expectHealthySmoke()
+
+    const toggle = await screen.findByRole('checkbox', { name: /categorize with ai automatically/i })
+    expect(toggle).not.toBeChecked()
+    fireEvent.click(toggle)
+
+    await waitFor(() => expect(toggle).toBeChecked())
   })
 })

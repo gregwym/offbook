@@ -20,9 +20,14 @@ type UserSettings struct {
 	// AutoPriceRefresh is the ADR-0014 §3 opt-in: background price refresh
 	// sends the user's held-symbol list upstream without a user action, so
 	// it must be explicitly enabled. Default false.
-	AutoPriceRefresh bool      `gorm:"column:auto_price_refresh;not null;default:false" json:"auto_price_refresh"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	AutoPriceRefresh bool `gorm:"column:auto_price_refresh;not null;default:false" json:"auto_price_refresh"`
+	// AutoCategorize is the ADR-0022 §8 opt-in: the daily AI categorization
+	// batch pass sends uncategorized merchant strings to the user's configured
+	// AI provider without a per-import click, so it must be explicitly
+	// enabled. Default false, same shape as AutoPriceRefresh.
+	AutoCategorize bool      `gorm:"column:auto_categorize;not null;default:false" json:"auto_categorize"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 func (UserSettings) TableName() string { return "user_settings" }

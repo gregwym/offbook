@@ -148,6 +148,13 @@ const (
 	CategorizationScopeAll           = "all"
 	CategorizationScopeUncategorized = "uncategorized"
 	CategorizationScopePlaidDefault  = "plaid_default"
+	// CategorizationScopeAIEligible selects the set the AI batch pass (#366,
+	// ADR-0022 §2) is allowed to touch: uncategorized OR plaid_default rows,
+	// restricted to kind='flow' (trade legs / opening balances / adjustments
+	// have no merchant text and aren't spending categorization targets).
+	// Manual and rule-categorized rows are structurally excluded — this is
+	// how "AI never overrules a choice I or my rules made" is enforced.
+	CategorizationScopeAIEligible = "ai_eligible"
 )
 
 type transactionRepo struct {
@@ -404,6 +411,8 @@ func (r *transactionRepo) ListForCategorizationScope(ctx context.Context, userID
 		q = q.Where("category_id IS NULL")
 	case CategorizationScopePlaidDefault:
 		q = q.Where("categorization_method = ?", "plaid_default")
+	case CategorizationScopeAIEligible:
+		q = q.Where("(category_id IS NULL OR categorization_method = ?) AND kind = ?", "plaid_default", model.KindFlow)
 	case CategorizationScopeAll, "":
 		// no extra predicate
 	default:

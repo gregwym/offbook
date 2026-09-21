@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log"
@@ -18,6 +19,8 @@ import (
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/router"
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/service/ai"
+	"github.com/gregwym/offbook/backend/internal/service/categorization"
 	"github.com/gregwym/offbook/backend/internal/service/diskspace"
 	"github.com/gregwym/offbook/backend/internal/service/household"
 	"github.com/gregwym/offbook/backend/internal/service/jobs"
@@ -125,6 +128,69 @@ func main() {
 		},
 	})
 
+	// ai-transaction-categorization (#366, docs/ADR/0022): daily batch pass
+	// over every user who opted in via Settings (auto_categorize), scanning
+	// rows neither a rule nor the Plaid taxonomy could place. Runs
+	// regardless of whether Plaid is configured — manually-entered
+	// transactions are eligible too. Builds its own UserSettingsService
+	// instance (SecretBox derivation duplicated from router.go's
+	// newUserSettingsService) for the same reason the Plaid job builds its
+	// own service instances: the job runner must not share mutable state
+	// with the HTTP-facing services.
+	aiCategorizeSum := sha256.Sum256([]byte(cfg.SessionSecret))
+	aiCategorizeBox, err := crypto.NewSecretBox(aiCategorizeSum[:])
+	if err != nil {
+		log.Fatalf("ai categorize: secretbox: %v", err)
+	}
+	aiCategorizeSettingsRepo := repository.NewUserSettingsRepository(gormDB)
+	aiCategorizeSettingsSvc := service.NewUserSettingsService(aiCategorizeSettingsRepo, aiCategorizeBox)
+	aiCategorizeTxRepo := repository.NewTransactionRepository(gormDB)
+	aiCategorizeCatRepo := repository.NewCategoryRepository(gormDB)
+	aiCategorizeVerdictRepo := repository.NewAICategorizationVerdictRepository(gormDB)
+	categorizerResolver := &transactionCategorizerResolver{settings: aiCategorizeSettingsSvc, envKey: cfg.ClaudeAPIKey}
+
+	runner.Register(jobs.Job{
+		Name:         "ai-transaction-categorization",
+		Interval:     24 * time.Hour,
+		InitialDelay: 10 * time.Minute, // after plaid-transaction-sync's 3-minute delay
+		Run: func(ctx context.Context) (string, error) {
+			userIDs, err := aiCategorizeSettingsRepo.ListAutoCategorizeUserIDs(ctx)
+			if err != nil {
+				return "", err
+			}
+			if len(userIDs) == 0 {
+				return "no opted-in users", nil
+			}
+			budget := cfg.AICategorizeDailyBudget
+			passCfg := service.CategorizationPassConfig{
+				ConfidenceThreshold: cfg.AICategorizeConfidenceThreshold,
+				BatchSize:           cfg.AICategorizeBatchSize,
+			}
+			var scanned, categorized, aiCalls, usersRun int
+			for _, uid := range userIDs {
+				categorizer, cErr := categorizerResolver.For(ctx, uid)
+				if cErr != nil {
+					log.Printf("[job] ai-transaction-categorization: resolve categorizer for user %d: %v", uid, cErr)
+					continue
+				}
+				res, pErr := service.RunCategorizationPass(ctx, gormDB, aiCategorizeTxRepo, aiCategorizeCatRepo, aiCategorizeVerdictRepo, categorizer, uid, passCfg, &budget)
+				if pErr != nil {
+					log.Printf("[job] ai-transaction-categorization: user %d: %v", uid, pErr)
+					continue
+				}
+				usersRun++
+				scanned += res.Scanned
+				categorized += res.Categorized
+				aiCalls += res.AICalls
+				if budget <= 0 {
+					break // instance-wide daily budget exhausted (ADR-0022 §7)
+				}
+			}
+			return fmt.Sprintf("scanned %d, categorized %d, %d AI call(s) across %d/%d opted-in user(s)",
+				scanned, categorized, aiCalls, usersRun, len(userIDs)), nil
+		},
+	})
+
 	// plaid-transaction-sync (#363, docs/ADR/0021): daily jittered polling
 	// pass over every active plaid_item, since a Tailscale-private host
 	// can't receive Plaid webhooks (ADR-0016). Builds its own plaid.Service
@@ -219,5 +285,42 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("server shutdown: %v", err)
+	}
+}
+
+// transactionCategorizerResolver maps a userID to the categorizer backed by
+// their configured AI provider (#366, ADR-0022 §2), mirroring router.go's
+// extractorResolver. Claude is implemented; Ollama/OpenAI-compatible
+// categorization is a fast-follow, so those users get (nil, nil) — the pass
+// still applies cache hits, it just never queues a new AI call for them.
+// Returns (nil, nil) whenever no usable key is configured (user or env).
+type transactionCategorizerResolver struct {
+	settings *service.UserSettingsService
+	envKey   string // CLAUDE_API_KEY fallback for single-tenant deploys
+}
+
+func (r *transactionCategorizerResolver) For(ctx context.Context, userID int64) (categorization.Categorizer, error) {
+	resolved, err := r.settings.Resolve(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	switch resolved.Provider {
+	case "ollama", "openai":
+		return nil, nil
+	case "claude":
+		fallthrough
+	default:
+		key := resolved.Token
+		if key == "" {
+			key = r.envKey
+		}
+		if key == "" {
+			return nil, nil
+		}
+		cat, err := ai.NewClaudeCategorizer(ai.ClaudeConfig{APIKey: key, Endpoint: resolved.Endpoint})
+		if err != nil {
+			return nil, nil
+		}
+		return cat, nil
 	}
 }

@@ -29,6 +29,9 @@ type UserSettingsView struct {
 	// AutoPriceRefresh is the persistent opt-in for the scheduled price
 	// refresh (#338 Phase 3, ADR-0014 §3). Default false.
 	AutoPriceRefresh bool `json:"auto_price_refresh"`
+	// AutoCategorize is the persistent opt-in for the daily AI transaction
+	// categorization batch pass (#366, ADR-0022 §8). Default false.
+	AutoCategorize bool `json:"auto_categorize"`
 }
 
 // UpdateUserSettingsInput is a sparse patch — only set fields apply. The
@@ -44,6 +47,7 @@ type UpdateUserSettingsInput struct {
 	PreferredModel    *string
 	ClearModel        bool
 	AutoPriceRefresh  *bool
+	AutoCategorize    *bool
 }
 
 // UserSettingsService owns user_settings CRUD + Claude-key encryption.
@@ -127,6 +131,10 @@ func (s *UserSettingsService) Update(ctx context.Context, userID int64, in Updat
 		row.AutoPriceRefresh = *in.AutoPriceRefresh
 	}
 
+	if in.AutoCategorize != nil {
+		row.AutoCategorize = *in.AutoCategorize
+	}
+
 	if err := s.repo.Upsert(ctx, row); err != nil {
 		return nil, fmt.Errorf("user_settings: upsert: %w", err)
 	}
@@ -194,5 +202,6 @@ func view(s *model.UserSettings) *UserSettingsView {
 		APITokenSet:       len(s.APITokenEnc) > 0,
 		PreferredModel:    s.PreferredModel,
 		AutoPriceRefresh:  s.AutoPriceRefresh,
+		AutoCategorize:    s.AutoCategorize,
 	}
 }

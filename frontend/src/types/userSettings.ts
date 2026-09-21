@@ -20,6 +20,10 @@ export type UserSettingsView = {
   // true, the held-symbol list goes to the price providers once a day
   // without a click — hence stored consent, default false.
   auto_price_refresh: boolean
+  // Opt-in for the daily AI transaction categorization batch pass (#366).
+  // When true, uncategorized merchant strings go to the AI provider once a
+  // day without a click — same stored-consent shape as auto_price_refresh.
+  auto_categorize: boolean
 }
 
 export type UpdateUserSettingsInput = {
@@ -31,4 +35,5 @@ export type UpdateUserSettingsInput = {
   preferred_model?: string
   clear_preferred_model?: boolean
   auto_price_refresh?: boolean
+  auto_categorize?: boolean
 }

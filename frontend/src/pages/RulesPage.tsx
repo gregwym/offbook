@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
-import { RuleFormModal } from '../components/RuleFormModal'
+import { Pencil, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react'
+import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
+import { listCategorizationVerdicts } from '../api/aiCategorizationVerdicts'
 import { useCategoriesStore } from '../store/categoriesStore'
 import { useRulesStore } from '../store/rulesStore'
+import type { AICategorizationVerdict } from '../types/aiCategorizationVerdict'
 import type { Category } from '../types/category'
 import type {
   ApplyResult,
@@ -17,11 +19,25 @@ export function RulesPage() {
   const [editing, setEditing] = useState<CategorizationRule | null>(null)
   const [applying, setApplying] = useState(false)
   const [applyMsg, setApplyMsg] = useState<string | null>(null)
+  const [verdicts, setVerdicts] = useState<AICategorizationVerdict[]>([])
+  const [promoteSeed, setPromoteSeed] = useState<{ merchantKey: string; defaults: RuleFormDefaults } | null>(null)
+  const [promotedKeys, setPromotedKeys] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     void fetch()
     void fetchCategories()
+    listCategorizationVerdicts()
+      .then(setVerdicts)
+      .catch(() => {
+        // Best-effort — the AI suggestions panel just stays empty; the core
+        // rules table/functionality doesn't depend on it.
+      })
   }, [fetch, fetchCategories])
+
+  const visibleVerdicts = useMemo(
+    () => verdicts.filter((v) => !promotedKeys.has(v.merchant_key)),
+    [verdicts, promotedKeys],
+  )
 
   const categoriesById = useMemo(() => {
     const m = new Map<number, Category>()
@@ -89,6 +105,46 @@ export function RulesPage() {
         <div className="mt-4 flex items-start justify-between rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           <span>{applyMsg}</span>
           <button type="button" onClick={() => setApplyMsg(null)} className="ml-3 text-emerald-700 hover:text-emerald-900">×</button>
+        </div>
+      )}
+
+      {visibleVerdicts.length > 0 && (
+        <div className="mt-6 overflow-hidden rounded-lg border border-gray-200 bg-white">
+          <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3">
+            <Sparkles size={16} className="text-indigo-500" />
+            <h2 className="text-sm font-medium text-gray-900">AI category suggestions</h2>
+            <span className="text-xs text-gray-400">
+              Merchants the AI categorizer has seen — turn a repeat guess into a rule.
+            </span>
+          </div>
+          <ul className="divide-y divide-gray-100">
+            {visibleVerdicts.map((v) => (
+              <li key={v.id} className="flex items-center justify-between px-4 py-2 text-sm">
+                <span className="font-mono text-gray-800">{v.merchant_key}</span>
+                <span className="mx-3 flex-1 text-gray-500">
+                  → {v.category?.name ?? `#${v.category_id}`}
+                  <span className="ml-2 text-xs text-gray-400">{Math.round(v.confidence * 100)}% confident</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPromoteSeed({
+                      merchantKey: v.merchant_key,
+                      defaults: {
+                        pattern: v.merchant_key,
+                        match_type: 'contains',
+                        category_id: v.category_id,
+                        priority: nextPriority,
+                      },
+                    })
+                  }
+                  className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  <Plus size={14} /> Create rule
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -172,6 +228,20 @@ export function RulesPage() {
           onSubmit={async (input) => {
             await update(editing.id, input)
             setEditing(null)
+          }}
+        />
+      )}
+
+      {promoteSeed && (
+        <RuleFormModal
+          mode="create"
+          categories={categories}
+          defaults={promoteSeed.defaults}
+          onClose={() => setPromoteSeed(null)}
+          onSubmit={async (input) => {
+            await create(input as CreateRuleInput)
+            setPromotedKeys((prev) => new Set(prev).add(promoteSeed.merchantKey))
+            setPromoteSeed(null)
           }}
         />
       )}
