@@ -254,3 +254,43 @@ func TestPlaidSync_NoMappingLeavesCategoryNull(t *testing.T) {
 		t.Errorf("categorization_method = %v, want nil", got.CategorizationMethod)
 	}
 }
+
+// TestCategoryMapper_SandboxHoldouts_195: three PFC pairs a fresh Plaid
+// sandbox sync returns (SparkFun gift purchases, a credit-card payment, and
+// an "other" loan payment) were absent from the 000005 seed, leaving 9/42
+// sandbox transactions uncategorized (78.6%, below the #181 >=80% bar).
+// Asserts migration 000028 closes all three against the real seeded table.
+func TestCategoryMapper_SandboxHoldouts_195(t *testing.T) {
+	g := openPlaidTestDB(t)
+	mapper, err := plaidsvc.NewCategoryMapper(context.Background(),
+		repository.NewPlaidCategoryMapRepository(g))
+	if err != nil {
+		t.Fatalf("NewCategoryMapper: %v", err)
+	}
+
+	cases := []struct {
+		name     string
+		primary  string
+		detailed string
+		wantSlug string
+	}{
+		{"gifts and novelties", "GENERAL_MERCHANDISE", "GENERAL_MERCHANDISE_GIFTS_AND_NOVELTIES", "shopping"},
+		{"credit card payment", "LOAN_PAYMENTS", "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT", "transfer"},
+		{"other loan payment", "LOAN_PAYMENTS", "LOAN_PAYMENTS_OTHER_PAYMENT", "transfer"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotID, ok := mapper.MapPlaidCategory(tc.primary, tc.detailed)
+			if !ok {
+				t.Fatalf("(%q,%q) unmapped, want %q", tc.primary, tc.detailed, tc.wantSlug)
+			}
+			var want model.Category
+			if err := g.Where("slug = ?", tc.wantSlug).First(&want).Error; err != nil {
+				t.Fatalf("lookup want category %q: %v", tc.wantSlug, err)
+			}
+			if gotID != want.ID {
+				t.Errorf("(%q,%q) → category %d, want %q (%d)", tc.primary, tc.detailed, gotID, tc.wantSlug, want.ID)
+			}
+		})
+	}
+}
