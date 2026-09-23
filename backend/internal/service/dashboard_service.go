@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -348,6 +349,145 @@ func (s *DashboardService) Trades(ctx context.Context, userID int64, from, to ti
 			LegCount:   r.LegCount,
 			GrossValue: r.GrossValue.String(),
 		})
+	}
+	return out, nil
+}
+
+// CategoryTrendMonth is one month of a category's spend series. Amount is
+// a positive decimal string (outflow sign flipped), zero-filled for months
+// with no spend in that category.
+type CategoryTrendMonth struct {
+	Month  string `json:"month"` // YYYY-MM-DD (first of month)
+	Amount string `json:"amount"`
+}
+
+// CategoryTrendItem is one category's month-over-month spend series plus
+// the this-month vs. trailing-average comparison (#367). ThisMonth is the
+// most recent month in Months; TrailingAverage is the mean of the
+// remaining (months-1) months — 0 when there's only one month in the
+// window.
+type CategoryTrendItem struct {
+	CategoryID      *int64               `json:"category_id"`
+	Name            string               `json:"name"`
+	Months          []CategoryTrendMonth `json:"months"`
+	ThisMonth       string               `json:"this_month"`
+	TrailingAverage string               `json:"trailing_average"`
+}
+
+// CategoryTrend returns the month-over-month spending trend per category
+// for the trailing `months` calendar months (default 6). Categories with
+// zero spend across the whole window are omitted; categories that appear
+// are zero-filled for any month without activity so the series never has
+// gaps. Ordered by this-month spend DESC.
+func (s *DashboardService) CategoryTrend(ctx context.Context, userID int64, months int) ([]CategoryTrendItem, error) {
+	if months <= 0 {
+		months = 6
+	}
+	now := s.now().UTC()
+	end := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, 0)
+	start := end.AddDate(0, -months, 0)
+
+	rows, err := s.repo.CategoryTrend(ctx, userID, now, months)
+	if err != nil {
+		return nil, err
+	}
+
+	// catKey groups by category value, not pointer identity — each SQL row
+	// scan allocates a fresh *int64 even for the same category id, so using
+	// r.CategoryID directly as (part of) a map key would split one category
+	// into as many buckets as it has rows across the window.
+	type catKey struct {
+		hasID bool
+		id    int64
+		name  string
+	}
+	byCat := map[catKey]map[time.Time]decimal.Decimal{}
+	var order []catKey
+	for _, r := range rows {
+		k := catKey{name: r.Name}
+		if r.CategoryID != nil {
+			k.hasID = true
+			k.id = *r.CategoryID
+		}
+		if _, ok := byCat[k]; !ok {
+			byCat[k] = map[time.Time]decimal.Decimal{}
+			order = append(order, k)
+		}
+		byCat[k][r.Month.UTC()] = r.Amount
+	}
+
+	items := make([]CategoryTrendItem, 0, len(order))
+	for _, k := range order {
+		monthAmts := byCat[k]
+		monthsOut := make([]CategoryTrendMonth, 0, months)
+		trailingSum := decimal.Zero
+		trailingCount := 0
+		thisMonth := decimal.Zero
+		for i := 0; i < months; i++ {
+			m := start.AddDate(0, i, 0)
+			amt, ok := monthAmts[m]
+			if !ok {
+				amt = decimal.Zero
+			}
+			monthsOut = append(monthsOut, CategoryTrendMonth{Month: m.Format("2006-01-02"), Amount: amt.String()})
+			if i == months-1 {
+				thisMonth = amt
+			} else {
+				trailingSum = trailingSum.Add(amt)
+				trailingCount++
+			}
+		}
+		trailingAvg := decimal.Zero
+		if trailingCount > 0 {
+			trailingAvg = trailingSum.Div(decimal.NewFromInt(int64(trailingCount)))
+		}
+		var categoryID *int64
+		if k.hasID {
+			id := k.id
+			categoryID = &id
+		}
+		items = append(items, CategoryTrendItem{
+			CategoryID:      categoryID,
+			Name:            k.name,
+			Months:          monthsOut,
+			ThisMonth:       thisMonth.String(),
+			TrailingAverage: trailingAvg.String(),
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		a, _ := decimal.NewFromString(items[i].ThisMonth)
+		b, _ := decimal.NewFromString(items[j].ThisMonth)
+		return a.GreaterThan(b)
+	})
+	return items, nil
+}
+
+// MerchantSpendItem is one row of the top-merchants view (#367). Amount is
+// a positive decimal string (outflow sign flipped).
+type MerchantSpendItem struct {
+	Merchant string `json:"merchant"`
+	Amount   string `json:"amount"`
+	Count    int64  `json:"count"`
+}
+
+// TopMerchants returns the top-spending merchants for [from, to), capped
+// at `limit` (default 10). Defaults to the current calendar month if
+// either bound is zero, same convention as SpendByCategory.
+func (s *DashboardService) TopMerchants(ctx context.Context, userID int64, from, to time.Time, limit int) ([]MerchantSpendItem, error) {
+	if from.IsZero() || to.IsZero() {
+		f, t, _ := resolvePeriod(PeriodCurrentMonth, s.now())
+		from, to = f, t
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := s.repo.TopMerchants(ctx, userID, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]MerchantSpendItem, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, MerchantSpendItem{Merchant: r.Merchant, Amount: r.Amount.String(), Count: r.Count})
 	}
 	return out, nil
 }

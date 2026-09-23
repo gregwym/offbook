@@ -74,6 +74,35 @@ type DashboardRepository interface {
 	// position through the shared valuation derivation so an unpriced asset
 	// surfaces as incomplete rather than silently $0 (#282).
 	ListPositionsForAllocation(ctx context.Context, userID int64) ([]AllocationPosition, error)
+	// CategoryTrend returns SUM(-amount) FILTER (amount < 0) grouped by
+	// (category, month) for the trailing `months` calendar months ending at
+	// the month containing `now` (#367). Same flow + transfer-excluded
+	// filter as SpendByCategory. Only (category, month) pairs with nonzero
+	// spend are returned — the caller zero-fills the grid.
+	CategoryTrend(ctx context.Context, userID int64, now time.Time, months int) ([]CategoryMonthAmount, error)
+	// TopMerchants returns outflow spend + transaction count grouped by
+	// merchant (COALESCE(merchant_name, description_clean, description))
+	// over [from, to) (#367). Same flow + transfer-excluded filter as
+	// SpendByCategory. Ordered by amount DESC, capped at limit.
+	TopMerchants(ctx context.Context, userID int64, from, to time.Time, limit int) ([]MerchantSpendItem, error)
+}
+
+// CategoryMonthAmount is one (category, month) bucket of the month-over-month
+// spending trend. Amount is positive (outflow sign flipped), same convention
+// as CategorySpendItem.
+type CategoryMonthAmount struct {
+	CategoryID *int64
+	Name       string // "Uncategorized" when CategoryID is nil
+	Month      time.Time
+	Amount     decimal.Decimal
+}
+
+// MerchantSpendItem is one row of the top-merchants rollup. Amount is
+// positive (outflow sign flipped).
+type MerchantSpendItem struct {
+	Merchant string
+	Amount   decimal.Decimal
+	Count    int64
 }
 
 // TradeKindAggregate is one row of the trade rollup surfaced to the AI
@@ -365,6 +394,105 @@ func (r *dashboardRepo) ListPositionsForAllocation(ctx context.Context, userID i
 			return nil, err
 		}
 		out = append(out, AllocationPosition{AssetID: row.AssetID, Quantity: q, Kind: row.Kind})
+	}
+	return out, nil
+}
+
+// CategoryTrend: outflows only, transfers excluded, grouped by (category,
+// month) over the trailing `months` calendar months ending at the month
+// containing `now`. Mirrors SpendByCategory's filter, bucketed by month.
+func (r *dashboardRepo) CategoryTrend(ctx context.Context, userID int64, now time.Time, months int) ([]CategoryMonthAmount, error) {
+	if months <= 0 {
+		months = 6
+	}
+	now = now.UTC()
+	end := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, 0)
+	start := end.AddDate(0, -months, 0)
+
+	type rawRow struct {
+		CategoryID *int64
+		Name       *string
+		Month      time.Time
+		Amount     string
+	}
+	var rows []rawRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			t.category_id                                     AS category_id,
+			c.name                                             AS name,
+			date_trunc('month', t.transaction_date)::timestamptz AS month,
+			COALESCE(SUM(-t.amount), 0)::text                  AS amount
+		FROM transactions t
+		LEFT JOIN categories c ON c.id = t.category_id
+		WHERE t.deleted_at IS NULL
+		  AND t.user_id = ?
+		  AND t.is_transfer = FALSE
+		  AND t.kind = 'flow'
+		  AND t.amount < 0
+		  AND t.transaction_date >= ?
+		  AND t.transaction_date <  ?
+		GROUP BY t.category_id, c.name, date_trunc('month', t.transaction_date)
+		ORDER BY month, name
+	`, userID, start, end).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CategoryMonthAmount, 0, len(rows))
+	for _, row := range rows {
+		amt, _ := decimal.NewFromString(row.Amount)
+		name := "Uncategorized"
+		if row.Name != nil {
+			name = *row.Name
+		}
+		out = append(out, CategoryMonthAmount{
+			CategoryID: row.CategoryID,
+			Name:       name,
+			Month:      row.Month.UTC(),
+			Amount:     amt,
+		})
+	}
+	return out, nil
+}
+
+// TopMerchants: outflows only, transfers excluded, grouped by merchant over
+// [from, to). Merchant resolves from merchant_name, falling back to
+// description_clean then the raw description — the same precedence Plaid
+// sync + manual entry populate, so every spending row lands under some
+// label even when merchant_name is unset (manual/CSV rows).
+func (r *dashboardRepo) TopMerchants(ctx context.Context, userID int64, from, to time.Time, limit int) ([]MerchantSpendItem, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	type rawRow struct {
+		Merchant string
+		Amount   string
+		Count    int64
+	}
+	var rows []rawRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			COALESCE(NULLIF(t.merchant_name, ''), NULLIF(t.description_clean, ''), t.description, 'Unknown') AS merchant,
+			COALESCE(SUM(-t.amount), 0)::text AS amount,
+			COUNT(*)                          AS count
+		FROM transactions t
+		WHERE t.deleted_at IS NULL
+		  AND t.user_id = ?
+		  AND t.is_transfer = FALSE
+		  AND t.kind = 'flow'
+		  AND t.amount < 0
+		  AND t.transaction_date >= ?
+		  AND t.transaction_date <  ?
+		GROUP BY merchant
+		ORDER BY SUM(-t.amount) DESC
+		LIMIT ?
+	`, userID, from, to, limit).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]MerchantSpendItem, 0, len(rows))
+	for _, row := range rows {
+		amt, _ := decimal.NewFromString(row.Amount)
+		out = append(out, MerchantSpendItem{Merchant: row.Merchant, Amount: amt, Count: row.Count})
 	}
 	return out, nil
 }

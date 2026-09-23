@@ -21,6 +21,8 @@ import {
   Wallet,
 } from 'lucide-react'
 import {
+  Bar,
+  BarChart,
   Cell,
   Line,
   LineChart,
@@ -339,7 +341,11 @@ function AllocationBand({ data }: { data: InsightsData }) {
   )
 }
 
-// ───── Band 3: spending by category ─────
+// ───── Band 3: spending by category, plus depth (#367) ─────
+// Depth sub-views (trend / merchants / cash flow) live inside this same
+// wireframe band rather than as new top-level bands — the v6 IA locks 5
+// bands; these three answer "where does my money go over time" within the
+// spending band's existing scope.
 function SpendingBand({ data }: { data: InsightsData }) {
   const rows = data.by_category
   const max = rows.reduce((acc, r) => Math.max(acc, num(r.amount)), 0)
@@ -377,7 +383,116 @@ function SpendingBand({ data }: { data: InsightsData }) {
           })}
         </ul>
       )}
+
+      <div className="mt-5 grid grid-cols-1 gap-5 border-t border-gray-100 pt-4 lg:grid-cols-3">
+        <CashFlowTrend months={data.cash_flow} />
+        <CategoryTrendList items={data.category_trend} />
+        <TopMerchantsList rows={data.top_merchants} />
+      </div>
     </section>
+  )
+}
+
+// Income vs. spending trend by month (#367). Reuses the CashFlow endpoint
+// already backing the legacy DashboardCharts component; independently
+// fetched, so a missing series just renders an empty state.
+function CashFlowTrend({ months }: { months: InsightsData['cash_flow'] }) {
+  return (
+    <div>
+      <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">
+        Income vs. spending
+      </h3>
+      {months.length === 0 ? (
+        <div className="mt-2 py-4 text-center text-xs text-gray-400">Not enough data yet.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={140}>
+          <BarChart
+            data={months.map((m) => ({
+              month: m.month.slice(0, 7),
+              inflow: num(m.inflow),
+              outflow: -num(m.outflow),
+            }))}
+            stackOffset="sign"
+          >
+            <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+            <YAxis hide />
+            <Tooltip formatter={(v) => (typeof v === 'number' ? Math.abs(v).toFixed(2) : String(v))} />
+            <Bar dataKey="inflow" stackId="0" fill="#10B981" name="Inflow" />
+            <Bar dataKey="outflow" stackId="0" fill="#EF4444" name="Outflow" />
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  )
+}
+
+// Month-over-month category trend: this-month vs. trailing average, top 5
+// by this-month spend (#367).
+function CategoryTrendList({ items }: { items: InsightsData['category_trend'] }) {
+  const top = items.slice(0, 5)
+  return (
+    <div>
+      <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">
+        Trending vs. average
+      </h3>
+      {top.length === 0 ? (
+        <div className="mt-2 py-4 text-center text-xs text-gray-400">Not enough history yet.</div>
+      ) : (
+        <ul className="mt-2 space-y-1.5 text-sm">
+          {top.map((c) => {
+            const thisMonth = num(c.this_month)
+            const avg = num(c.trailing_average)
+            const delta = avg > 0 ? ((thisMonth - avg) / avg) * 100 : null
+            return (
+              <li
+                key={`${c.category_id ?? 'null'}-${c.name}`}
+                className="flex items-center justify-between gap-2"
+              >
+                <span className="truncate text-gray-700">{c.name}</span>
+                <span className="shrink-0 text-right text-gray-500">
+                  <AmountDisplay amount={c.this_month} />
+                  {delta != null && (
+                    <span className={delta > 0 ? 'ml-1 text-red-600' : 'ml-1 text-emerald-600'}>
+                      {delta > 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(0)}%
+                    </span>
+                  )}
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+// Top spending merchants, period-scoped (#367).
+function TopMerchantsList({ rows }: { rows: InsightsData['top_merchants'] }) {
+  const top = rows.slice(0, 5)
+  return (
+    <div>
+      <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">
+        Top merchants
+      </h3>
+      {top.length === 0 ? (
+        <div className="mt-2 py-4 text-center text-xs text-gray-400">
+          No merchant spend yet.
+        </div>
+      ) : (
+        <ul className="mt-2 space-y-1.5 text-sm">
+          {top.map((m) => (
+            <li key={m.merchant} className="flex items-center justify-between gap-2">
+              <span className="truncate text-gray-700">
+                {m.merchant} <span className="text-xs text-gray-400">×{m.count}</span>
+              </span>
+              <span className="shrink-0 text-right text-gray-500">
+                <AmountDisplay amount={m.amount} />
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
 

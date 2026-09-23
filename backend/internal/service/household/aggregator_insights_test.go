@@ -433,3 +433,236 @@ func TestAggregator_Dashboard_NetWorthCompleteness(t *testing.T) {
 		t.Error("net_worth_complete = true, want false (shared equity priced 30d ago)")
 	}
 }
+
+// seedMerchantTxnH mirrors service.seedMerchantTxn for the household
+// package — a transaction carrying merchant/description fields, used by
+// TestAggregator_TopMerchants*.
+func seedMerchantTxnH(t *testing.T, g *gorm.DB, userID, accountID int64, merchant string, when time.Time, amount string, isTransfer bool) {
+	t.Helper()
+	amt, _ := decimal.NewFromString(amount)
+	tx := &model.Transaction{
+		UserID:          userID,
+		AccountID:       accountID,
+		MerchantName:    &merchant,
+		Amount:          amt,
+		Source:          "manual",
+		TransactionDate: when,
+		IsTransfer:      isTransfer,
+	}
+	if err := g.Create(tx).Error; err != nil {
+		t.Fatalf("seed merchant txn: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Transaction{}, tx.ID) })
+}
+
+// TestAggregator_CategoryTrend_PrivacyAndTrailingAverage covers (a)/(b): a
+// private account never contributes, a balance_only account contributes to
+// nothing here (category trend needs txn-level visibility), and only the
+// balance_and_txns account's spend feeds the month-over-month series —
+// including the this-month vs. trailing-average comparison.
+func TestAggregator_CategoryTrend_PrivacyAndTrailingAverage(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	agg.SetClock(func() time.Time { return time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) })
+	ctxOwner := seedUser(t, g, "ctrend-owner")
+	hh := seedHouseholdRow(t, g, ctxOwner, "CTrend", 30)
+	addMember(t, g, hh.ID, ctxOwner, model.RoleOwner, nil)
+
+	full := seedAccount(t, g, ctxOwner, "full")
+	balOnly := seedAccount(t, g, ctxOwner, "bal-only")
+	priv := seedAccount(t, g, ctxOwner, "private")
+	setShare(t, g, full.ID, hh.ID, model.VisibilityBalanceAndTxns)
+	setShare(t, g, balOnly.ID, hh.ID, model.VisibilityBalanceOnly)
+	// priv: no share row at all.
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	cat := &model.Category{Name: "CTrendCat-" + suffix, Slug: "ctrend-cat-" + suffix}
+	if err := g.Create(cat).Error; err != nil {
+		t.Fatalf("seed category: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, cat.ID) })
+
+	seedTxn(t, g, ctxOwner, full.ID, "-100", &cat.ID, time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC))
+	seedTxn(t, g, ctxOwner, full.ID, "-100", &cat.ID, time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC))
+	seedTxn(t, g, ctxOwner, full.ID, "-300", &cat.ID, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC))
+	// balance_only + private spend must never surface.
+	seedTxn(t, g, ctxOwner, balOnly.ID, "-9999", &cat.ID, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC))
+	seedTxn(t, g, ctxOwner, priv.ID, "-9999", &cat.ID, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC))
+
+	items, err := agg.CategoryTrend(ctx, hh.ID, 3)
+	if err != nil {
+		t.Fatalf("CategoryTrend: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d categories, want 1; items=%+v", len(items), items)
+	}
+	if items[0].ThisMonth != "300" {
+		t.Errorf("ThisMonth = %s, want 300 (balance_only/private spend must not leak)", items[0].ThisMonth)
+	}
+	if items[0].TrailingAverage != "100" {
+		t.Errorf("TrailingAverage = %s, want 100", items[0].TrailingAverage)
+	}
+}
+
+// TestAggregator_CategoryTrend_InGraceExcluded covers (c): an in-grace
+// leaver's spend must not contribute to the live category trend.
+func TestAggregator_CategoryTrend_InGraceExcluded(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	agg.SetClock(func() time.Time { return time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) })
+	ownerID := seedUser(t, g, "ctrend-grace-owner")
+	leaverID := seedUser(t, g, "ctrend-grace-leaver")
+	hh := seedHouseholdRow(t, g, ownerID, "CTrendGrace", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+	leftAt := time.Now().Add(-3 * 24 * time.Hour)
+	addMember(t, g, hh.ID, leaverID, model.RoleContributor, &leftAt)
+
+	ownerAcct := seedAccount(t, g, ownerID, "ctrend-owner-acct")
+	leaverAcct := seedAccount(t, g, leaverID, "ctrend-leaver-acct")
+	setShare(t, g, ownerAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
+	setShare(t, g, leaverAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
+
+	seedTxn(t, g, ownerID, ownerAcct.ID, "-10", nil, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC))
+	seedTxn(t, g, leaverID, leaverAcct.ID, "-9999", nil, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC))
+
+	items, err := agg.CategoryTrend(ctx, hh.ID, 1)
+	if err != nil {
+		t.Fatalf("CategoryTrend: %v", err)
+	}
+	if len(items) != 1 || items[0].ThisMonth != "10" {
+		t.Errorf("items = %+v, want one category with this_month=10 (in-grace leaver excluded)", items)
+	}
+}
+
+// TestAggregator_TopMerchants_PrivacyAndGrouping covers (a)/(b): private and
+// balance_only spend never surface; balance_and_txns spend groups by
+// merchant with count + amount.
+func TestAggregator_TopMerchants_PrivacyAndGrouping(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	ownerID := seedUser(t, g, "merch-owner")
+	hh := seedHouseholdRow(t, g, ownerID, "Merch", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+
+	full := seedAccount(t, g, ownerID, "merch-full")
+	balOnly := seedAccount(t, g, ownerID, "merch-bal-only")
+	priv := seedAccount(t, g, ownerID, "merch-private")
+	setShare(t, g, full.ID, hh.ID, model.VisibilityBalanceAndTxns)
+	setShare(t, g, balOnly.ID, hh.ID, model.VisibilityBalanceOnly)
+
+	when := time.Now().Add(-time.Hour)
+	seedMerchantTxnH(t, g, ownerID, full.ID, "COSTCO", when, "-50", false)
+	seedMerchantTxnH(t, g, ownerID, full.ID, "COSTCO", when, "-25", false)
+	seedMerchantTxnH(t, g, ownerID, balOnly.ID, "COSTCO", when, "-9999", false)
+	seedMerchantTxnH(t, g, ownerID, priv.ID, "COSTCO", when, "-9999", false)
+
+	items, err := agg.TopMerchants(ctx, hh.ID, time.Time{}, time.Time{}, 10)
+	if err != nil {
+		t.Fatalf("TopMerchants: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d merchants, want 1; items=%+v", len(items), items)
+	}
+	if items[0].Merchant != "COSTCO" || items[0].Amount != "75" || items[0].Count != 2 {
+		t.Errorf("item = %+v, want {COSTCO 75 2} (balance_only/private spend must not leak)", items[0])
+	}
+}
+
+// TestAggregator_TopMerchants_InGraceExcluded covers (c) for TopMerchants.
+func TestAggregator_TopMerchants_InGraceExcluded(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	ownerID := seedUser(t, g, "merch-grace-owner")
+	leaverID := seedUser(t, g, "merch-grace-leaver")
+	hh := seedHouseholdRow(t, g, ownerID, "MerchGrace", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+	leftAt := time.Now().Add(-3 * 24 * time.Hour)
+	addMember(t, g, hh.ID, leaverID, model.RoleContributor, &leftAt)
+
+	ownerAcct := seedAccount(t, g, ownerID, "merch-owner-acct")
+	leaverAcct := seedAccount(t, g, leaverID, "merch-leaver-acct")
+	setShare(t, g, ownerAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
+	setShare(t, g, leaverAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
+
+	when := time.Now().Add(-time.Hour)
+	seedMerchantTxnH(t, g, ownerID, ownerAcct.ID, "OWNERSHOP", when, "-10", false)
+	seedMerchantTxnH(t, g, leaverID, leaverAcct.ID, "LEAVERSHOP", when, "-9999", false)
+
+	items, err := agg.TopMerchants(ctx, hh.ID, time.Time{}, time.Time{}, 10)
+	if err != nil {
+		t.Fatalf("TopMerchants: %v", err)
+	}
+	if len(items) != 1 || items[0].Merchant != "OWNERSHOP" {
+		t.Errorf("items = %+v, want only OWNERSHOP (in-grace leaver excluded)", items)
+	}
+}
+
+// TestAggregator_CashFlow_PrivacyAndZeroFill covers (a)/(b) plus the
+// zero-fill contract: a quiet month still appears, balance_only/private
+// spend never surfaces.
+func TestAggregator_CashFlow_PrivacyAndZeroFill(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	agg.SetClock(func() time.Time { return time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) })
+	ownerID := seedUser(t, g, "cf-owner")
+	hh := seedHouseholdRow(t, g, ownerID, "CF", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+
+	full := seedAccount(t, g, ownerID, "cf-full")
+	balOnly := seedAccount(t, g, ownerID, "cf-bal-only")
+	setShare(t, g, full.ID, hh.ID, model.VisibilityBalanceAndTxns)
+	setShare(t, g, balOnly.ID, hh.ID, model.VisibilityBalanceOnly)
+
+	seedTxn(t, g, ownerID, full.ID, "500", nil, time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC))
+	seedTxn(t, g, ownerID, full.ID, "-50", nil, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC))
+	seedTxn(t, g, ownerID, balOnly.ID, "-9999", nil, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC))
+
+	rows, err := agg.CashFlow(ctx, hh.ID, 3) // March, April, May
+	if err != nil {
+		t.Fatalf("CashFlow: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("got %d rows, want 3", len(rows))
+	}
+	byMonth := map[string]household.CashFlowMonth{}
+	for _, r := range rows {
+		byMonth[r.Month] = r
+	}
+	may := byMonth["2026-05-01"]
+	if may.Inflow != "500" || may.Outflow != "50" || may.Net != "450" {
+		t.Errorf("May = %+v, want inflow=500 outflow=50 net=450 (balance_only spend excluded)", may)
+	}
+	apr := byMonth["2026-04-01"]
+	if apr.Inflow != "0" || apr.Outflow != "0" {
+		t.Errorf("April should be zero-padded, got %+v", apr)
+	}
+}
+
+// TestAggregator_CashFlow_InGraceExcluded covers (c) for CashFlow.
+func TestAggregator_CashFlow_InGraceExcluded(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	agg.SetClock(func() time.Time { return time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) })
+	ownerID := seedUser(t, g, "cf-grace-owner")
+	leaverID := seedUser(t, g, "cf-grace-leaver")
+	hh := seedHouseholdRow(t, g, ownerID, "CFGrace", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+	leftAt := time.Now().Add(-3 * 24 * time.Hour)
+	addMember(t, g, hh.ID, leaverID, model.RoleContributor, &leftAt)
+
+	ownerAcct := seedAccount(t, g, ownerID, "cf-owner-acct")
+	leaverAcct := seedAccount(t, g, leaverID, "cf-leaver-acct")
+	setShare(t, g, ownerAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
+	setShare(t, g, leaverAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
+
+	seedTxn(t, g, ownerID, ownerAcct.ID, "-10", nil, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC))
+	seedTxn(t, g, leaverID, leaverAcct.ID, "-9999", nil, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC))
+
+	rows, err := agg.CashFlow(ctx, hh.ID, 1)
+	if err != nil {
+		t.Fatalf("CashFlow: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Outflow != "10" {
+		t.Errorf("rows = %+v, want outflow=10 (in-grace leaver excluded)", rows)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -633,6 +634,221 @@ func (a *Aggregator) AccountSummaries(ctx context.Context, householdID int64) ([
 			OwnerUserID: b.OwnerUserID,
 			Visibility:  meta[b.AccountID].visibility,
 			Complete:    b.Complete,
+		})
+	}
+	return out, nil
+}
+
+// CategoryTrendMonth is one month of a category's spend series (#367).
+// Amount is a positive decimal string (outflow sign flipped).
+type CategoryTrendMonth struct {
+	Month  string `json:"month"` // YYYY-MM-DD (first of month)
+	Amount string `json:"amount"`
+}
+
+// CategoryTrendItem is one category's month-over-month spend series across
+// shared accounts, plus the this-month vs. trailing-average comparison
+// (#367) — the household analogue of service.DashboardService.CategoryTrend.
+// Wire-identical shape so the Insights hook renders both scopes uniformly.
+type CategoryTrendItem struct {
+	CategoryID      *int64               `json:"category_id"`
+	Name            string               `json:"name"`
+	Months          []CategoryTrendMonth `json:"months"`
+	ThisMonth       string               `json:"this_month"`
+	TrailingAverage string               `json:"trailing_average"`
+}
+
+// MerchantSpendItem is one row of the household top-merchants view (#367).
+// Amount is a positive decimal string (outflow sign flipped). Sourced only
+// from balance_and_txns shares — a merchant name is transaction-level detail
+// the same visibility floor already gates.
+type MerchantSpendItem struct {
+	Merchant string `json:"merchant"`
+	Amount   string `json:"amount"`
+	Count    int64  `json:"count"`
+}
+
+// CashFlowMonth is one month of the household income-vs-spending trend
+// (#367). Inflow/Outflow are positive; Net = Inflow - Outflow.
+type CashFlowMonth struct {
+	Month   string `json:"month"`
+	Inflow  string `json:"inflow"`
+	Outflow string `json:"outflow"`
+	Net     string `json:"net"`
+}
+
+// CategoryTrend returns the month-over-month spending trend per category
+// across the household's balance_and_txns shares owned by LIVE members
+// (#367) — same visibility floor as BudgetPace/CategoryAggregates. Defaults
+// to 6 months.
+func (a *Aggregator) CategoryTrend(ctx context.Context, householdID int64, months int) ([]CategoryTrendItem, error) {
+	if err := a.requireHousehold(ctx, householdID); err != nil {
+		return nil, err
+	}
+	if months <= 0 {
+		months = 6
+	}
+	live, _, err := a.liveAndInGrace(ctx, householdID)
+	if err != nil {
+		return nil, err
+	}
+	liveUserIDs := userIDs(live)
+	txShares, err := a.repo.ListAccountShares(ctx, householdID,
+		[]string{model.VisibilityBalanceAndTxns})
+	if err != nil {
+		return nil, fmt.Errorf("list shares: %w", err)
+	}
+	txAccounts := filterAccountsByUsers(txShares, liveUserIDs)
+
+	now := a.now().UTC()
+	end := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, 0)
+	start := end.AddDate(0, -months, 0)
+
+	rows, err := a.repo.CategoryTrend(ctx, txAccounts, now, months)
+	if err != nil {
+		return nil, fmt.Errorf("category trend: %w", err)
+	}
+
+	// catKey groups by category value, not pointer identity — each SQL row
+	// scan allocates a fresh *int64 even for the same category id, so using
+	// r.CategoryID directly as (part of) a map key would split one category
+	// into as many buckets as it has rows across the window.
+	type catKey struct {
+		hasID bool
+		id    int64
+		name  string
+	}
+	byCat := map[catKey]map[time.Time]decimal.Decimal{}
+	var order []catKey
+	for _, r := range rows {
+		k := catKey{name: r.Name}
+		if r.CategoryID != nil {
+			k.hasID = true
+			k.id = *r.CategoryID
+		}
+		if _, ok := byCat[k]; !ok {
+			byCat[k] = map[time.Time]decimal.Decimal{}
+			order = append(order, k)
+		}
+		byCat[k][r.Month.UTC()] = r.Amount
+	}
+
+	items := make([]CategoryTrendItem, 0, len(order))
+	for _, k := range order {
+		monthAmts := byCat[k]
+		monthsOut := make([]CategoryTrendMonth, 0, months)
+		trailingSum := decimal.Zero
+		trailingCount := 0
+		thisMonth := decimal.Zero
+		for i := 0; i < months; i++ {
+			m := start.AddDate(0, i, 0)
+			amt, ok := monthAmts[m]
+			if !ok {
+				amt = decimal.Zero
+			}
+			monthsOut = append(monthsOut, CategoryTrendMonth{Month: m.Format("2006-01-02"), Amount: amt.String()})
+			if i == months-1 {
+				thisMonth = amt
+			} else {
+				trailingSum = trailingSum.Add(amt)
+				trailingCount++
+			}
+		}
+		trailingAvg := decimal.Zero
+		if trailingCount > 0 {
+			trailingAvg = trailingSum.Div(decimal.NewFromInt(int64(trailingCount)))
+		}
+		var categoryID *int64
+		if k.hasID {
+			id := k.id
+			categoryID = &id
+		}
+		items = append(items, CategoryTrendItem{
+			CategoryID:      categoryID,
+			Name:            k.name,
+			Months:          monthsOut,
+			ThisMonth:       thisMonth.String(),
+			TrailingAverage: trailingAvg.String(),
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		vi, _ := decimal.NewFromString(items[i].ThisMonth)
+		vj, _ := decimal.NewFromString(items[j].ThisMonth)
+		return vi.GreaterThan(vj)
+	})
+	return items, nil
+}
+
+// TopMerchants returns the top-spending merchants over [from, to) across
+// the household's balance_and_txns shares owned by LIVE members (#367).
+func (a *Aggregator) TopMerchants(ctx context.Context, householdID int64, from, to time.Time, limit int) ([]MerchantSpendItem, error) {
+	if err := a.requireHousehold(ctx, householdID); err != nil {
+		return nil, err
+	}
+	if from.IsZero() || to.IsZero() {
+		f, t, err := ResolvePeriod(PeriodCurrentMonth, a.now())
+		if err != nil {
+			return nil, err
+		}
+		from, to = f, t
+	}
+	live, _, err := a.liveAndInGrace(ctx, householdID)
+	if err != nil {
+		return nil, err
+	}
+	liveUserIDs := userIDs(live)
+	txShares, err := a.repo.ListAccountShares(ctx, householdID,
+		[]string{model.VisibilityBalanceAndTxns})
+	if err != nil {
+		return nil, fmt.Errorf("list shares: %w", err)
+	}
+	txAccounts := filterAccountsByUsers(txShares, liveUserIDs)
+
+	rows, err := a.repo.TopMerchants(ctx, txAccounts, from, to, limit)
+	if err != nil {
+		return nil, fmt.Errorf("top merchants: %w", err)
+	}
+	out := make([]MerchantSpendItem, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, MerchantSpendItem{Merchant: r.Merchant, Amount: r.Amount.String(), Count: r.Count})
+	}
+	return out, nil
+}
+
+// CashFlow returns the trailing `months` months of income vs. spending
+// across the household's balance_and_txns shares owned by LIVE members
+// (#367) — the household analogue of service.DashboardService.CashFlow.
+// Defaults to 6 months.
+func (a *Aggregator) CashFlow(ctx context.Context, householdID int64, months int) ([]CashFlowMonth, error) {
+	if err := a.requireHousehold(ctx, householdID); err != nil {
+		return nil, err
+	}
+	if months <= 0 {
+		months = 6
+	}
+	live, _, err := a.liveAndInGrace(ctx, householdID)
+	if err != nil {
+		return nil, err
+	}
+	liveUserIDs := userIDs(live)
+	txShares, err := a.repo.ListAccountShares(ctx, householdID,
+		[]string{model.VisibilityBalanceAndTxns})
+	if err != nil {
+		return nil, fmt.Errorf("list shares: %w", err)
+	}
+	txAccounts := filterAccountsByUsers(txShares, liveUserIDs)
+
+	rows, err := a.repo.CashFlowByMonth(ctx, txAccounts, a.now(), months)
+	if err != nil {
+		return nil, fmt.Errorf("cash flow: %w", err)
+	}
+	out := make([]CashFlowMonth, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, CashFlowMonth{
+			Month:   r.Month.Format("2006-01-02"),
+			Inflow:  r.Inflow.String(),
+			Outflow: r.Outflow.String(),
+			Net:     r.Net.String(),
 		})
 	}
 	return out, nil

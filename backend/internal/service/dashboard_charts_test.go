@@ -467,3 +467,177 @@ func TestDashboard_Summarize_ByCategoryExcludesNonFlowKinds(t *testing.T) {
 		t.Errorf("by_category = %+v, want empty (opening_balance + trade_leg rows must not leak in as bogus spending)", summary.ByCategory)
 	}
 }
+
+// seedMerchantTxn seeds a transaction with the merchant/description fields
+// TopMerchants groups by, plus an explicit kind (empty string → DB default
+// 'flow') — for CategoryTrend/TopMerchants coverage.
+func seedMerchantTxn(
+	t *testing.T, g *gorm.DB, userID, accountID int64, kind string,
+	merchant, descClean, desc *string, categoryID *int64,
+	date time.Time, amt decimal.Decimal, isTransfer bool,
+) {
+	t.Helper()
+	tx := &model.Transaction{
+		UserID: userID, AccountID: accountID, CategoryID: categoryID,
+		Kind:             kind,
+		MerchantName:     merchant,
+		DescriptionClean: descClean,
+		Description:      desc,
+		Amount:           amt,
+		TransactionDate:  date,
+		Source:           "manual",
+		IsTransfer:       isTransfer,
+	}
+	if err := g.Create(tx).Error; err != nil {
+		t.Fatalf("seed merchant txn: %v", err)
+	}
+}
+
+// TestDashboard_CategoryTrend_ThisMonthVsTrailingAverage: three months of
+// groceries spend (100, 100, 300) — the trailing average over the first two
+// months (100) is compared against the current month (300). A quiet month
+// zero-fills instead of dropping out of the series.
+func TestDashboard_CategoryTrend_ThisMonthVsTrailingAverage(t *testing.T) {
+	svc, userID, accountID, g := newDashboardSvc(t)
+	ctx := context.Background()
+
+	suffix := time.Now().Format("150405.000000")
+	groceries := &model.Category{Name: "TrendGroceries-" + suffix, Slug: "trend-g-" + suffix}
+	if err := g.Create(groceries).Error; err != nil {
+		t.Fatalf("seed cat: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, groceries.ID) })
+
+	// Clock is fixed at 2026-05-15 (see newDashboardSvc). 3-month window:
+	// March, April, May.
+	seedChartTxn(t, g, userID, accountID, &groceries.ID, time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-100), false)
+	seedChartTxn(t, g, userID, accountID, &groceries.ID, time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-100), false)
+	seedChartTxn(t, g, userID, accountID, &groceries.ID, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-300), false)
+	// Inflow + transfer + non-flow kind must not pollute the trend.
+	seedChartTxn(t, g, userID, accountID, &groceries.ID, time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(200), false)
+	seedChartTxn(t, g, userID, accountID, &groceries.ID, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-9999), true)
+
+	items, err := svc.CategoryTrend(ctx, userID, 3)
+	if err != nil {
+		t.Fatalf("CategoryTrend: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d categories, want 1", len(items))
+	}
+	item := items[0]
+	if item.Name != groceries.Name {
+		t.Errorf("Name = %q, want %q", item.Name, groceries.Name)
+	}
+	if len(item.Months) != 3 {
+		t.Fatalf("got %d months, want 3", len(item.Months))
+	}
+	if item.Months[0].Month != "2026-03-01" || item.Months[0].Amount != "100" {
+		t.Errorf("March = %+v, want {2026-03-01 100}", item.Months[0])
+	}
+	if item.Months[2].Month != "2026-05-01" || item.Months[2].Amount != "300" {
+		t.Errorf("May = %+v, want {2026-05-01 300}", item.Months[2])
+	}
+	if item.ThisMonth != "300" {
+		t.Errorf("ThisMonth = %s, want 300", item.ThisMonth)
+	}
+	if item.TrailingAverage != "100" {
+		t.Errorf("TrailingAverage = %s, want 100 (avg of Mar+Apr)", item.TrailingAverage)
+	}
+}
+
+// TestDashboard_CategoryTrend_TenantIsolation: user B's spend must never
+// appear in user A's category trend.
+func TestDashboard_CategoryTrend_TenantIsolation(t *testing.T) {
+	svc, userA, _, g := newDashboardSvc(t)
+	ctx := context.Background()
+	userB := seedTestUser(t, g)
+	accB := &model.Account{
+		UserID: userB, Name: "TrendB-" + time.Now().Format("150405.000000"),
+		InstitutionSlug: "fixture", AccountType: "checking", Currency: "USD",
+	}
+	if err := g.Create(accB).Error; err != nil {
+		t.Fatalf("seed B account: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("account_id = ?", accB.ID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, accB.ID)
+	})
+	seedChartTxn(t, g, userB, accB.ID, nil, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-9999), false)
+
+	items, err := svc.CategoryTrend(ctx, userA, 3)
+	if err != nil {
+		t.Fatalf("CategoryTrend: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("user A got %d categories, want 0 — user B's spend leaked", len(items))
+	}
+}
+
+// TestDashboard_TopMerchants_GroupsAndExcludesTransfersAndNonFlow: outflows
+// group by merchant_name (falling back to description_clean), inflows and
+// transfers are excluded, and a non-'flow' kind (trade leg) never counts as
+// spend — the same #351 regression class covered for by-category.
+func TestDashboard_TopMerchants_GroupsAndExcludesTransfersAndNonFlow(t *testing.T) {
+	svc, userID, accountID, g := newDashboardSvc(t)
+	ctx := context.Background()
+	usdID := testutil.LookupUSDAssetID(t, g)
+
+	whole := "WHOLEFDS"
+	target := "TARGET"
+	targetClean := "Target"
+	d := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
+	seedMerchantTxn(t, g, userID, accountID, "", &whole, nil, nil, nil, d, decimal.NewFromInt(-50), false)
+	seedMerchantTxn(t, g, userID, accountID, "", &whole, nil, nil, nil, d, decimal.NewFromInt(-25), false)
+	// No merchant_name → falls back to description_clean.
+	seedMerchantTxn(t, g, userID, accountID, "", nil, &targetClean, &target, nil, d, decimal.NewFromInt(-40), false)
+	// Inflow must not count.
+	seedMerchantTxn(t, g, userID, accountID, "", &whole, nil, nil, nil, d, decimal.NewFromInt(500), false)
+	// Transfer must not count.
+	seedMerchantTxn(t, g, userID, accountID, "", &whole, nil, nil, nil, d, decimal.NewFromInt(-999), true)
+	// Non-flow kind (trade leg) must not count even though it carries a
+	// merchant-shaped description and a negative amount.
+	seedNetWorthTxn(t, g, userID, accountID, usdID, model.KindTradeLeg, d, "-777")
+
+	items, err := svc.TopMerchants(ctx, userID, time.Time{}, time.Time{}, 10)
+	if err != nil {
+		t.Fatalf("TopMerchants: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("got %d merchants, want 2; items=%+v", len(items), items)
+	}
+	if items[0].Merchant != whole || items[0].Amount != "75" || items[0].Count != 2 {
+		t.Errorf("first merchant = %+v, want {%s 75 2}", items[0], whole)
+	}
+	if items[1].Merchant != targetClean || items[1].Amount != "40" || items[1].Count != 1 {
+		t.Errorf("second merchant = %+v, want {%s 40 1}", items[1], targetClean)
+	}
+}
+
+// TestDashboard_TopMerchants_TenantIsolation: user B's merchant spend must
+// never appear in user A's top-merchants view.
+func TestDashboard_TopMerchants_TenantIsolation(t *testing.T) {
+	svc, userA, _, g := newDashboardSvc(t)
+	ctx := context.Background()
+	userB := seedTestUser(t, g)
+	accB := &model.Account{
+		UserID: userB, Name: "MerchB-" + time.Now().Format("150405.000000"),
+		InstitutionSlug: "fixture", AccountType: "checking", Currency: "USD",
+	}
+	if err := g.Create(accB).Error; err != nil {
+		t.Fatalf("seed B account: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("account_id = ?", accB.ID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, accB.ID)
+	})
+	merchant := "SNEAKY-CORP"
+	seedMerchantTxn(t, g, userB, accB.ID, "", &merchant, nil, nil, nil, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-9999), false)
+
+	items, err := svc.TopMerchants(ctx, userA, time.Time{}, time.Time{}, 10)
+	if err != nil {
+		t.Fatalf("TopMerchants: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("user A got %d merchants, want 0 — user B's spend leaked", len(items))
+	}
+}

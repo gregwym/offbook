@@ -37,6 +37,9 @@ func (h *HouseholdAggregatorHandler) Register(g *gin.RouterGroup) {
 	r.GET("/insights/allocation", h.Allocation)
 	r.GET("/insights/net-worth", h.NetWorthTrend)
 	r.GET("/insights/accounts", h.AccountSummaries)
+	r.GET("/insights/category-trend", h.CategoryTrend)
+	r.GET("/insights/top-merchants", h.TopMerchants)
+	r.GET("/insights/cash-flow", h.CashFlow)
 }
 
 func (h *HouseholdAggregatorHandler) requireHousehold(c *gin.Context) (int64, bool) {
@@ -155,6 +158,76 @@ func (h *HouseholdAggregatorHandler) AccountSummaries(c *gin.Context) {
 		return
 	}
 	out, err := h.agg.AccountSummaries(c.Request.Context(), hhID)
+	if err != nil {
+		writeAggregatorErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out, "total": int64(len(out))})
+}
+
+// CategoryTrend handles ?months=6 (default 6, capped at 36) — the household
+// month-over-month category spending trend (#367).
+func (h *HouseholdAggregatorHandler) CategoryTrend(c *gin.Context) {
+	hhID, ok := h.requireHousehold(c)
+	if !ok {
+		return
+	}
+	months := readMonthsParam(c, 6, 36)
+	if months < 0 {
+		return
+	}
+	out, err := h.agg.CategoryTrend(c.Request.Context(), hhID, months)
+	if err != nil {
+		writeAggregatorErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out, "total": int64(len(out))})
+}
+
+// TopMerchants handles ?from=YYYY-MM-DD&to=YYYY-MM-DD&limit=10 — the
+// household top-merchants view (#367). Bounds default to the current
+// calendar month; limit defaults to 10, capped at 50.
+func (h *HouseholdAggregatorHandler) TopMerchants(c *gin.Context) {
+	hhID, ok := h.requireHousehold(c)
+	if !ok {
+		return
+	}
+	from, to, ok := readFromToParams(c)
+	if !ok {
+		return
+	}
+	limit := 10
+	if v := c.Query("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be a positive integer", "code": "INVALID_REQUEST"})
+			return
+		}
+		if n > 50 {
+			n = 50
+		}
+		limit = n
+	}
+	out, err := h.agg.TopMerchants(c.Request.Context(), hhID, from, to, limit)
+	if err != nil {
+		writeAggregatorErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out, "total": int64(len(out))})
+}
+
+// CashFlow handles ?months=6 (default 6, capped at 36) — the household
+// income-vs-spending trend by month (#367).
+func (h *HouseholdAggregatorHandler) CashFlow(c *gin.Context) {
+	hhID, ok := h.requireHousehold(c)
+	if !ok {
+		return
+	}
+	months := readMonthsParam(c, 6, 36)
+	if months < 0 {
+		return
+	}
+	out, err := h.agg.CashFlow(c.Request.Context(), hhID, months)
 	if err != nil {
 		writeAggregatorErr(c, err)
 		return

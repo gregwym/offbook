@@ -38,6 +38,9 @@ export const handlers = [
   http.get(`${API}/dashboard/summary`, () => item(fx.dashboardSummary)),
   http.get(`${API}/dashboard/net-worth`, () => list(fx.netWorthTrend)),
   http.get(`${API}/dashboard/allocation`, () => list(fx.allocation)),
+  http.get(`${API}/dashboard/category-trend`, () => list(fx.categoryTrend)),
+  http.get(`${API}/dashboard/top-merchants`, () => list(fx.topMerchants)),
+  http.get(`${API}/dashboard/cash-flow`, () => list(fx.cashFlow)),
 
   // Plaid (Settings — Linked Institutions)
   http.get(`${API}/plaid/items`, () => list(fx.plaidItems)),
@@ -53,4 +56,7 @@ export const handlers = [
   http.get(`${API}/h/insights/allocation`, () => list(fx.householdAllocation)),
   http.get(`${API}/h/insights/net-worth`, () => list(fx.householdNetWorthTrend)),
   http.get(`${API}/h/insights/accounts`, () => list(fx.householdAccountSummaries)),
+  http.get(`${API}/h/insights/category-trend`, () => list(fx.householdCategoryTrend)),
+  http.get(`${API}/h/insights/top-merchants`, () => list(fx.householdTopMerchants)),
+  http.get(`${API}/h/insights/cash-flow`, () => list(fx.householdCashFlow)),
 ]

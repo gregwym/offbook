@@ -28,6 +28,8 @@ func (h *DashboardHandler) Register(g *gin.RouterGroup) {
 	g.GET("/dashboard/cash-flow", h.CashFlow)
 	g.GET("/dashboard/net-worth", h.NetWorth)
 	g.GET("/dashboard/allocation", h.Allocation)
+	g.GET("/dashboard/category-trend", h.CategoryTrend)
+	g.GET("/dashboard/top-merchants", h.TopMerchants)
 }
 
 // Allocation returns the user's positions rolled up by asset kind, valued
@@ -45,12 +47,28 @@ func (h *DashboardHandler) Allocation(c *gin.Context) {
 // SpendByCategory handles ?from=YYYY-MM-DD&to=YYYY-MM-DD. Either bound
 // can be omitted to default to the current calendar month.
 func (h *DashboardHandler) SpendByCategory(c *gin.Context) {
-	var from, to time.Time
+	from, to, ok := readFromToParams(c)
+	if !ok {
+		return // handler already responded
+	}
+	items, err := h.svc.SpendByCategory(c.Request.Context(), auth.MustUserID(c.Request.Context()), from, to)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items, "total": int64(len(items))})
+}
+
+// readFromToParams parses the shared ?from=YYYY-MM-DD&to=YYYY-MM-DD query
+// params. Either bound may be omitted (zero time.Time — callers default to
+// the current calendar month). Writes a 400 response and returns ok=false
+// on a malformed date.
+func readFromToParams(c *gin.Context) (from, to time.Time, ok bool) {
 	if v := c.Query("from"); v != "" {
 		d, err := time.Parse("2006-01-02", v)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "from must be YYYY-MM-DD", "code": "INVALID_REQUEST"})
-			return
+			return time.Time{}, time.Time{}, false
 		}
 		from = d
 	}
@@ -58,11 +76,48 @@ func (h *DashboardHandler) SpendByCategory(c *gin.Context) {
 		d, err := time.Parse("2006-01-02", v)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "to must be YYYY-MM-DD", "code": "INVALID_REQUEST"})
-			return
+			return time.Time{}, time.Time{}, false
 		}
 		to = d
 	}
-	items, err := h.svc.SpendByCategory(c.Request.Context(), auth.MustUserID(c.Request.Context()), from, to)
+	return from, to, true
+}
+
+// CategoryTrend handles ?months=6 (default 6, capped at 36) — the
+// month-over-month category spending trend (#367).
+func (h *DashboardHandler) CategoryTrend(c *gin.Context) {
+	months := readMonthsParam(c, 6, 36)
+	if months < 0 {
+		return
+	}
+	items, err := h.svc.CategoryTrend(c.Request.Context(), auth.MustUserID(c.Request.Context()), months)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items, "total": int64(len(items))})
+}
+
+// TopMerchants handles ?from=YYYY-MM-DD&to=YYYY-MM-DD&limit=10. Bounds
+// default to the current calendar month; limit defaults to 10, capped at 50.
+func (h *DashboardHandler) TopMerchants(c *gin.Context) {
+	from, to, ok := readFromToParams(c)
+	if !ok {
+		return
+	}
+	limit := 10
+	if v := c.Query("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be a positive integer", "code": "INVALID_REQUEST"})
+			return
+		}
+		if n > 50 {
+			n = 50
+		}
+		limit = n
+	}
+	items, err := h.svc.TopMerchants(c.Request.Context(), auth.MustUserID(c.Request.Context()), from, to, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
 		return

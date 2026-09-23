@@ -26,9 +26,11 @@ GET /api/v1/categorization-verdicts
 GET /api/v1/dashboard/allocation
 GET /api/v1/dashboard/budget-alerts
 GET /api/v1/dashboard/cash-flow
+GET /api/v1/dashboard/category-trend
 GET /api/v1/dashboard/net-worth
 GET /api/v1/dashboard/spend-by-category
 GET /api/v1/dashboard/summary
+GET /api/v1/dashboard/top-merchants
 GET /api/v1/h/ai/context
 GET /api/v1/h/ai/threads
 GET /api/v1/h/ai/threads/:id/messages
@@ -37,7 +39,10 @@ GET /api/v1/h/dashboard
 GET /api/v1/h/goals/progress
 GET /api/v1/h/insights/accounts
 GET /api/v1/h/insights/allocation
+GET /api/v1/h/insights/cash-flow
+GET /api/v1/h/insights/category-trend
 GET /api/v1/h/insights/net-worth
+GET /api/v1/h/insights/top-merchants
 GET /api/v1/health
 GET /api/v1/households/:id
 GET /api/v1/households/:id/members
