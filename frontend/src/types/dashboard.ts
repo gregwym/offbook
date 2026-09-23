@@ -64,3 +64,30 @@ export type AssetClassAllocation = {
   // partial sum (#282).
   complete: boolean
 }
+
+// CategoryTrendMonth is one month of a category's spend series. Amount is
+// a positive decimal string (outflow sign flipped), zero-filled for months
+// with no spend in that category.
+export type CategoryTrendMonth = {
+  month: string // YYYY-MM-DD (first of month)
+  amount: string
+}
+
+// CategoryTrendItem mirrors backend service.CategoryTrendItem (#367):
+// month-over-month spend per category plus the this-month vs.
+// trailing-average comparison.
+export type CategoryTrendItem = {
+  category_id: number | null
+  name: string
+  months: CategoryTrendMonth[]
+  this_month: string
+  trailing_average: string
+}
+
+// MerchantSpendItem mirrors backend service.MerchantSpendItem (#367).
+// Amount is a positive decimal string (outflow sign flipped).
+export type MerchantSpendItem = {
+  merchant: string
+  amount: string
+  count: number
+}

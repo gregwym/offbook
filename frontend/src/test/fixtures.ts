@@ -7,11 +7,21 @@ import type { Asset } from '../types/asset'
 import type { Budget, BudgetSpend } from '../types/budget'
 import type { Category } from '../types/category'
 import type { CategorizationRule } from '../types/categorizationRule'
-import type { AssetClassAllocation, DashboardSummary, NetWorthPoint } from '../types/dashboard'
+import type {
+  AssetClassAllocation,
+  CashFlowMonth,
+  CategoryTrendItem,
+  DashboardSummary,
+  MerchantSpendItem,
+  NetWorthPoint,
+} from '../types/dashboard'
 import type {
   HouseholdAccountSummary,
   HouseholdAssetClassAllocation,
+  HouseholdCashFlowMonth,
+  HouseholdCategoryTrendItem,
   HouseholdDashboard,
+  HouseholdMerchantSpendItem,
   HouseholdNetWorthPoint,
 } from '../types/householdAggregator'
 import type { HouseholdDetail, MembersListing } from '../types/household'
@@ -186,6 +196,32 @@ export const allocation: AssetClassAllocation[] = [
   { kind: 'cash', value: '10000.000000000000000000', complete: true },
 ]
 
+export const categoryTrend: CategoryTrendItem[] = [
+  {
+    category_id: 1,
+    name: 'Groceries',
+    months: [
+      { month: '2026-06-01', amount: '100.000000000000000000' },
+      { month: '2026-07-01', amount: '120.000000000000000000' },
+    ],
+    this_month: '120.000000000000000000',
+    trailing_average: '100.000000000000000000',
+  },
+]
+
+export const topMerchants: MerchantSpendItem[] = [
+  { merchant: 'Whole Foods', amount: '120.000000000000000000', count: 3 },
+]
+
+export const cashFlow: CashFlowMonth[] = [
+  {
+    month: '2026-07-01',
+    inflow: '5000.000000000000000000',
+    outflow: '3000.000000000000000000',
+    net: '2000.000000000000000000',
+  },
+]
+
 export const userSettings: UserSettingsView = {
   user_id: 1,
   preferred_provider: 'claude',
@@ -230,3 +266,6 @@ export const householdDashboard: HouseholdDashboard = {
 export const householdAllocation: HouseholdAssetClassAllocation[] = []
 export const householdNetWorthTrend: HouseholdNetWorthPoint[] = []
 export const householdAccountSummaries: HouseholdAccountSummary[] = []
+export const householdCategoryTrend: HouseholdCategoryTrendItem[] = []
+export const householdTopMerchants: HouseholdMerchantSpendItem[] = []
+export const householdCashFlow: HouseholdCashFlowMonth[] = []

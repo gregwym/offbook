@@ -3,8 +3,10 @@ import type {
   AssetClassAllocation,
   BudgetAlert,
   CashFlowMonth,
+  CategoryTrendItem,
   DashboardPeriod,
   DashboardSummary,
+  MerchantSpendItem,
   NetWorthPoint,
   SpendByCategoryItem,
 } from '../types/dashboard'
@@ -38,5 +40,19 @@ export async function getNetWorth(months = 12): Promise<NetWorthPoint[]> {
 
 export async function getAllocation(): Promise<AssetClassAllocation[]> {
   const res = await apiClient.get<ApiList<AssetClassAllocation>>('/dashboard/allocation')
+  return res.data.data
+}
+
+export async function getCategoryTrend(months = 6): Promise<CategoryTrendItem[]> {
+  const res = await apiClient.get<ApiList<CategoryTrendItem>>('/dashboard/category-trend', {
+    params: { months },
+  })
+  return res.data.data
+}
+
+export async function getTopMerchants(limit = 10): Promise<MerchantSpendItem[]> {
+  const res = await apiClient.get<ApiList<MerchantSpendItem>>('/dashboard/top-merchants', {
+    params: { limit },
+  })
   return res.data.data
 }

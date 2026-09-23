@@ -92,3 +92,30 @@ export type HouseholdAccountSummary = {
   visibility: 'balance_only' | 'balance_and_txns'
   complete: boolean
 }
+
+// HouseholdCategoryTrendItem mirrors service/household.CategoryTrendItem
+// (#367) — wire-identical to the personal CategoryTrendItem shape so the
+// Insights hook renders both scopes uniformly.
+export type HouseholdCategoryTrendItem = {
+  category_id: number | null
+  name: string
+  months: Array<{ month: string; amount: string }>
+  this_month: string
+  trailing_average: string
+}
+
+// HouseholdMerchantSpendItem mirrors service/household.MerchantSpendItem
+// (#367). Amount is a positive decimal string (outflow sign flipped).
+export type HouseholdMerchantSpendItem = {
+  merchant: string
+  amount: string
+  count: number
+}
+
+// HouseholdCashFlowMonth mirrors service/household.CashFlowMonth (#367).
+export type HouseholdCashFlowMonth = {
+  month: string
+  inflow: string
+  outflow: string
+  net: string
+}

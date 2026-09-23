@@ -106,6 +106,22 @@ type HouseholdAggregatorRepository interface {
 	// row at-or-after it (and not denominated in the owner's primary
 	// currency) marks the account incomplete (#339).
 	AccountBalances(ctx context.Context, accountIDs []int64, freshAfter time.Time) ([]AccountBalanceRow, error)
+
+	// CategoryTrend mirrors DashboardRepository.CategoryTrend, scoped to the
+	// given account set instead of a single user (#367): SUM(-amount)
+	// FILTER (amount < 0) grouped by (category, month) over the trailing
+	// `months` calendar months ending at the month containing `now`. Same
+	// flow + transfer-excluded filter. Empty accountIDs returns nil.
+	CategoryTrend(ctx context.Context, accountIDs []int64, now time.Time, months int) ([]CategoryMonthAmount, error)
+
+	// TopMerchants mirrors DashboardRepository.TopMerchants, scoped to the
+	// given account set (#367). Empty accountIDs returns nil.
+	TopMerchants(ctx context.Context, accountIDs []int64, from, to time.Time, limit int) ([]MerchantSpendItem, error)
+
+	// CashFlowByMonth mirrors DashboardRepository.CashFlowByMonth, scoped to
+	// the given account set — income vs. spending trend by month (#367).
+	// Empty accountIDs returns nil.
+	CashFlowByMonth(ctx context.Context, accountIDs []int64, now time.Time, months int) ([]CashFlowMonth, error)
 }
 
 // AllocationPosition is one live position plus its asset kind, fed to the
@@ -541,4 +557,163 @@ func (r *householdAggregatorRepo) ListPersonalThreadsForUser(ctx context.Context
 		Limit(limit).
 		Find(&out).Error
 	return out, err
+}
+
+// CategoryTrend: outflows only, transfers excluded, grouped by (category,
+// month) across the given account set, over the trailing `months` calendar
+// months ending at the month containing `now`. Mirrors dashboardRepo's
+// CategoryTrend, scoped by account set instead of user (#367).
+func (r *householdAggregatorRepo) CategoryTrend(ctx context.Context, accountIDs []int64, now time.Time, months int) ([]CategoryMonthAmount, error) {
+	if len(accountIDs) == 0 {
+		return nil, nil
+	}
+	if months <= 0 {
+		months = 6
+	}
+	now = now.UTC()
+	end := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, 0)
+	start := end.AddDate(0, -months, 0)
+
+	type rawRow struct {
+		CategoryID *int64
+		Name       *string
+		Month      time.Time
+		Amount     string
+	}
+	var rows []rawRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			t.category_id                                     AS category_id,
+			c.name                                             AS name,
+			date_trunc('month', t.transaction_date)::timestamptz AS month,
+			COALESCE(SUM(-t.amount), 0)::text                  AS amount
+		FROM transactions t
+		LEFT JOIN categories c ON c.id = t.category_id
+		WHERE t.deleted_at IS NULL
+		  AND t.account_id IN ?
+		  AND t.is_transfer = FALSE
+		  AND t.kind = 'flow'
+		  AND t.amount < 0
+		  AND t.transaction_date >= ?
+		  AND t.transaction_date <  ?
+		GROUP BY t.category_id, c.name, date_trunc('month', t.transaction_date)
+		ORDER BY month, name
+	`, accountIDs, start, end).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CategoryMonthAmount, 0, len(rows))
+	for _, row := range rows {
+		amt, _ := decimal.NewFromString(row.Amount)
+		name := "Uncategorized"
+		if row.Name != nil {
+			name = *row.Name
+		}
+		out = append(out, CategoryMonthAmount{
+			CategoryID: row.CategoryID,
+			Name:       name,
+			Month:      row.Month.UTC(),
+			Amount:     amt,
+		})
+	}
+	return out, nil
+}
+
+// TopMerchants mirrors dashboardRepo's TopMerchants, scoped by account set.
+func (r *householdAggregatorRepo) TopMerchants(ctx context.Context, accountIDs []int64, from, to time.Time, limit int) ([]MerchantSpendItem, error) {
+	if len(accountIDs) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	type rawRow struct {
+		Merchant string
+		Amount   string
+		Count    int64
+	}
+	var rows []rawRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			COALESCE(NULLIF(t.merchant_name, ''), NULLIF(t.description_clean, ''), t.description, 'Unknown') AS merchant,
+			COALESCE(SUM(-t.amount), 0)::text AS amount,
+			COUNT(*)                          AS count
+		FROM transactions t
+		WHERE t.deleted_at IS NULL
+		  AND t.account_id IN ?
+		  AND t.is_transfer = FALSE
+		  AND t.kind = 'flow'
+		  AND t.amount < 0
+		  AND t.transaction_date >= ?
+		  AND t.transaction_date <  ?
+		GROUP BY merchant
+		ORDER BY SUM(-t.amount) DESC
+		LIMIT ?
+	`, accountIDs, from, to, limit).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]MerchantSpendItem, 0, len(rows))
+	for _, row := range rows {
+		amt, _ := decimal.NewFromString(row.Amount)
+		out = append(out, MerchantSpendItem{Merchant: row.Merchant, Amount: amt, Count: row.Count})
+	}
+	return out, nil
+}
+
+// CashFlowByMonth mirrors dashboardRepo's CashFlowByMonth, scoped by
+// account set. Empty months (no activity) are zero-filled in Go so a quiet
+// month doesn't drop out of the trend.
+func (r *householdAggregatorRepo) CashFlowByMonth(ctx context.Context, accountIDs []int64, now time.Time, months int) ([]CashFlowMonth, error) {
+	if len(accountIDs) == 0 {
+		return nil, nil
+	}
+	if months <= 0 {
+		months = 6
+	}
+	now = now.UTC()
+	end := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, 0)
+	start := end.AddDate(0, -months, 0)
+
+	type rawRow struct {
+		Month   time.Time
+		Inflow  string
+		Outflow string
+	}
+	var rows []rawRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			date_trunc('month', transaction_date)::timestamptz         AS month,
+			COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0)::text   AS inflow,
+			COALESCE(SUM(-amount) FILTER (WHERE amount < 0), 0)::text  AS outflow
+		FROM transactions
+		WHERE deleted_at IS NULL
+		  AND account_id IN ?
+		  AND is_transfer = FALSE
+		  AND kind = 'flow'
+		  AND transaction_date >= ?
+		  AND transaction_date <  ?
+		GROUP BY date_trunc('month', transaction_date)
+	`, accountIDs, start, end).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	byMonth := make(map[time.Time]CashFlowMonth, len(rows))
+	for _, row := range rows {
+		in, _ := decimal.NewFromString(row.Inflow)
+		out, _ := decimal.NewFromString(row.Outflow)
+		byMonth[row.Month.UTC()] = CashFlowMonth{
+			Month: row.Month.UTC(), Inflow: in, Outflow: out, Net: in.Sub(out),
+		}
+	}
+	out := make([]CashFlowMonth, 0, months)
+	for i := 0; i < months; i++ {
+		m := start.AddDate(0, i, 0)
+		if r, ok := byMonth[m]; ok {
+			out = append(out, r)
+		} else {
+			out = append(out, CashFlowMonth{Month: m, Inflow: decimal.Zero, Outflow: decimal.Zero, Net: decimal.Zero})
+		}
+	}
+	return out, nil
 }

@@ -10,14 +10,24 @@ import { useCallback, useEffect, useState } from 'react'
 import { listAccounts } from '../api/accounts'
 import { getBudgetSpend, listBudgets } from '../api/budgets'
 import { listCategories } from '../api/categories'
-import { getAllocation, getDashboardSummary, getNetWorth } from '../api/dashboard'
+import {
+  getAllocation,
+  getCashFlow,
+  getCategoryTrend,
+  getDashboardSummary,
+  getNetWorth,
+  getTopMerchants,
+} from '../api/dashboard'
 import {
   getBudgetPace,
   getGoalProgress,
   getHouseholdAccountSummaries,
   getHouseholdAllocation,
+  getHouseholdCashFlow,
+  getHouseholdCategoryTrend,
   getHouseholdDashboard,
   getHouseholdNetWorthTrend,
+  getHouseholdTopMerchants,
 } from '../api/householdAggregator'
 import { listGoals } from '../api/savingsGoals'
 import { useScopeStore } from '../store/scopeStore'
@@ -79,6 +89,31 @@ export type InsightsAccountRow = {
   visibility?: 'balance_only' | 'balance_and_txns'
 }
 
+// InsightsCategoryTrendRow is one category's month-over-month spend series
+// plus the this-month vs. trailing-average comparison (#367).
+export type InsightsCategoryTrendRow = {
+  category_id: number | null
+  name: string
+  months: { month: string; amount: string }[]
+  this_month: string
+  trailing_average: string
+}
+
+// InsightsMerchantRow is one row of the top-merchants view (#367).
+export type InsightsMerchantRow = {
+  merchant: string
+  amount: string
+  count: number
+}
+
+// InsightsCashFlowMonth is one month of the income-vs-spending trend (#367).
+export type InsightsCashFlowMonth = {
+  month: string
+  inflow: string
+  outflow: string
+  net: string
+}
+
 export type InsightsData = {
   scope: 'personal' | 'household'
   period: { from: string; to: string }
@@ -94,6 +129,13 @@ export type InsightsData = {
   budgets: InsightsBudgetRow[]
   goals: InsightsGoalRow[]
   accounts: InsightsAccountRow[]
+  // Spending depth (#367) — fetched via their own Promise.allSettled fan-out
+  // (see loadPersonal/loadHousehold) so a failure on any one degrades just
+  // that section instead of blanking the page. Empty array = either no
+  // data or the fetch failed; the band renders its own empty state either way.
+  category_trend: InsightsCategoryTrendRow[]
+  top_merchants: InsightsMerchantRow[]
+  cash_flow: InsightsCashFlowMonth[]
   // Household-only counts. Surfaced so the page can render the
   // "live / in-grace" hint without re-fetching.
   live_member_count?: number
@@ -157,6 +199,14 @@ async function loadPersonal(): Promise<InsightsData> {
     activeBudgets.map((b) => getBudgetSpend(b.id)),
   )
 
+  // Spending-depth bands (#367) — own Promise.allSettled so a failure on
+  // any one degrades just that band, not the whole page (#266 pattern).
+  const [trendResult, merchantsResult, cashFlowResult] = await Promise.allSettled([
+    getCategoryTrend(6),
+    getTopMerchants(10),
+    getCashFlow(6),
+  ])
+
   const categoryName = new Map<number, string>()
   for (const c of categories) categoryName.set(c.id, c.name)
 
@@ -208,6 +258,9 @@ async function loadPersonal(): Promise<InsightsData> {
       source: a.plaid_account_id ? 'plaid' : 'manual',
       last_synced_at: a.last_synced_at,
     })),
+    category_trend: trendResult.status === 'fulfilled' ? trendResult.value : [],
+    top_merchants: merchantsResult.status === 'fulfilled' ? merchantsResult.value : [],
+    cash_flow: cashFlowResult.status === 'fulfilled' ? cashFlowResult.value : [],
   }
 }
 
@@ -221,6 +274,14 @@ async function loadHousehold(): Promise<InsightsData> {
       getBudgetPace('current_month'),
       getGoalProgress(),
     ])
+
+  // Spending-depth bands (#367) — own Promise.allSettled so a failure on
+  // any one degrades just that band, not the whole page (#266 pattern).
+  const [trendResult, merchantsResult, cashFlowResult] = await Promise.allSettled([
+    getHouseholdCategoryTrend(6),
+    getHouseholdTopMerchants(10),
+    getHouseholdCashFlow(6),
+  ])
 
   // BudgetPace lacks category names — surface category_id, the page
   // shows "Category #N" if we can't resolve. (The household budget
@@ -274,6 +335,9 @@ async function loadHousehold(): Promise<InsightsData> {
       owner_user_id: a.owner_user_id,
       visibility: a.visibility,
     })),
+    category_trend: trendResult.status === 'fulfilled' ? trendResult.value : [],
+    top_merchants: merchantsResult.status === 'fulfilled' ? merchantsResult.value : [],
+    cash_flow: cashFlowResult.status === 'fulfilled' ? cashFlowResult.value : [],
     live_member_count: dashboard.live_member_count,
     in_grace_count: dashboard.in_grace_count,
   }

@@ -4,7 +4,10 @@ import type {
   GoalProgressItem,
   HouseholdAccountSummary,
   HouseholdAssetClassAllocation,
+  HouseholdCashFlowMonth,
+  HouseholdCategoryTrendItem,
   HouseholdDashboard,
+  HouseholdMerchantSpendItem,
   HouseholdNetWorthPoint,
   HouseholdPeriodKey,
 } from '../types/householdAggregator'
@@ -46,5 +49,26 @@ export async function getHouseholdNetWorthTrend(months = 12): Promise<HouseholdN
 
 export async function getHouseholdAccountSummaries(): Promise<HouseholdAccountSummary[]> {
   const res = await apiClient.get<ApiList<HouseholdAccountSummary>>('/h/insights/accounts')
+  return res.data.data
+}
+
+export async function getHouseholdCategoryTrend(months = 6): Promise<HouseholdCategoryTrendItem[]> {
+  const res = await apiClient.get<ApiList<HouseholdCategoryTrendItem>>('/h/insights/category-trend', {
+    params: { months },
+  })
+  return res.data.data
+}
+
+export async function getHouseholdTopMerchants(limit = 10): Promise<HouseholdMerchantSpendItem[]> {
+  const res = await apiClient.get<ApiList<HouseholdMerchantSpendItem>>('/h/insights/top-merchants', {
+    params: { limit },
+  })
+  return res.data.data
+}
+
+export async function getHouseholdCashFlow(months = 6): Promise<HouseholdCashFlowMonth[]> {
+  const res = await apiClient.get<ApiList<HouseholdCashFlowMonth>>('/h/insights/cash-flow', {
+    params: { months },
+  })
   return res.data.data
 }

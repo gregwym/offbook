@@ -59,6 +59,20 @@ describe('useScopedInsights (personal scope)', () => {
     expect(result.current.data.budgets).toEqual([])
   })
 
+  it('drops the spending-depth bands instead of failing the whole page when category-trend errors (#367)', async () => {
+    server.use(
+      http.get(`${API}/dashboard/category-trend`, () => HttpResponse.json({ error: 'boom' }, { status: 500 })),
+    )
+    const { result } = renderHook(() => useScopedInsights())
+    await waitFor(() => expect(result.current.state).toBe('ready'))
+    if (result.current.state !== 'ready') throw new Error('unreachable')
+    expect(result.current.data.net_worth).toBe(fx.dashboardSummary.net_worth)
+    expect(result.current.data.category_trend).toEqual([])
+    // Sibling fan-out calls (top merchants, cash flow) still succeed.
+    expect(result.current.data.top_merchants).toEqual(fx.topMerchants)
+    expect(result.current.data.cash_flow).toEqual(fx.cashFlow)
+  })
+
   it('returns the full computed shape on full success', async () => {
     const { result } = renderHook(() => useScopedInsights())
     await waitFor(() => expect(result.current.state).toBe('ready'))
@@ -106,6 +120,9 @@ describe('useScopedInsights (personal scope)', () => {
         last_synced_at: null,
       },
     ])
+    expect(data.category_trend).toEqual(fx.categoryTrend)
+    expect(data.top_merchants).toEqual(fx.topMerchants)
+    expect(data.cash_flow).toEqual(fx.cashFlow)
   })
 
   afterEach(() => {
