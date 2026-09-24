@@ -85,6 +85,13 @@ type DashboardRepository interface {
 	// over [from, to) (#367). Same flow + transfer-excluded filter as
 	// SpendByCategory. Ordered by amount DESC, capped at limit.
 	TopMerchants(ctx context.Context, userID int64, from, to time.Time, limit int) ([]MerchantSpendItem, error)
+	// RecurringCandidates returns every flow, non-transfer, outflow
+	// transaction across the user's full history (#368) — merchant, amount,
+	// date — ordered by merchant then date ascending. No cadence or
+	// tolerance logic runs in SQL; the caller clusters these into recurring-
+	// charge candidates in Go so the detection rules stay in one reviewable,
+	// unit-testable place.
+	RecurringCandidates(ctx context.Context, userID int64) ([]RecurringTxnRow, error)
 }
 
 // CategoryMonthAmount is one (category, month) bucket of the month-over-month
@@ -112,6 +119,16 @@ type TradeKindAggregate struct {
 	Kind       string
 	LegCount   int64
 	GrossValue decimal.Decimal
+}
+
+// RecurringTxnRow is one flow, non-transfer, outflow transaction — a real
+// row, never derived data (#368). Amount carries its original sign
+// (negative); the service takes the absolute value for display and cost
+// math.
+type RecurringTxnRow struct {
+	Merchant string
+	Amount   decimal.Decimal
+	Date     time.Time
 }
 
 type dashboardRepo struct {
@@ -493,6 +510,43 @@ func (r *dashboardRepo) TopMerchants(ctx context.Context, userID int64, from, to
 	for _, row := range rows {
 		amt, _ := decimal.NewFromString(row.Amount)
 		out = append(out, MerchantSpendItem{Merchant: row.Merchant, Amount: amt, Count: row.Count})
+	}
+	return out, nil
+}
+
+// RecurringCandidates: flow, non-transfer outflow rows across all history,
+// same merchant resolution as TopMerchants, ordered by merchant then date
+// so the service can walk each merchant's chronological history in one pass.
+func (r *dashboardRepo) RecurringCandidates(ctx context.Context, userID int64) ([]RecurringTxnRow, error) {
+	type rawRow struct {
+		Merchant string
+		Amount   string
+		Date     time.Time
+	}
+	var rows []rawRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			COALESCE(NULLIF(t.merchant_name, ''), NULLIF(t.description_clean, ''), t.description, 'Unknown') AS merchant,
+			t.amount::text          AS amount,
+			t.transaction_date      AS date
+		FROM transactions t
+		WHERE t.deleted_at IS NULL
+		  AND t.user_id = ?
+		  AND t.is_transfer = FALSE
+		  AND t.kind = 'flow'
+		  AND t.amount < 0
+		ORDER BY merchant, t.transaction_date
+	`, userID).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RecurringTxnRow, 0, len(rows))
+	for _, row := range rows {
+		amt, err := decimal.NewFromString(row.Amount)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, RecurringTxnRow{Merchant: row.Merchant, Amount: amt, Date: row.Date.UTC()})
 	}
 	return out, nil
 }

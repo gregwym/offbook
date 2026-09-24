@@ -91,3 +91,17 @@ export type MerchantSpendItem = {
   amount: string
   count: number
 }
+
+// RecurringItem mirrors backend service.RecurringItem (#368) — a
+// deterministically detected recurring charge. last_amount and
+// monthly_equivalent are positive decimal strings (outflow sign flipped).
+// Read-only lens over real transactions; never a stored entity.
+export type RecurringItem = {
+  merchant: string
+  cadence: 'weekly' | 'monthly' | 'annual'
+  occurrences: number
+  last_amount: string
+  last_date: string // YYYY-MM-DD
+  next_expected_date: string // YYYY-MM-DD
+  monthly_equivalent: string
+}

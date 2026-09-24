@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -490,6 +491,160 @@ func (s *DashboardService) TopMerchants(ctx context.Context, userID int64, from,
 		out = append(out, MerchantSpendItem{Merchant: r.Merchant, Amount: r.Amount.String(), Count: r.Count})
 	}
 	return out, nil
+}
+
+// Recurring-detection tuning (#368). Windows are non-overlapping day-gap
+// ranges so a candidate's average gap maps to exactly one cadence; a
+// group only matches when EVERY gap (not just the average) falls inside the
+// window, which is what rejects irregular histories.
+const (
+	recurringMinOccurrences     = 3
+	recurringAmountTolerancePct = 0.15 // ±15% of the group's average |amount|
+	daysPerMonth                = 365.2425 / 12
+)
+
+type recurringCadenceWindow struct {
+	name    string
+	minDays float64
+	maxDays float64
+}
+
+var recurringCadenceWindows = []recurringCadenceWindow{
+	{name: "weekly", minDays: 6, maxDays: 8},
+	{name: "monthly", minDays: 27, maxDays: 33},
+	{name: "annual", minDays: 350, maxDays: 380},
+}
+
+// RecurringItem is one detected recurring charge (#368): same normalized
+// merchant, a regular cadence, and a consistent amount across at least
+// recurringMinOccurrences occurrences. A read-only lens over real flow rows
+// — never a stored entity, never invented data (M10 invariant). LastAmount
+// and MonthlyEquivalent are positive decimal strings (outflow sign flipped).
+type RecurringItem struct {
+	Merchant          string `json:"merchant"`
+	Cadence           string `json:"cadence"` // "weekly" | "monthly" | "annual"
+	Occurrences       int    `json:"occurrences"`
+	LastAmount        string `json:"last_amount"`
+	LastDate          string `json:"last_date"`          // YYYY-MM-DD
+	NextExpectedDate  string `json:"next_expected_date"` // YYYY-MM-DD
+	MonthlyEquivalent string `json:"monthly_equivalent"`
+}
+
+// Recurring returns the deterministic recurring-charge detection (#368),
+// ordered by monthly-equivalent cost DESC. Personal scope only — household
+// needs its own aggregator design (out of scope for #368, see issue notes).
+func (s *DashboardService) Recurring(ctx context.Context, userID int64) ([]RecurringItem, error) {
+	rows, err := s.repo.RecurringCandidates(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	byMerchant := map[string][]repository.RecurringTxnRow{}
+	var order []string
+	for _, row := range rows {
+		key := strings.ToUpper(strings.TrimSpace(row.Merchant))
+		if _, ok := byMerchant[key]; !ok {
+			order = append(order, key)
+		}
+		byMerchant[key] = append(byMerchant[key], row)
+	}
+
+	items := make([]RecurringItem, 0)
+	for _, key := range order {
+		item, ok := detectRecurringGroup(byMerchant[key])
+		if !ok {
+			continue
+		}
+		items = append(items, item)
+	}
+
+	sort.SliceStable(items, func(i, j int) bool {
+		a, _ := decimal.NewFromString(items[i].MonthlyEquivalent)
+		b, _ := decimal.NewFromString(items[j].MonthlyEquivalent)
+		return a.GreaterThan(b)
+	})
+	return items, nil
+}
+
+// detectRecurringGroup runs the deterministic cadence + amount-tolerance
+// check over one merchant's chronological occurrences (the repo query
+// orders each merchant's rows by date ascending). Returns ok=false when the
+// group doesn't clear the bar: too few occurrences, gaps that don't all fit
+// one cadence window, or amounts that vary beyond tolerance.
+func detectRecurringGroup(group []repository.RecurringTxnRow) (RecurringItem, bool) {
+	if len(group) < recurringMinOccurrences {
+		return RecurringItem{}, false
+	}
+
+	gaps := make([]float64, 0, len(group)-1)
+	for i := 1; i < len(group); i++ {
+		gaps = append(gaps, group[i].Date.Sub(group[i-1].Date).Hours()/24)
+	}
+	avgGap := averageFloat(gaps)
+
+	window, ok := matchCadenceWindow(avgGap)
+	if !ok {
+		return RecurringItem{}, false
+	}
+	for _, g := range gaps {
+		if g < window.minDays || g > window.maxDays {
+			return RecurringItem{}, false
+		}
+	}
+
+	sumAbs := decimal.Zero
+	amounts := make([]decimal.Decimal, len(group))
+	for i, row := range group {
+		amounts[i] = row.Amount.Abs()
+		sumAbs = sumAbs.Add(amounts[i])
+	}
+	avgAbs := sumAbs.Div(decimal.NewFromInt(int64(len(group))))
+	if avgAbs.IsZero() {
+		return RecurringItem{}, false
+	}
+	tolerance := avgAbs.Mul(decimal.NewFromFloat(recurringAmountTolerancePct))
+	for _, amt := range amounts {
+		if amt.Sub(avgAbs).Abs().GreaterThan(tolerance) {
+			return RecurringItem{}, false
+		}
+	}
+
+	last := group[len(group)-1]
+	// avgGap/daysPerMonth are day-count ratios, not monetary values — the
+	// only float→decimal conversion is this scalar multiplier, never a raw
+	// dollar amount (money stays in decimal throughout).
+	monthlyRatio := decimal.NewFromFloat(daysPerMonth).Div(decimal.NewFromFloat(avgGap))
+	nextExpected := last.Date.AddDate(0, 0, int(math.Round(avgGap)))
+
+	return RecurringItem{
+		Merchant:          last.Merchant,
+		Cadence:           window.name,
+		Occurrences:       len(group),
+		LastAmount:        last.Amount.Abs().String(),
+		LastDate:          last.Date.Format("2006-01-02"),
+		NextExpectedDate:  nextExpected.Format("2006-01-02"),
+		MonthlyEquivalent: avgAbs.Mul(monthlyRatio).String(),
+	}, true
+}
+
+func matchCadenceWindow(avgGap float64) (recurringCadenceWindow, bool) {
+	for _, w := range recurringCadenceWindows {
+		if avgGap >= w.minDays && avgGap <= w.maxDays {
+			return w, true
+		}
+	}
+	return recurringCadenceWindow{}, false
+}
+
+func averageFloat(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	sum := 0.0
+	for _, x := range xs {
+		sum += x
+	}
+	return sum / float64(len(xs))
 }
 
 // resolvePeriod returns the [from, to) window for the named period.

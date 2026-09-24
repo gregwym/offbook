@@ -8,6 +8,7 @@ import type {
   DashboardSummary,
   MerchantSpendItem,
   NetWorthPoint,
+  RecurringItem,
   SpendByCategoryItem,
 } from '../types/dashboard'
 
@@ -54,5 +55,10 @@ export async function getTopMerchants(limit = 10): Promise<MerchantSpendItem[]> 
   const res = await apiClient.get<ApiList<MerchantSpendItem>>('/dashboard/top-merchants', {
     params: { limit },
   })
+  return res.data.data
+}
+
+export async function getRecurring(): Promise<RecurringItem[]> {
+  const res = await apiClient.get<ApiList<RecurringItem>>('/dashboard/recurring')
   return res.data.data
 }

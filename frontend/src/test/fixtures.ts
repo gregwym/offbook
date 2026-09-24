@@ -14,6 +14,7 @@ import type {
   DashboardSummary,
   MerchantSpendItem,
   NetWorthPoint,
+  RecurringItem,
 } from '../types/dashboard'
 import type {
   HouseholdAccountSummary,
@@ -219,6 +220,18 @@ export const cashFlow: CashFlowMonth[] = [
     inflow: '5000.000000000000000000',
     outflow: '3000.000000000000000000',
     net: '2000.000000000000000000',
+  },
+]
+
+export const recurring: RecurringItem[] = [
+  {
+    merchant: 'Netflix',
+    cadence: 'monthly',
+    occurrences: 5,
+    last_amount: '15.990000000000000000',
+    last_date: '2026-07-05',
+    next_expected_date: '2026-08-04',
+    monthly_equivalent: '15.990000000000000000',
   },
 ]
 
