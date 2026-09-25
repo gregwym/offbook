@@ -73,6 +73,17 @@ describe('useScopedInsights (personal scope)', () => {
     expect(result.current.data.cash_flow).toEqual(fx.cashFlow)
   })
 
+  it('drops the recurring band instead of failing the whole page when recurring errors (#368)', async () => {
+    server.use(http.get(`${API}/dashboard/recurring`, () => HttpResponse.json({ error: 'boom' }, { status: 500 })))
+    const { result } = renderHook(() => useScopedInsights())
+    await waitFor(() => expect(result.current.state).toBe('ready'))
+    if (result.current.state !== 'ready') throw new Error('unreachable')
+    expect(result.current.data.net_worth).toBe(fx.dashboardSummary.net_worth)
+    expect(result.current.data.recurring).toEqual([])
+    // Sibling fan-out calls still succeed.
+    expect(result.current.data.category_trend).toEqual(fx.categoryTrend)
+  })
+
   it('returns the full computed shape on full success', async () => {
     const { result } = renderHook(() => useScopedInsights())
     await waitFor(() => expect(result.current.state).toBe('ready'))
@@ -123,6 +134,7 @@ describe('useScopedInsights (personal scope)', () => {
     expect(data.category_trend).toEqual(fx.categoryTrend)
     expect(data.top_merchants).toEqual(fx.topMerchants)
     expect(data.cash_flow).toEqual(fx.cashFlow)
+    expect(data.recurring).toEqual(fx.recurring)
   })
 
   afterEach(() => {

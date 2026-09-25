@@ -28,6 +28,7 @@ GET /api/v1/dashboard/budget-alerts
 GET /api/v1/dashboard/cash-flow
 GET /api/v1/dashboard/category-trend
 GET /api/v1/dashboard/net-worth
+GET /api/v1/dashboard/recurring
 GET /api/v1/dashboard/spend-by-category
 GET /api/v1/dashboard/summary
 GET /api/v1/dashboard/top-merchants

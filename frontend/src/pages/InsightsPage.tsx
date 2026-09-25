@@ -389,7 +389,54 @@ function SpendingBand({ data }: { data: InsightsData }) {
         <CategoryTrendList items={data.category_trend} />
         <TopMerchantsList rows={data.top_merchants} />
       </div>
+
+      {data.scope === 'personal' && <RecurringList items={data.recurring} />}
     </section>
+  )
+}
+
+// Deterministic recurring-charge detection (#368) — personal scope only.
+// Merchant, cadence, last amount, next-expected date, monthly-equivalent
+// cost; a read-only lens over real transactions, nothing invented.
+function RecurringList({ items }: { items: InsightsData['recurring'] }) {
+  return (
+    <div className="mt-5 border-t border-gray-100 pt-4">
+      <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">
+        Recurring charges
+      </h3>
+      {items.length === 0 ? (
+        <div className="mt-2 py-4 text-center text-xs text-gray-400">
+          No recurring charges detected yet.
+        </div>
+      ) : (
+        <table className="mt-2 w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs uppercase tracking-wider text-gray-400">
+              <th className="pb-1 font-medium">Merchant</th>
+              <th className="pb-1 font-medium">Cadence</th>
+              <th className="pb-1 font-medium">Last charge</th>
+              <th className="pb-1 font-medium">Next expected</th>
+              <th className="pb-1 text-right font-medium">Monthly cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((r) => (
+              <tr key={r.merchant} className="border-t border-gray-50">
+                <td className="py-1.5 text-gray-700">{r.merchant}</td>
+                <td className="py-1.5 capitalize text-gray-500">{r.cadence}</td>
+                <td className="py-1.5 text-gray-500">
+                  <AmountDisplay amount={r.last_amount} /> on {r.last_date}
+                </td>
+                <td className="py-1.5 text-gray-500">{r.next_expected_date}</td>
+                <td className="py-1.5 text-right text-gray-700">
+                  <AmountDisplay amount={r.monthly_equivalent} />/mo
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   )
 }
 

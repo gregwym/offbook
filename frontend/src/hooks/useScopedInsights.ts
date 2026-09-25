@@ -16,6 +16,7 @@ import {
   getCategoryTrend,
   getDashboardSummary,
   getNetWorth,
+  getRecurring,
   getTopMerchants,
 } from '../api/dashboard'
 import {
@@ -114,6 +115,18 @@ export type InsightsCashFlowMonth = {
   net: string
 }
 
+// InsightsRecurringRow is one deterministically detected recurring charge
+// (#368). Personal scope only — household needs its own aggregator design.
+export type InsightsRecurringRow = {
+  merchant: string
+  cadence: 'weekly' | 'monthly' | 'annual'
+  occurrences: number
+  last_amount: string
+  last_date: string
+  next_expected_date: string
+  monthly_equivalent: string
+}
+
 export type InsightsData = {
   scope: 'personal' | 'household'
   period: { from: string; to: string }
@@ -136,6 +149,9 @@ export type InsightsData = {
   category_trend: InsightsCategoryTrendRow[]
   top_merchants: InsightsMerchantRow[]
   cash_flow: InsightsCashFlowMonth[]
+  // Recurring charges (#368) — personal scope only; always empty in
+  // household scope until that surface gets its own aggregator design.
+  recurring: InsightsRecurringRow[]
   // Household-only counts. Surfaced so the page can render the
   // "live / in-grace" hint without re-fetching.
   live_member_count?: number
@@ -201,10 +217,11 @@ async function loadPersonal(): Promise<InsightsData> {
 
   // Spending-depth bands (#367) — own Promise.allSettled so a failure on
   // any one degrades just that band, not the whole page (#266 pattern).
-  const [trendResult, merchantsResult, cashFlowResult] = await Promise.allSettled([
+  const [trendResult, merchantsResult, cashFlowResult, recurringResult] = await Promise.allSettled([
     getCategoryTrend(6),
     getTopMerchants(10),
     getCashFlow(6),
+    getRecurring(),
   ])
 
   const categoryName = new Map<number, string>()
@@ -261,6 +278,7 @@ async function loadPersonal(): Promise<InsightsData> {
     category_trend: trendResult.status === 'fulfilled' ? trendResult.value : [],
     top_merchants: merchantsResult.status === 'fulfilled' ? merchantsResult.value : [],
     cash_flow: cashFlowResult.status === 'fulfilled' ? cashFlowResult.value : [],
+    recurring: recurringResult.status === 'fulfilled' ? recurringResult.value : [],
   }
 }
 
@@ -338,6 +356,10 @@ async function loadHousehold(): Promise<InsightsData> {
     category_trend: trendResult.status === 'fulfilled' ? trendResult.value : [],
     top_merchants: merchantsResult.status === 'fulfilled' ? merchantsResult.value : [],
     cash_flow: cashFlowResult.status === 'fulfilled' ? cashFlowResult.value : [],
+    // Recurring detection is personal-scope only for #368 — household needs
+    // its own aggregator design (privacy rules for cross-member cadence
+    // data aren't defined yet).
+    recurring: [],
     live_member_count: dashboard.live_member_count,
     in_grace_count: dashboard.in_grace_count,
   }

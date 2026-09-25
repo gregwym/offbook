@@ -30,6 +30,7 @@ func (h *DashboardHandler) Register(g *gin.RouterGroup) {
 	g.GET("/dashboard/allocation", h.Allocation)
 	g.GET("/dashboard/category-trend", h.CategoryTrend)
 	g.GET("/dashboard/top-merchants", h.TopMerchants)
+	g.GET("/dashboard/recurring", h.Recurring)
 }
 
 // Allocation returns the user's positions rolled up by asset kind, valued
@@ -118,6 +119,17 @@ func (h *DashboardHandler) TopMerchants(c *gin.Context) {
 		limit = n
 	}
 	items, err := h.svc.TopMerchants(c.Request.Context(), auth.MustUserID(c.Request.Context()), from, to, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items, "total": int64(len(items))})
+}
+
+// Recurring returns the deterministic recurring-charge detection (#368) —
+// personal scope only.
+func (h *DashboardHandler) Recurring(c *gin.Context) {
+	items, err := h.svc.Recurring(c.Request.Context(), auth.MustUserID(c.Request.Context()))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
 		return

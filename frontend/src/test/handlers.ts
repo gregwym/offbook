@@ -41,6 +41,7 @@ export const handlers = [
   http.get(`${API}/dashboard/category-trend`, () => list(fx.categoryTrend)),
   http.get(`${API}/dashboard/top-merchants`, () => list(fx.topMerchants)),
   http.get(`${API}/dashboard/cash-flow`, () => list(fx.cashFlow)),
+  http.get(`${API}/dashboard/recurring`, () => list(fx.recurring)),
 
   // Plaid (Settings — Linked Institutions)
   http.get(`${API}/plaid/items`, () => list(fx.plaidItems)),
