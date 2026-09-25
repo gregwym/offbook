@@ -52,6 +52,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
+	t.Cleanup(func() { _ = db.Close(g) })
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := db.Ping(ctx, g); err != nil {
