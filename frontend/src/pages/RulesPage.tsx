@@ -109,7 +109,7 @@ export function RulesPage() {
       )}
 
       {visibleVerdicts.length > 0 && (
-        <div className="mt-6 overflow-hidden rounded-lg border border-gray-200 bg-white">
+        <div className="mt-6 overflow-x-auto rounded-lg border border-gray-200 bg-white">
           <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3">
             <Sparkles size={16} className="text-indigo-500" />
             <h2 className="text-sm font-medium text-gray-900">AI category suggestions</h2>
@@ -148,7 +148,7 @@ export function RulesPage() {
         </div>
       )}
 
-      <div className="mt-6 overflow-hidden rounded-lg border border-gray-200 bg-white">
+      <div className="mt-6 overflow-x-auto rounded-lg border border-gray-200 bg-white">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wider text-gray-500">
             <tr>

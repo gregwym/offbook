@@ -7,6 +7,7 @@ const personalRoutes = [
   '/accounts',
   '/accounts/add',
   '/transactions',
+  '/rules',
   '/budgets',
   '/savings-goals',
   '/investments',
