@@ -85,9 +85,15 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 
 	// Price refresh (ADR-0014): user-initiated, providers write into the
 	// prices time series the valuation layer already reads. CoinGecko
-	// covers crypto (Phase 1), Frankfurter/ECB covers fiat FX (Phase 2).
-	pricesSvc := prices.NewService(userRepo, positionRepo, assetRepo, priceRepo,
-		prices.NewCoinGecko(), prices.NewFrankfurter())
+	// covers crypto (Phase 1), Frankfurter/ECB covers fiat FX (Phase 2),
+	// Stooq covers US equities/ETFs/funds keylessly (#372); AlphaVantage is
+	// an opt-in reliability fallback for the same asset kinds when
+	// ALPHA_VANTAGE_API_KEY is configured.
+	priceProviders := []prices.Provider{prices.NewCoinGecko(), prices.NewFrankfurter(), prices.NewStooq()}
+	if cfg.AlphaVantageConfigured() {
+		priceProviders = append(priceProviders, prices.NewAlphaVantage(cfg.AlphaVantageAPIKey))
+	}
+	pricesSvc := prices.NewService(userRepo, positionRepo, assetRepo, priceRepo, priceProviders...)
 	priceHandler := handler.NewPriceHandler(pricesSvc)
 
 	budgetRepo := repository.NewBudgetRepository(gormDB)

@@ -288,6 +288,59 @@ func TestRefreshForUser_PartitionsAcrossProviders(t *testing.T) {
 	}
 }
 
+// failingProvider always errors — simulates a dead/rate-limited feed.
+type failingProvider struct {
+	name string
+	kind string
+}
+
+func (f *failingProvider) Name() string                { return f.name }
+func (f *failingProvider) Supports(a model.Asset) bool { return a.Kind == f.kind }
+func (f *failingProvider) Fetch(context.Context, []model.Asset, model.Asset) ([]prices.Quote, error) {
+	return nil, fmt.Errorf("%s: upstream unreachable", f.name)
+}
+
+// TestRefreshForUser_ProviderErrorDegradesRatherThanAborts: a dead/rate-
+// limited provider (#372 acceptance criteria) must not take down the rest
+// of the refresh — other providers' results still land, and the failed
+// provider's assets fall through to Skipped instead of erroring the call.
+func TestRefreshForUser_ProviderErrorDegradesRatherThanAborts(t *testing.T) {
+	g := openTestDB(t)
+	ctx := context.Background()
+	userID := seedUser(t, g)
+	acct := seedAccount(t, g, userID)
+
+	eur := testutil.LookupAssetID(t, g, "EUR", "fiat")
+	btc := testutil.LookupAssetID(t, g, "BTC", "crypto")
+	seedPosition(t, g, userID, acct.ID, eur, "100")
+	seedPosition(t, g, userID, acct.ID, btc, "0.5")
+
+	asOf := time.Date(2026, 6, 10, 15, 0, 0, 0, time.UTC)
+	dead := &failingProvider{name: "dead-crypto", kind: model.AssetKindCrypto}
+	fx := &fiatFakeProvider{asOf: asOf}
+	svc := prices.NewService(
+		repository.NewUserRepository(g),
+		repository.NewPositionRepository(g),
+		repository.NewAssetRepository(g),
+		repository.NewPriceRepository(g),
+		dead, fx,
+	)
+	t.Cleanup(func() {
+		g.Unscoped().Where("source = ? AND as_of = ?", "fiat-fake", asOf).Delete(&model.Price{})
+	})
+
+	result, err := svc.RefreshForUser(ctx, userID)
+	if err != nil {
+		t.Fatalf("RefreshForUser: %v, want no error (provider failure must degrade, not abort)", err)
+	}
+	if result.Refreshed != 1 {
+		t.Errorf("Refreshed = %d, want 1 (EUR via the healthy fx provider)", result.Refreshed)
+	}
+	if len(result.Skipped) != 1 || result.Skipped[0] != "BTC" {
+		t.Errorf("Skipped = %v, want [BTC] (the failing provider's asset)", result.Skipped)
+	}
+}
+
 // TestScheduler_RunOnce_RefreshesOptedInUsersOnly: the background pass
 // (#338 Phase 3) covers exactly the users whose auto_price_refresh setting
 // is true — consent is stored, not implied (ADR-0014 §3). Wired through the

@@ -112,3 +112,41 @@ visible, not silent — and extending the table is a one-line PR.
   wiring — no changes to valuation or storage.
 - The static symbol map is a maintenance surface; acceptable because
   misses are visible in the refresh result.
+
+## Addendum (2026-10-02): equity/ETF provider (#372)
+
+Picks the deferred Tier-3 equity source. Same seam, no changes to the
+`Provider` interface or orchestration contract above — plus one fix the new
+providers exposed.
+
+### Providers
+
+- **Stooq** (`internal/service/prices/stooq.go`) — keyless default. One CSV
+  request (`/q/l/?s=...&f=sd2t2ohlcv&h&e=csv`) covers every held equity/fund
+  symbol in a single call, batched the same way CoinGecko batches coin IDs.
+  Ticker→provider-symbol mapping is a static transform (`<ticker>.us`,
+  lowercased) rather than a lookup table — Stooq's US-listing convention is
+  regular enough not to need one. Coverage is US-listed equities/ETFs/funds
+  only; anything else is silently unsupported and surfaces as skipped.
+- **AlphaVantage** (`internal/service/prices/alphavantage.go`) — keyed,
+  opt-in reliability fallback for the same asset kinds, active only when
+  `ALPHA_VANTAGE_API_KEY` is set. `GLOBAL_QUOTE` is one call per symbol, so a
+  `Pause` (default 12s) keeps a multi-symbol `Fetch` inside the free tier's
+  ~5 req/min ceiling. Registered after Stooq, so it only ever picks up
+  symbols Stooq's pass didn't cover.
+
+Both are US-only for now (Out of Scope in #372); non-US coverage is a future
+provider, not a change to these two.
+
+### Fix: provider errors no longer abort the whole refresh
+
+The original `Service.RefreshForUser` loop returned immediately on the
+first provider `Fetch` error, which would have taken CoinGecko/Frankfurter's
+*already-fetched* results down with it the moment a flaky equity feed
+errored (exactly the failure mode #372's acceptance criteria calls out:
+"a dead/rate-limited feed degrades to stale-flagged values ... never errors
+the whole refresh"). The loop now logs a provider error, returns that
+provider's assets to the pool (so a later provider may still cover them, or
+they land in `Skipped`), and continues — matching how an unsupported/
+unquotable asset already degraded. No provider contract changed; this was a
+latent gap in the orchestration the first flaky-by-design provider exposed.

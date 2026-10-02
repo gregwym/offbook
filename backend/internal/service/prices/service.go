@@ -3,6 +3,7 @@ package prices
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ type Service struct {
 	prices    repository.PriceRepository
 	providers []Provider
 	now       func() time.Time
+	logf      func(format string, args ...any)
 }
 
 func NewService(
@@ -47,6 +49,7 @@ func NewService(
 		prices:    prices,
 		providers: providers,
 		now:       time.Now,
+		logf:      log.Printf,
 	}
 }
 
@@ -113,7 +116,13 @@ func (s *Service) RefreshForUser(ctx context.Context, userID int64) (*RefreshRes
 		}
 		quotes, err := provider.Fetch(ctx, supported, quote)
 		if err != nil {
-			return nil, fmt.Errorf("prices: provider %s: %w", provider.Name(), err)
+			// A dead/rate-limited feed must never take down the rest of the
+			// refresh (#372): log it, leave its assets in the pool for a
+			// later provider (or ultimately Skipped), and keep going. Those
+			// assets simply keep their existing stale/unpriced valuation flag.
+			s.logf("prices: provider %s: %v", provider.Name(), err)
+			remaining = append(remaining, supported...)
+			continue
 		}
 		quoted := map[int64]bool{}
 		for _, q := range quotes {
