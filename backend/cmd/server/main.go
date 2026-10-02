@@ -69,13 +69,20 @@ func main() {
 	// price-refresh (#338 Phase 3): daily background pass over users who opted
 	// in via Settings (ADR-0014 §3 — background egress needs stored consent).
 	settingsRepo := repository.NewUserSettingsRepository(gormDB)
+	// Stooq covers US equities/ETFs/funds keylessly (#372); AlphaVantage is
+	// an opt-in reliability fallback for the same asset kinds when
+	// ALPHA_VANTAGE_API_KEY is configured.
+	priceProviders := []prices.Provider{prices.NewCoinGecko(), prices.NewFrankfurter(), prices.NewStooq()}
+	if cfg.AlphaVantageConfigured() {
+		priceProviders = append(priceProviders, prices.NewAlphaVantage(cfg.AlphaVantageAPIKey))
+	}
 	priceScheduler := prices.NewScheduler(
 		prices.NewService(
 			repository.NewUserRepository(gormDB),
 			repository.NewPositionRepository(gormDB),
 			repository.NewAssetRepository(gormDB),
 			repository.NewPriceRepository(gormDB),
-			prices.NewCoinGecko(), prices.NewFrankfurter(),
+			priceProviders...,
 		),
 		settingsRepo.ListAutoRefreshUserIDs,
 	)

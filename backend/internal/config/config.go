@@ -41,6 +41,12 @@ type Config struct {
 	ClaudeAPIKey  string
 	OllamaBaseURL string
 
+	// AlphaVantageAPIKey (#372, ADR-0014 equity addendum) enables the keyed
+	// equity/ETF price provider as a reliability fallback behind the keyless
+	// Stooq default. Optional — absent means the fallback is simply unused;
+	// Stooq alone still covers the default path.
+	AlphaVantageAPIKey string
+
 	// Monitoring & alerting (#360). All optional; when neither notifier URL
 	// is set, alerts are logged only (see service/notify.Build). No fatal
 	// validation here — a broken monitoring config should never block boot.
@@ -71,6 +77,12 @@ func (c Config) PlaidConfigured() bool {
 // The AI service hides Claude from settings when this is false.
 func (c Config) ClaudeConfigured() bool {
 	return c.ClaudeAPIKey != ""
+}
+
+// AlphaVantageConfigured reports whether the keyed equity/ETF fallback
+// provider should be wired in alongside the always-on keyless Stooq default.
+func (c Config) AlphaVantageConfigured() bool {
+	return c.AlphaVantageAPIKey != ""
 }
 
 // ResolveAppEnv normalizes and validates APP_ENV. Empty → "dev" (the default
@@ -148,6 +160,8 @@ func Load() (Config, error) {
 		PlaidEnv:       getenv("PLAID_ENV", "sandbox"),
 		ClaudeAPIKey:   os.Getenv("CLAUDE_API_KEY"),
 		OllamaBaseURL:  getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+
+		AlphaVantageAPIKey: os.Getenv("ALPHA_VANTAGE_API_KEY"),
 
 		NotifyNtfyURL:           os.Getenv("NOTIFY_NTFY_URL"),
 		NotifyWebhookURL:        os.Getenv("NOTIFY_WEBHOOK_URL"),
