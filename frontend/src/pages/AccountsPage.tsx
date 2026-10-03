@@ -6,6 +6,7 @@ import { AmountDisplay } from '../components/AmountDisplay'
 import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
 import { PartialBadge } from '../components/PartialBadge'
 import { PIIPanel } from '../components/PIIPanel'
+import { SetPriceModal } from '../components/SetPriceModal'
 import { SyncStatusPill } from '../components/SyncStatusPill'
 import { TradeFormModal } from '../components/TradeFormModal'
 import { useAccountsStore } from '../store/accountsStore'
@@ -32,6 +33,9 @@ export function AccountsPage() {
   // Per-account CSV import (#330) — opens the shared modal preset to this
   // account, the v6 §03 "per-account add more" affordance.
   const [importingInto, setImportingInto] = useState<Account | null>(null)
+  // Tier-1 manual price entry (#373) — asset-agnostic, so a single modal
+  // instance serves every row's "partial" badge.
+  const [settingPrice, setSettingPrice] = useState(false)
 
   useEffect(() => {
     void fetch()
@@ -92,7 +96,18 @@ export function AccountsPage() {
                 <td className="px-4 py-2 text-gray-700">{a.last_four ?? '—'}</td>
                 <td className="px-4 py-2 text-right">
                   <AmountDisplay amount={a.balance} currency={a.currency} />
-                  {!a.balance_complete && <PartialBadge />}
+                  {!a.balance_complete && (
+                    <>
+                      <PartialBadge />
+                      <button
+                        type="button"
+                        onClick={() => setSettingPrice(true)}
+                        className="ml-1.5 align-middle text-[11px] font-medium text-indigo-600 hover:text-indigo-800"
+                      >
+                        Set price
+                      </button>
+                    </>
+                  )}
                 </td>
                 <td className="px-4 py-2 text-center">
                   <span className={a.is_active ? 'text-emerald-700' : 'text-gray-400'}>
@@ -183,6 +198,15 @@ export function AccountsPage() {
           onRecorded={() => {
             // Account balance is derived from positions × prices, so the
             // accounts list refresh picks up the post-trade value.
+            void fetch()
+          }}
+        />
+      )}
+
+      {settingPrice && (
+        <SetPriceModal
+          onClose={() => setSettingPrice(false)}
+          onSet={() => {
             void fetch()
           }}
         />
