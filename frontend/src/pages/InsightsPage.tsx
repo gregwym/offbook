@@ -37,6 +37,7 @@ import { refreshPrices } from '../api/prices'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { FALLBACK_PIE_COLORS } from '../components/chartColors'
 import { PartialBadge } from '../components/PartialBadge'
+import { SetPriceModal } from '../components/SetPriceModal'
 import { useScopedInsights, type InsightsData } from '../hooks/useScopedInsights'
 import { useScopeStore } from '../store/scopeStore'
 import { SCOPE_HOUSEHOLD } from '../types/scope'
@@ -46,6 +47,7 @@ const num = (s: string): number => Number.parseFloat(s) || 0
 export function InsightsPage() {
   const result = useScopedInsights()
   const { active, householdId } = useScopeStore()
+  const [settingPrice, setSettingPrice] = useState(false)
 
   if (active === SCOPE_HOUSEHOLD && householdId == null) {
     return (
@@ -70,7 +72,17 @@ export function InsightsPage() {
               : 'Net worth · allocation · spending · budgets · goals — at a glance.'}
           </p>
         </div>
-        <RefreshPricesButton onRefreshed={result.reload} />
+        <div className="flex shrink-0 items-start gap-2">
+          <button
+            type="button"
+            onClick={() => setSettingPrice(true)}
+            title="Set a price yourself for an asset no provider covers — a private fund, obscure ticker, or collectible."
+            className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+          >
+            Set price
+          </button>
+          <RefreshPricesButton onRefreshed={result.reload} />
+        </div>
       </div>
 
       {result.state === 'loading' && (
@@ -85,12 +97,18 @@ export function InsightsPage() {
         </div>
       )}
 
-      {result.state === 'ready' && <InsightsBody data={result.data} />}
+      {result.state === 'ready' && (
+        <InsightsBody data={result.data} onSetPrice={() => setSettingPrice(true)} />
+      )}
+
+      {settingPrice && (
+        <SetPriceModal onClose={() => setSettingPrice(false)} onSet={result.reload} />
+      )}
     </div>
   )
 }
 
-function InsightsBody({ data }: { data: InsightsData }) {
+function InsightsBody({ data, onSetPrice }: { data: InsightsData; onSetPrice: () => void }) {
   // Personal fresh-signup state: no accounts at all → single primary CTA
   // per v6 §02 A2, instead of five empty bands. Household scope keeps its
   // existing "share an account" empty state on the AccountsBand.
@@ -100,8 +118,8 @@ function InsightsBody({ data }: { data: InsightsData }) {
 
   return (
     <>
-      <NetWorthBand data={data} />
-      <AllocationBand data={data} />
+      <NetWorthBand data={data} onSetPrice={onSetPrice} />
+      <AllocationBand data={data} onSetPrice={onSetPrice} />
       <SpendingBand data={data} />
       <BudgetsGoalsBand data={data} />
       <AccountsBand data={data} />
@@ -176,7 +194,7 @@ function FreshSignupEmpty() {
 }
 
 // ───── Band 1: net worth headline + trend ─────
-function NetWorthBand({ data }: { data: InsightsData }) {
+function NetWorthBand({ data, onSetPrice }: { data: InsightsData; onSetPrice: () => void }) {
   const trend = data.net_worth_trend
   const hasPartialMonths = trend.some((p) => !p.complete)
   return (
@@ -189,7 +207,16 @@ function NetWorthBand({ data }: { data: InsightsData }) {
           <div className="mt-1 text-3xl font-semibold text-gray-900">
             <AmountDisplay amount={data.net_worth} />
             {!data.net_worth_complete && (
-              <PartialBadge title="Some assets have no recent price — this net worth is a partial sum. Try Refresh prices." />
+              <>
+                <PartialBadge title="Some assets have no recent price — this net worth is a partial sum. Try Refresh prices." />
+                <button
+                  type="button"
+                  onClick={onSetPrice}
+                  className="ml-1.5 align-middle text-[11px] font-medium text-indigo-600 hover:text-indigo-800"
+                >
+                  Set price
+                </button>
+              </>
             )}
           </div>
           <div className="mt-1 text-xs text-gray-400">
@@ -261,7 +288,7 @@ function NetWorthBand({ data }: { data: InsightsData }) {
 }
 
 // ───── Band 2: allocation donut ─────
-function AllocationBand({ data }: { data: InsightsData }) {
+function AllocationBand({ data, onSetPrice }: { data: InsightsData; onSetPrice: () => void }) {
   const rows = data.allocation
   const total = rows.reduce((acc, r) => acc + num(r.value), 0)
   const hasPartial = rows.some((r) => !r.complete)
@@ -332,9 +359,18 @@ function AllocationBand({ data }: { data: InsightsData }) {
         </div>
       )}
       {hasPartial && (
-        <div className="mt-2 text-[11px] text-amber-700">
-          Buckets marked “partial” hold assets without prices; the donut and percentages are
-          computed from the priced portion only.
+        <div className="mt-2 flex items-center gap-2 text-[11px] text-amber-700">
+          <span>
+            Buckets marked “partial” hold assets without prices; the donut and percentages are
+            computed from the priced portion only.
+          </span>
+          <button
+            type="button"
+            onClick={onSetPrice}
+            className="shrink-0 font-medium text-indigo-600 hover:text-indigo-800"
+          >
+            Set price
+          </button>
         </div>
       )}
     </section>

@@ -2,6 +2,7 @@ package prices_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service/prices"
+	"github.com/gregwym/offbook/backend/internal/service/valuation"
 	"github.com/gregwym/offbook/backend/internal/testutil"
 )
 
@@ -387,5 +389,203 @@ func TestScheduler_RunOnce_RefreshesOptedInUsersOnly(t *testing.T) {
 
 	if len(fake.requested) != 1 || fake.requested[0].ID != btc {
 		t.Errorf("provider asked for %+v, want exactly opted-in user's BTC (opt-out user's ETH must not egress)", fake.requested)
+	}
+}
+
+// seedEquityAsset creates a fresh equity asset (unique symbol per call) so
+// manual-price tests don't collide with each other or with fixture data.
+func seedEquityAsset(t *testing.T, g *gorm.DB, usdID int64) int64 {
+	t.Helper()
+	displayName := "Fixture Equity"
+	a := &model.Asset{
+		Symbol:               "MANP-" + time.Now().Format("150405.000000000"),
+		Kind:                 model.AssetKindEquity,
+		DisplayName:          &displayName,
+		Precision:            4,
+		QuoteCurrencyAssetID: &usdID,
+	}
+	if err := g.Create(a).Error; err != nil {
+		t.Fatalf("seed equity asset: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Asset{}, a.ID) })
+	return a.ID
+}
+
+// TestSetManualPrice_DefaultsToUserPrimaryCurrency: omitting quote_asset_id
+// prices the asset in the session user's own currency — the common case for
+// the "set price" affordance (#373).
+func TestSetManualPrice_DefaultsToUserPrimaryCurrency(t *testing.T) {
+	g := openTestDB(t)
+	ctx := context.Background()
+	userID := seedUser(t, g)
+	usd := testutil.LookupUSDAssetID(t, g)
+	equity := seedEquityAsset(t, g, usd)
+
+	svc := prices.NewService(
+		repository.NewUserRepository(g),
+		repository.NewPositionRepository(g),
+		repository.NewAssetRepository(g),
+		repository.NewPriceRepository(g),
+	)
+
+	asOf := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	p, err := svc.SetManualPrice(ctx, userID, prices.SetManualPriceInput{
+		AssetID: equity,
+		Price:   decimal.RequireFromString("123.45"),
+		AsOf:    asOf,
+	})
+	if err != nil {
+		t.Fatalf("SetManualPrice: %v", err)
+	}
+	if p.QuoteAssetID != usd {
+		t.Errorf("QuoteAssetID = %d, want user's primary currency %d", p.QuoteAssetID, usd)
+	}
+	if p.Source != prices.SourceManual {
+		t.Errorf("Source = %q, want %q", p.Source, prices.SourceManual)
+	}
+	if p.Price.String() != "123.45" {
+		t.Errorf("Price = %s, want 123.45", p.Price)
+	}
+
+	var row model.Price
+	if err := g.Where("asset_id = ? AND quote_asset_id = ? AND source = ?", equity, usd, prices.SourceManual).
+		First(&row).Error; err != nil {
+		t.Fatalf("manual price row not written: %v", err)
+	}
+}
+
+// TestSetManualPrice_ExplicitQuoteAsset: an explicit quote_asset_id is
+// honored rather than overridden by the user's primary currency.
+func TestSetManualPrice_ExplicitQuoteAsset(t *testing.T) {
+	g := openTestDB(t)
+	ctx := context.Background()
+	userID := seedUser(t, g)
+	usd := testutil.LookupUSDAssetID(t, g)
+	eur := testutil.LookupAssetID(t, g, "EUR", "fiat")
+	equity := seedEquityAsset(t, g, usd)
+
+	svc := prices.NewService(
+		repository.NewUserRepository(g),
+		repository.NewPositionRepository(g),
+		repository.NewAssetRepository(g),
+		repository.NewPriceRepository(g),
+	)
+
+	asOf := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	p, err := svc.SetManualPrice(ctx, userID, prices.SetManualPriceInput{
+		AssetID:      equity,
+		QuoteAssetID: &eur,
+		Price:        decimal.RequireFromString("100"),
+		AsOf:         asOf,
+	})
+	if err != nil {
+		t.Fatalf("SetManualPrice: %v", err)
+	}
+	if p.QuoteAssetID != eur {
+		t.Errorf("QuoteAssetID = %d, want explicit EUR %d", p.QuoteAssetID, eur)
+	}
+}
+
+// TestSetManualPrice_Validation covers the rejection paths: non-positive
+// price, missing as_of, unknown asset, and asset == quote asset.
+func TestSetManualPrice_Validation(t *testing.T) {
+	g := openTestDB(t)
+	ctx := context.Background()
+	userID := seedUser(t, g)
+	usd := testutil.LookupUSDAssetID(t, g)
+	equity := seedEquityAsset(t, g, usd)
+
+	svc := prices.NewService(
+		repository.NewUserRepository(g),
+		repository.NewPositionRepository(g),
+		repository.NewAssetRepository(g),
+		repository.NewPriceRepository(g),
+	)
+	asOf := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+
+	t.Run("non-positive price", func(t *testing.T) {
+		_, err := svc.SetManualPrice(ctx, userID, prices.SetManualPriceInput{
+			AssetID: equity, Price: decimal.Zero, AsOf: asOf,
+		})
+		if !errors.Is(err, prices.ErrInvalidManualPrice) {
+			t.Errorf("err = %v, want ErrInvalidManualPrice", err)
+		}
+	})
+	t.Run("missing as_of", func(t *testing.T) {
+		_, err := svc.SetManualPrice(ctx, userID, prices.SetManualPriceInput{
+			AssetID: equity, Price: decimal.RequireFromString("1"),
+		})
+		if !errors.Is(err, prices.ErrMissingAsOf) {
+			t.Errorf("err = %v, want ErrMissingAsOf", err)
+		}
+	})
+	t.Run("unknown asset", func(t *testing.T) {
+		_, err := svc.SetManualPrice(ctx, userID, prices.SetManualPriceInput{
+			AssetID: 0, Price: decimal.RequireFromString("1"), AsOf: asOf,
+		})
+		if !errors.Is(err, prices.ErrUnknownPriceAsset) {
+			t.Errorf("err = %v, want ErrUnknownPriceAsset", err)
+		}
+	})
+	t.Run("asset equals quote asset", func(t *testing.T) {
+		_, err := svc.SetManualPrice(ctx, userID, prices.SetManualPriceInput{
+			AssetID: usd, QuoteAssetID: &usd, Price: decimal.RequireFromString("1"), AsOf: asOf,
+		})
+		if !errors.Is(err, prices.ErrSameQuoteAsset) {
+			t.Errorf("err = %v, want ErrSameQuoteAsset", err)
+		}
+	})
+}
+
+// TestSetManualPrice_FillsValuationGap: the #352/#373 regression — a
+// manually priced equity must stop being reported as unpriced by the
+// valuation layer, exactly like a provider or trade price would.
+func TestSetManualPrice_FillsValuationGap(t *testing.T) {
+	g := openTestDB(t)
+	ctx := context.Background()
+	userID := seedUser(t, g)
+	usd := testutil.LookupUSDAssetID(t, g)
+	equity := seedEquityAsset(t, g, usd)
+	acct := seedAccount(t, g, userID)
+	seedPosition(t, g, userID, acct.ID, equity, "10")
+
+	valSvc := valuation.NewService(
+		repository.NewPositionRepository(g),
+		repository.NewPriceRepository(g),
+		repository.NewAssetRepository(g),
+		repository.NewAccountRepository(g),
+	)
+	asOf := time.Now().UTC()
+
+	// Before a price exists, the position is unpriced.
+	_, unpriced, err := valSvc.AccountBalance(ctx, userID, acct.ID, asOf)
+	if err != nil {
+		t.Fatalf("AccountBalance (before): %v", err)
+	}
+	if len(unpriced) != 1 || unpriced[0] != equity {
+		t.Fatalf("unpriced (before) = %v, want [%d]", unpriced, equity)
+	}
+
+	svc := prices.NewService(
+		repository.NewUserRepository(g),
+		repository.NewPositionRepository(g),
+		repository.NewAssetRepository(g),
+		repository.NewPriceRepository(g),
+	)
+	if _, err := svc.SetManualPrice(ctx, userID, prices.SetManualPriceInput{
+		AssetID: equity, Price: decimal.RequireFromString("50"), AsOf: asOf,
+	}); err != nil {
+		t.Fatalf("SetManualPrice: %v", err)
+	}
+
+	balance, unpriced, err := valSvc.AccountBalance(ctx, userID, acct.ID, asOf)
+	if err != nil {
+		t.Fatalf("AccountBalance (after): %v", err)
+	}
+	if len(unpriced) != 0 {
+		t.Errorf("unpriced (after) = %v, want none — manual price should fill the gap", unpriced)
+	}
+	if balance.String() != "500" {
+		t.Errorf("balance = %s, want 500 (10 * 50)", balance)
 	}
 }

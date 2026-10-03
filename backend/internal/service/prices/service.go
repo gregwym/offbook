@@ -2,14 +2,32 @@ package prices
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
+)
+
+// SourceManual tags price observations the user typed directly through the
+// "set price" affordance (#373, ADR-0013 §5 Tier 1) — the always-available
+// pricing floor for an asset no provider covers and no trade has priced yet.
+// Distinct from 'trade' (price implied by a recorded trade, #352) so
+// provenance stays inspectable.
+const SourceManual = "manual"
+
+// Domain errors for the manual price-entry surface.
+var (
+	ErrInvalidManualPrice = errors.New("price must be > 0")
+	ErrUnknownPriceAsset  = errors.New("asset not found")
+	ErrMissingAsOf        = errors.New("as_of is required")
+	ErrSameQuoteAsset     = errors.New("asset and quote asset must differ")
 )
 
 // RefreshResult is the wire response of a manual refresh. Skipped lists the
@@ -153,4 +171,69 @@ func (s *Service) RefreshForUser(ctx context.Context, userID int64) (*RefreshRes
 	}
 	sort.Strings(result.Skipped)
 	return result, nil
+}
+
+// SetManualPriceInput is the validated payload for POST /assets/:id/prices.
+// QuoteAssetID is optional — nil defaults to the user's primary currency
+// asset, covering the common case (price an equity/crypto in my own
+// currency) without forcing the caller to look up the id first.
+type SetManualPriceInput struct {
+	AssetID      int64
+	QuoteAssetID *int64
+	Price        decimal.Decimal
+	AsOf         time.Time
+}
+
+// SetManualPrice appends a user-entered price observation with
+// source='manual'. It participates in valuation and staleness flagging
+// exactly like provider/trade observations — precedence across sources is
+// recency only (valuation.lookupRate takes the latest as_of regardless of
+// source), so a manual entry is a gap-filler, not a guaranteed override: a
+// newer provider or trade price for the same asset still supersedes it.
+func (s *Service) SetManualPrice(ctx context.Context, userID int64, in SetManualPriceInput) (*model.Price, error) {
+	if !in.Price.IsPositive() {
+		return nil, ErrInvalidManualPrice
+	}
+	if in.AsOf.IsZero() {
+		return nil, ErrMissingAsOf
+	}
+
+	asset, err := s.assets.GetByID(ctx, in.AssetID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrUnknownPriceAsset
+		}
+		return nil, fmt.Errorf("prices: load asset: %w", err)
+	}
+
+	quoteAssetID := in.QuoteAssetID
+	if quoteAssetID == nil {
+		user, err := s.users.GetByID(ctx, userID)
+		if err != nil {
+			return nil, fmt.Errorf("prices: load user: %w", err)
+		}
+		id := user.PrimaryCurrencyAssetID
+		quoteAssetID = &id
+	}
+	if *quoteAssetID == asset.ID {
+		return nil, ErrSameQuoteAsset
+	}
+	if _, err := s.assets.GetByID(ctx, *quoteAssetID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrUnknownPriceAsset
+		}
+		return nil, fmt.Errorf("prices: load quote asset: %w", err)
+	}
+
+	p := &model.Price{
+		AssetID:      asset.ID,
+		QuoteAssetID: *quoteAssetID,
+		AsOf:         in.AsOf,
+		Price:        in.Price,
+		Source:       SourceManual,
+	}
+	if err := s.prices.Insert(ctx, p); err != nil {
+		return nil, fmt.Errorf("prices: insert manual price: %w", err)
+	}
+	return p, nil
 }
