@@ -6,18 +6,22 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
 )
 
-// SyncScheduler runs the daily background transaction sync (#363). A
+// SyncScheduler runs the daily background sync (#363, extended by #369). A
 // Tailscale-private host (ADR-0016) can't receive Plaid webhooks, so
 // freshness comes from polling: once a day, every active plaid_item across
-// every user gets a SyncTransactions pass. See
+// every user gets an accounts + transactions pass, plus a holdings pass for
+// items with at least one local investment-type account. See
 // docs/ADR/0021-plaid-polling-sync.md for the polling-not-webhooks
-// rationale, cadence, and jitter design.
+// rationale, cadence, and jitter design, and its #369 addendum for the
+// balance/holdings extension.
 type SyncScheduler struct {
 	svc      *Service
 	itemRepo repository.PlaidItemRepository
+	acctRepo repository.AccountRepository
 	// jitter randomizes each run's start within this window so a
 	// self-hosted instance doesn't call Plaid at the exact same wall-clock
 	// moment every day.
@@ -29,11 +33,14 @@ type SyncScheduler struct {
 }
 
 // NewSyncScheduler wires a daily-pass scheduler over every active plaid_item
-// (across every user) that itemRepo reports via ListAllActive.
-func NewSyncScheduler(svc *Service, itemRepo repository.PlaidItemRepository) *SyncScheduler {
+// (across every user) that itemRepo reports via ListAllActive. acctRepo is
+// used only to decide whether an item's holdings are worth syncing (#369) —
+// it never crosses user_id.
+func NewSyncScheduler(svc *Service, itemRepo repository.PlaidItemRepository, acctRepo repository.AccountRepository) *SyncScheduler {
 	return &SyncScheduler{
 		svc:      svc,
 		itemRepo: itemRepo,
+		acctRepo: acctRepo,
 		jitter:   30 * time.Minute,
 		pause:    5 * time.Second,
 		logf:     log.Printf,
@@ -53,10 +60,19 @@ func (s *SyncScheduler) WithPause(d time.Duration) *SyncScheduler {
 }
 
 // SyncScheduleResult summarizes one scheduled pass across every active item.
+// Synced/Skipped/Failed track the transactions pass (unchanged since #363) —
+// that is the pass that owns the item's last_sync_status lifecycle.
+// AccountsFailed/HoldingsFailed are separate, non-fatal-to-the-item counters
+// for the #369 balance/holdings extension: an accounts or holdings fetch
+// failure is logged and counted but never blocks the transactions pass for
+// the same item, since balance/holdings freshness is secondary to
+// transaction freshness.
 type SyncScheduleResult struct {
-	Synced  int
-	Skipped int
-	Failed  int
+	Synced         int
+	Skipped        int
+	Failed         int
+	AccountsFailed int
+	HoldingsFailed int
 }
 
 // RunOnce sleeps a random jitter, then drains every active plaid_item across
@@ -102,6 +118,20 @@ func (s *SyncScheduler) RunOnce(ctx context.Context) SyncScheduleResult {
 			continue
 		}
 
+		// Refresh balances first (#369) so the cash reconciliation inside
+		// SyncTransactions below (reconcileItemCashPositions) compares the
+		// transaction fold against *today's* reported balance, not
+		// whatever positions.quantity happened to hold from the last manual
+		// resync. A failure here is logged and counted separately — it
+		// never blocks the transactions pass, which owns the item's
+		// last_sync_status lifecycle (TryStartSync's CAS already flipped the
+		// item to 'syncing'; only SyncTransactions resolves it back to
+		// ok/error/reauth_required, success or failure).
+		if _, err := s.svc.SyncAccounts(ctx, item.UserID, item.PlaidItemID); err != nil {
+			s.logf("plaid sync scheduler: item %s (user %d): sync-accounts: %v", item.PlaidItemID, item.UserID, err)
+			res.AccountsFailed++
+		}
+
 		result, err := s.svc.SyncTransactions(ctx, item.UserID, item.PlaidItemID)
 		if err != nil {
 			s.logf("plaid sync scheduler: item %s (user %d): %v", item.PlaidItemID, item.UserID, err)
@@ -113,6 +143,38 @@ func (s *SyncScheduler) RunOnce(ctx context.Context) SyncScheduleResult {
 			s.logf("plaid sync scheduler: item %s (user %d): %d inserted, %d modified, %d removed, %d failed",
 				item.PlaidItemID, item.UserID, result.Inserted, result.Modified, result.Removed, result.Failed)
 		}
+
+		// Holdings only for items with a local investment-type account —
+		// Plaid's /investments/holdings/get errors for items whose Link
+		// session never requested the investments product, so skip rather
+		// than retry-storm a doomed call for every checking/savings item,
+		// every day.
+		if s.hasInvestmentAccount(ctx, item) {
+			if _, err := s.svc.SyncHoldings(ctx, item.UserID, item.PlaidItemID); err != nil {
+				s.logf("plaid sync scheduler: item %s (user %d): sync-holdings: %v", item.PlaidItemID, item.UserID, err)
+				res.HoldingsFailed++
+			}
+		}
 	}
 	return res
+}
+
+// hasInvestmentAccount reports whether any local, non-deleted account for
+// this plaid_item is type "investment" — the gate for whether a daily
+// holdings sync (#369) is worth attempting at all.
+func (s *SyncScheduler) hasInvestmentAccount(ctx context.Context, item model.PlaidItem) bool {
+	if s.acctRepo == nil {
+		return false
+	}
+	accounts, err := s.acctRepo.ListByPlaidItemID(ctx, item.UserID, item.PlaidItemID)
+	if err != nil {
+		s.logf("plaid sync scheduler: item %s (user %d): list accounts for holdings gate: %v", item.PlaidItemID, item.UserID, err)
+		return false
+	}
+	for _, a := range accounts {
+		if a.AccountType == "investment" {
+			return true
+		}
+	}
+	return false
 }

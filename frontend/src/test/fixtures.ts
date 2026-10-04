@@ -78,6 +78,8 @@ export const account1: Account = {
   last_sync_status: null,
   last_synced_at: null,
   last_sync_error: null,
+  last_observed_at: null,
+  last_observed_source: null,
 }
 
 export const accounts: Account[] = [account1]

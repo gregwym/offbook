@@ -238,14 +238,15 @@ func main() {
 		).WithRuleRepo(repository.NewCategorizationRuleRepository(gormDB)).
 			WithNotifier(notify.Build(cfg, log.Printf))
 
-		plaidScheduler := plaidsvc.NewSyncScheduler(plaidSyncSvc, plaidItemRepo)
+		plaidScheduler := plaidsvc.NewSyncScheduler(plaidSyncSvc, plaidItemRepo, plaidAccountRepo)
 		runner.Register(jobs.Job{
 			Name:         "plaid-transaction-sync",
 			Interval:     24 * time.Hour,
 			InitialDelay: 3 * time.Minute,
 			Run: func(ctx context.Context) (string, error) {
 				res := plaidScheduler.RunOnce(ctx)
-				return fmt.Sprintf("synced %d, skipped %d, failed %d", res.Synced, res.Skipped, res.Failed), nil
+				return fmt.Sprintf("synced %d, skipped %d, failed %d (accounts failed %d, holdings failed %d)",
+					res.Synced, res.Skipped, res.Failed, res.AccountsFailed, res.HoldingsFailed), nil
 			},
 		})
 	}

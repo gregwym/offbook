@@ -433,11 +433,12 @@ func (s *Service) SyncAccounts(ctx context.Context, userID int64, plaidItemID st
 		existing, err := s.acctRepo.FindByPlaidAccountID(ctx, userID, da.PlaidAccountID)
 		switch {
 		case errors.Is(err, repository.ErrNotFound):
+			accountType := MapAccountType(da.Type, da.Subtype)
 			acct := &model.Account{
 				UserID:              userID,
 				Name:                da.Name,
 				InstitutionSlug:     institutionSlug,
-				AccountType:         MapAccountType(da.Type, da.Subtype),
+				AccountType:         accountType,
 				Currency:            da.Currency,
 				PrimaryQuoteAssetID: quoteAsset.ID,
 				LastFour:            da.Mask,
@@ -445,7 +446,7 @@ func (s *Service) SyncAccounts(ctx context.Context, userID int64, plaidItemID st
 				PlaidItemID:         strPtr(plaidItemID),
 				IsActive:            true,
 			}
-			if err := s.writeAccountAndCashPosition(ctx, acct, quoteAsset.ID, da.Balance); err != nil {
+			if err := s.writeAccountAndCashPosition(ctx, acct, quoteAsset.ID, cashQuantity(accountType, da.Balance)); err != nil {
 				return out, fmt.Errorf("plaid: create account %s: %w", da.PlaidAccountID, err)
 			}
 			out.Created++
@@ -455,15 +456,16 @@ func (s *Service) SyncAccounts(ctx context.Context, userID int64, plaidItemID st
 		case err != nil:
 			return out, fmt.Errorf("plaid: lookup account %s: %w", da.PlaidAccountID, err)
 		default:
+			accountType := MapAccountType(da.Type, da.Subtype)
 			existing.Name = da.Name
 			existing.InstitutionSlug = institutionSlug
-			existing.AccountType = MapAccountType(da.Type, da.Subtype)
+			existing.AccountType = accountType
 			existing.Currency = da.Currency
 			existing.PrimaryQuoteAssetID = quoteAsset.ID
 			existing.LastFour = da.Mask
 			existing.PlaidItemID = strPtr(plaidItemID)
 			existing.IsActive = true
-			if err := s.updateAccountAndCashPosition(ctx, existing, quoteAsset.ID, da.Balance); err != nil {
+			if err := s.updateAccountAndCashPosition(ctx, existing, quoteAsset.ID, cashQuantity(accountType, da.Balance)); err != nil {
 				return out, fmt.Errorf("plaid: update account %d: %w", existing.ID, err)
 			}
 			out.Updated++
@@ -473,6 +475,18 @@ func (s *Service) SyncAccounts(ctx context.Context, userID int64, plaidItemID st
 		}
 	}
 	return out, nil
+}
+
+// cashQuantity converts Plaid's reported balances.current into the signed
+// position quantity ADR-0013 expects. Plaid reports credit card and loan
+// balances as a positive "amount owed"; everywhere else in Offbook a
+// liability must be a negative quantity so Σ(quantity × price) subtracts it
+// from net worth instead of adding it (#369).
+func cashQuantity(accountType string, reported decimal.Decimal) decimal.Decimal {
+	if IsLiabilityAccountType(accountType) {
+		return reported.Neg()
+	}
+	return reported
 }
 
 // writeAccountAndCashPosition inserts a new account row and seeds its

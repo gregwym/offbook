@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 
 	"github.com/gregwym/offbook/backend/internal/crypto"
@@ -80,8 +81,13 @@ func seedPlaidTestUser(t *testing.T, g *gorm.DB) int64 {
 	}
 	t.Cleanup(func() {
 		// Cascade-style cleanup: scrub child rows first since FKs don't
-		// have ON DELETE CASCADE.
+		// have ON DELETE CASCADE. account_balance_observations must go
+		// before accounts (#369: SyncAccounts now runs in the scheduler
+		// pass ahead of SyncTransactions, so even a plain checking fixture
+		// picks up a cash position and — once SyncTransactions reconciles
+		// it — an observation row referencing this account).
 		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.Transaction{})
+		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.AccountBalanceObservation{})
 		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.Position{})
 		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.Account{})
 		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.PlaidItem{})
@@ -312,5 +318,117 @@ func TestService_SyncAccounts_ItemNotFound(t *testing.T) {
 	_, err := svc.SyncAccounts(context.Background(), userID, "nonexistent-item")
 	if err != plaidsvc.ErrItemNotFound {
 		t.Fatalf("got %v, want ErrItemNotFound", err)
+	}
+}
+
+// fakeLiabilityAccountsServer reports one credit card account with a
+// positive current balance — Plaid's "amount owed" convention for
+// credit/loan accounts — so the sign-conversion test can assert
+// positions.quantity lands negative (#369). plaidAcctID/plaidItemID let
+// callers pick run-unique IDs since accounts.plaid_account_id carries a
+// global (not per-user) unique index on a DB this test suite doesn't tear
+// down between runs.
+func fakeLiabilityAccountsServer(t *testing.T, current float64, plaidAcctID, plaidItemID string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/accounts/get", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"accounts": []map[string]any{
+				{
+					"account_id": plaidAcctID,
+					"name":       "Plaid Credit Card",
+					"type":       "credit",
+					"subtype":    "credit card",
+					"mask":       "2222",
+					"balances": map[string]any{
+						"current":           current,
+						"iso_currency_code": "USD",
+					},
+				},
+			},
+			"item":       map[string]any{"item_id": plaidItemID},
+			"request_id": "req-liability-" + plaidItemID,
+		})
+	})
+	mux.HandleFunc("/identity/get", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "identity not supported", http.StatusBadRequest)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected Plaid call: %s %s", r.Method, r.URL.Path)
+		http.Error(w, "unexpected", 500)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestService_SyncAccounts_LiabilitySignConvention verifies #369's fix:
+// Plaid reports a credit card's balances.current as a positive "amount
+// owed," but positions.quantity must be negative so the credit card's
+// contribution to Σ(quantity × price) net worth is a subtraction, not an
+// addition. Covers both the create path and the update (re-sync) path, and
+// a balance decrease (debt paid down) to confirm the re-sync still negates.
+func TestService_SyncAccounts_LiabilitySignConvention(t *testing.T) {
+	g := openPlaidTestDB(t)
+	userID := seedPlaidTestUser(t, g)
+
+	suffix := time.Now().Format("150405.000000000")
+	plaidAcctID := "plaid-acct-credit-" + suffix
+	plaidItemID := "item-fake-liability-" + suffix
+	srv := fakeLiabilityAccountsServer(t, 500.00, plaidAcctID, plaidItemID)
+
+	client, _ := plaidsvc.NewSDKClient(plaidsvc.Config{ClientID: "cid", Secret: "csec", Env: srv.URL})
+	box, _ := crypto.NewSecretBox(newTestKey())
+	itemRepo := repository.NewPlaidItemRepository(g)
+	acctRepo := repository.NewAccountRepository(g)
+	acctSvc := service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g))
+	piiSvc := service.NewPIIService(repository.NewPIIRepository(g), acctSvc)
+
+	enc, err := box.Encrypt([]byte("access-liability-fake-secret-" + suffix))
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	item := &model.PlaidItem{UserID: userID, PlaidItemID: plaidItemID, AccessTokenEnc: enc, Status: "active"}
+	if err := itemRepo.Create(context.Background(), item); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+
+	svc := plaidsvc.NewService(client, box, itemRepo, acctRepo, repository.NewTransactionRepository(g), repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g)
+
+	if _, err := svc.SyncAccounts(context.Background(), userID, plaidItemID); err != nil {
+		t.Fatalf("SyncAccounts #1: %v", err)
+	}
+
+	var acct model.Account
+	if err := g.Where("user_id = ? AND plaid_account_id = ?", userID, plaidAcctID).First(&acct).Error; err != nil {
+		t.Fatalf("load credit account: %v", err)
+	}
+	if acct.AccountType != "credit_card" {
+		t.Fatalf("account_type = %q, want credit_card", acct.AccountType)
+	}
+
+	var pos model.Position
+	if err := g.Where("account_id = ? AND asset_id = ?", acct.ID, acct.PrimaryQuoteAssetID).First(&pos).Error; err != nil {
+		t.Fatalf("load cash position: %v", err)
+	}
+	if !pos.Quantity.Equal(decimal.NewFromFloat(-500.00)) {
+		t.Errorf("position.quantity = %s, want -500 (Plaid reports +500 owed)", pos.Quantity.String())
+	}
+
+	// Re-sync with the debt paid down to 300 — the update path must
+	// re-derive the negated quantity, not just carry the old sign forward.
+	srv2 := fakeLiabilityAccountsServer(t, 300.00, plaidAcctID, plaidItemID)
+	client2, _ := plaidsvc.NewSDKClient(plaidsvc.Config{ClientID: "cid", Secret: "csec", Env: srv2.URL})
+	svc2 := plaidsvc.NewService(client2, box, itemRepo, acctRepo, repository.NewTransactionRepository(g), repository.NewPlaidSyncErrorRepository(g), repository.NewAssetRepository(g), repository.NewPositionRepository(g), piiSvc, nil, g)
+	if _, err := svc2.SyncAccounts(context.Background(), userID, plaidItemID); err != nil {
+		t.Fatalf("SyncAccounts #2: %v", err)
+	}
+	var pos2 model.Position
+	if err := g.Where("account_id = ? AND asset_id = ?", acct.ID, acct.PrimaryQuoteAssetID).First(&pos2).Error; err != nil {
+		t.Fatalf("load cash position #2: %v", err)
+	}
+	if !pos2.Quantity.Equal(decimal.NewFromFloat(-300.00)) {
+		t.Errorf("position.quantity after paydown = %s, want -300", pos2.Quantity.String())
 	}
 }

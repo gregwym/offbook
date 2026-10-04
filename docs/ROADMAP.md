@@ -281,7 +281,7 @@ Owner direction (July 2026): make the project production ready for six product m
 
 **Goal:** Net worth you can defend — every number traceable to positions × prices, every unexplained delta visible. Tracked in epic #385.
 
-- [ ] #369 — Extend scheduled sync to balances + holdings; verify liability (credit card/loan) reconciliation signs; per-account "as of" provenance.
+- [x] #369 — Extend scheduled sync to balances + holdings; verify liability (credit card/loan) reconciliation signs; per-account "as of" provenance.
 - [ ] #370 — **Reconciliation view** per account (balance-observation history, fold-vs-reported, every `opening_balance`/`adjustment` row linked to its causing observation) + unexplained-delta flag: adjustments above a threshold mark the account "needs attention" (adjustments are suspense entries to explain, not absorb).
 - [ ] #371 — Transfer-matching pass proposing `is_transfer` pairs (opposite amounts, ±N days, cross-account).
 - [ ] #372 — Equity/ETF price provider behind the ADR-0014 seam (keyless default, keyed opt-in) + scheduled refresh.
