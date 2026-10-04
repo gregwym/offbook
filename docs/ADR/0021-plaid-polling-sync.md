@@ -122,3 +122,50 @@ item's DLQ and alert channel is worse.
   current.
 - Out of scope here (per the issue): balance/holdings scheduled sync — M15
   (#369) extends this same job to cover those; re-auth recovery — #364.
+
+## Addendum (#369): extend to balances + holdings
+
+M14 left balance and holdings freshness out of scope — `positions.quantity`
+for a Plaid-linked cash sleeve was only ever refreshed by `SyncAccounts`,
+which nothing but the initial Link exchange and a manual "resync" button
+called. Daily `SyncTransactions` kept transactions fresh but reconciled the
+cash position against whatever `positions.quantity` already held, which
+could be days or weeks stale. Same gap for non-cash holdings: `SyncHoldings`
+existed (M10b/#238) but nothing scheduled it.
+
+**Decision:** `SyncScheduler.RunOnce` now runs three calls per item, same
+per-item isolation and jitter/pause as before:
+
+1. **`SyncAccounts`** first, so the cash position(s) backing `#369`'s balance
+   reconciliation are current *before* `SyncTransactions`'s existing
+   `reconcileItemCashPositions` step compares them to the transaction fold.
+   A failure here is logged and counted (`AccountsFailed`) but does not
+   abort the item's pass — `SyncTransactions` still runs and remains the
+   sole owner of `last_sync_status` (success or failure), so an accounts
+   fetch error can never leave an item stuck in `syncing` forever.
+2. **`SyncTransactions`** — unchanged from M14; still the pass that updates
+   `last_sync_status`/`last_synced_at` and routes to the #360 notifier.
+3. **`SyncHoldings`**, gated on the item having at least one local
+   `account_type = 'investment'` account. Plaid's `/investments/holdings/get`
+   errors for an item whose Link session never requested the investments
+   product (this instance's `products` list is transactions + identity
+   only — a pre-existing, separate gap, not fixed here); gating by local
+   account type avoids a daily doomed call, and failures count separately
+   (`HoldingsFailed`) without affecting the item's sync status.
+
+**Liability sign convention (the other #369 fix):** Plaid reports
+`balances.current` for `credit`/`loan` accounts as a positive "amount owed,"
+but `positions.quantity` must be negative for a liability so
+Σ(quantity × price) subtracts it from net worth — `account_type` is a display
+hint only (ADR-0013), not a sign switch, so nothing upstream of the Plaid
+sync layer corrects for this. `cashQuantity()` in `service.go` negates the
+reported balance for `IsLiabilityAccountType` (`credit_card`, `loan`) at the
+one place Plaid's figure enters the system, on both the create and update
+(re-sync) paths.
+
+**Per-account "as of" provenance:** `AccountResponse` gained
+`last_observed_at`/`last_observed_source`, sourced from the most recent
+`account_balance_observations` row (already written by `ReconcilePosition`
+on every reconciling pass, delta or not) across the account's positions —
+distinct from `last_synced_at`, which tracks the transaction sync rather
+than a balance/holdings observation.

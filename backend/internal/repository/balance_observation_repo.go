@@ -16,6 +16,12 @@ type BalanceObservationRepository interface {
 	// ListByAccountAsset returns observations for (account, asset), newest
 	// first. Used for audit/debugging the reconciliation trail.
 	ListByAccountAsset(ctx context.Context, userID, accountID, assetID int64) ([]model.AccountBalanceObservation, error)
+	// LatestPerAccount returns the single most-recent observation (by as_of,
+	// tie-broken by id) for every account_id the user has at least one
+	// observation for. Powers the per-account "as of" provenance surfaced on
+	// the accounts API (#369) — an account can hold several assets, but the
+	// UI only needs one freshness signal per account.
+	LatestPerAccount(ctx context.Context, userID int64) ([]model.AccountBalanceObservation, error)
 }
 
 type balanceObservationRepo struct {
@@ -36,6 +42,19 @@ func (r *balanceObservationRepo) ListByAccountAsset(ctx context.Context, userID,
 		Where("user_id = ? AND account_id = ? AND asset_id = ?", userID, accountID, assetID).
 		Order("as_of DESC, id DESC").
 		Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *balanceObservationRepo) LatestPerAccount(ctx context.Context, userID int64) ([]model.AccountBalanceObservation, error) {
+	var out []model.AccountBalanceObservation
+	if err := r.db.WithContext(ctx).
+		Raw(`SELECT DISTINCT ON (account_id) *
+			FROM account_balance_observations
+			WHERE user_id = ?
+			ORDER BY account_id, as_of DESC, id DESC`, userID).
+		Scan(&out).Error; err != nil {
 		return nil, err
 	}
 	return out, nil

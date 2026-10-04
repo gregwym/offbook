@@ -29,6 +29,14 @@ export type Account = {
   last_sync_status: SyncStatus | null
   last_synced_at: string | null
   last_sync_error: string | null
+  // last_observed_at/last_observed_source join the most recent
+  // account_balance_observations row (ADR-0017) across the account's
+  // positions (#369) — when a balance/holdings figure was last confirmed
+  // against the institution, distinct from last_synced_at (which tracks the
+  // transaction sync, not a balance observation). Null for accounts with no
+  // recorded observation (manual accounts; a Plaid account never reconciled).
+  last_observed_at: string | null
+  last_observed_source: string | null
 }
 
 // SyncStatus mirrors the CHECK constraint in migration 000027 on

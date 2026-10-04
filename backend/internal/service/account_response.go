@@ -32,4 +32,14 @@ type AccountResponse struct {
 	// missing, i.e. Balance is a partial sum rather than the whole story —
 	// the #282 "no wrong-but-confident totals" contract.
 	BalanceComplete bool `json:"balance_complete"`
+
+	// LastObservedAt/LastObservedSource surface the most recent
+	// account_balance_observations row (ADR-0017) across the account's
+	// positions — the "as of" provenance #369 adds so the UI can show when
+	// a balance was last confirmed against the institution, independent of
+	// LastSyncedAt (which tracks the plaid_item's transaction sync, not a
+	// balance/holdings observation). Both nil for accounts with no recorded
+	// observation (manual accounts; a Plaid account never yet reconciled).
+	LastObservedAt     *time.Time `json:"last_observed_at"`
+	LastObservedSource *string    `json:"last_observed_source"`
 }

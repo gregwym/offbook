@@ -8,6 +8,7 @@ import { PartialBadge } from '../components/PartialBadge'
 import { PIIPanel } from '../components/PIIPanel'
 import { SetPriceModal } from '../components/SetPriceModal'
 import { SyncStatusPill } from '../components/SyncStatusPill'
+import { TimeAgo } from '../components/TimeAgo'
 import { TradeFormModal } from '../components/TradeFormModal'
 import { useAccountsStore } from '../store/accountsStore'
 import { useScopeStore } from '../store/scopeStore'
@@ -107,6 +108,11 @@ export function AccountsPage() {
                         Set price
                       </button>
                     </>
+                  )}
+                  {a.last_observed_at && (
+                    <div className="mt-0.5 text-xs text-gray-400">
+                      Observed <TimeAgo when={a.last_observed_at} /> via {a.last_observed_source}
+                    </div>
                   )}
                 </td>
                 <td className="px-4 py-2 text-center">

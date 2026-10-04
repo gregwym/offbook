@@ -41,3 +41,18 @@ func MapAccountType(plaidType, plaidSubtype string) string {
 	}
 	return "other"
 }
+
+// IsLiabilityAccountType reports whether an internal account_type represents
+// a liability (amount owed) rather than an asset (amount held). Plaid's
+// balances.current for credit/loan accounts is a positive "amount owed"
+// figure — the opposite sign convention from positions.quantity, which must
+// be negative for a liability so Σ(quantity × price) reduces net worth
+// instead of inflating it (#369).
+func IsLiabilityAccountType(accountType string) bool {
+	switch accountType {
+	case "credit_card", "loan":
+		return true
+	default:
+		return false
+	}
+}

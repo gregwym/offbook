@@ -70,12 +70,13 @@ type UpdateAccountInput struct {
 // receive pii_repo or pii_service — PII is set via the separate pii endpoints.
 // All operations are scoped to a user_id derived from the session.
 type AccountService struct {
-	db            *gorm.DB
-	repo          repository.AccountRepository
-	assetRepo     repository.AssetRepository
-	positionRepo  repository.PositionRepository
-	plaidItemRepo repository.PlaidItemRepository
-	valuationSvc  *valuation.Service
+	db             *gorm.DB
+	repo           repository.AccountRepository
+	assetRepo      repository.AssetRepository
+	positionRepo   repository.PositionRepository
+	plaidItemRepo  repository.PlaidItemRepository
+	valuationSvc   *valuation.Service
+	balanceObsRepo repository.BalanceObservationRepository
 }
 
 func NewAccountService(
@@ -101,6 +102,15 @@ func (s *AccountService) WithPlaidItemRepo(p repository.PlaidItemRepository) *Ac
 // marked incomplete so it can't be mistaken for a real total.
 func (s *AccountService) WithValuation(v *valuation.Service) *AccountService {
 	s.valuationSvc = v
+	return s
+}
+
+// WithBalanceObservationRepo injects the reader for the "as of" provenance
+// (#369) surfaced on AccountResponse.LastObservedAt/LastObservedSource. Same
+// optional-dependency pattern as WithPlaidItemRepo/WithValuation; without it,
+// both fields stay nil on every response.
+func (s *AccountService) WithBalanceObservationRepo(r repository.BalanceObservationRepository) *AccountService {
+	s.balanceObsRepo = r
 	return s
 }
 
@@ -303,6 +313,9 @@ func (s *AccountService) GetResponse(ctx context.Context, userID, id int64) (*Ac
 	if err := s.fillBalances(ctx, userID, []*AccountResponse{&resp}); err != nil {
 		return nil, err
 	}
+	if err := s.fillObservations(ctx, userID, []*AccountResponse{&resp}); err != nil {
+		return nil, err
+	}
 	return &resp, nil
 }
 
@@ -325,7 +338,38 @@ func (s *AccountService) ListResponse(ctx context.Context, userID int64, f repos
 	if err := s.fillBalances(ctx, userID, ptrs); err != nil {
 		return nil, 0, err
 	}
+	if err := s.fillObservations(ctx, userID, ptrs); err != nil {
+		return nil, 0, err
+	}
 	return out, total, nil
+}
+
+// fillObservations joins each response's most recent
+// account_balance_observations row (#369) — one query for every account in
+// the response set, grouped in memory, mirroring fillBalances's shape. A nil
+// balanceObsRepo (no Plaid wiring, or a unit test) leaves both fields nil,
+// matching the existing "null means no signal" contract LastSyncStatus uses.
+func (s *AccountService) fillObservations(ctx context.Context, userID int64, resps []*AccountResponse) error {
+	if len(resps) == 0 || s.balanceObsRepo == nil {
+		return nil
+	}
+	observations, err := s.balanceObsRepo.LatestPerAccount(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("list latest balance observations: %w", err)
+	}
+	byAccount := make(map[int64]model.AccountBalanceObservation, len(observations))
+	for _, o := range observations {
+		byAccount[o.AccountID] = o
+	}
+	for _, r := range resps {
+		if o, ok := byAccount[r.ID]; ok {
+			asOf := o.AsOf
+			source := o.Source
+			r.LastObservedAt = &asOf
+			r.LastObservedSource = &source
+		}
+	}
+	return nil
 }
 
 // fillBalances derives each response's Balance from positions × prices via

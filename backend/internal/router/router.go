@@ -44,10 +44,12 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	assetRepo := repository.NewAssetRepository(gormDB)
 	positionRepo := repository.NewPositionRepository(gormDB)
 	priceRepo := repository.NewPriceRepository(gormDB)
+	balanceObservationRepo := repository.NewBalanceObservationRepository(gormDB)
 	valuationSvc := valuation.NewService(positionRepo, priceRepo, assetRepo, accountRepo)
 	accountSvc := service.NewAccountService(gormDB, accountRepo, assetRepo, positionRepo).
 		WithPlaidItemRepo(plaidItemRepo).
-		WithValuation(valuationSvc)
+		WithValuation(valuationSvc).
+		WithBalanceObservationRepo(balanceObservationRepo)
 	accountHandler := handler.NewAccountHandler(accountSvc)
 
 	// PII flow: pii_repo is wired ONLY into pii_service, which is wired ONLY
