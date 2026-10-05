@@ -100,6 +100,30 @@ type TransactionRepository interface {
 	// already exists for the (account, asset) pair. The first reconciling
 	// write is an opening_balance anchor; later ones are adjustments.
 	HasReconcilingTxn(ctx context.Context, userID, accountID, assetID int64) (bool, error)
+	// ListReconciling returns every opening_balance/adjustment row for the
+	// account (across all assets it holds), oldest first — the per-account
+	// reconciliation view's (#370) ledger-side half.
+	ListReconciling(ctx context.Context, userID, accountID int64) ([]model.Transaction, error)
+	// FoldQuantityBefore returns the (account, asset) fold using only rows
+	// strictly before (beforeDate, beforeID) in (transaction_date, id) order
+	// — i.e. excluding the row at that position and anything dated on/after
+	// it. Used by the reconciliation view (#370) to reconstruct "quantity
+	// immediately before this opening_balance/adjustment row was applied",
+	// independent of any observation link (robust even for legacy rows
+	// written before caused_by_observation_id existed).
+	FoldQuantityBefore(ctx context.Context, userID, accountID, assetID int64, beforeDate time.Time, beforeID int64) (decimal.Decimal, error)
+	// AcknowledgeAdjustment marks an adjustment transaction reviewed (#370)
+	// without altering ledger fields (amount/kind/quantity facts are
+	// untouched — same category as the existing Notes field). Only rows with
+	// kind=adjustment are acknowledgeable: opening_balance is the expected
+	// day-0 anchor, never "unexplained". Returns ErrNotFound if no such row
+	// exists for the user.
+	AcknowledgeAdjustment(ctx context.Context, userID, transactionID int64, note *string) (*model.Transaction, error)
+	// ListUnacknowledgedAdjustments returns every live kind=adjustment row
+	// for the user with acknowledged_at IS NULL — the input to the
+	// per-account "needs attention" flag (#370), computed once per request
+	// across every account rather than per-account.
+	ListUnacknowledgedAdjustments(ctx context.Context, userID int64) ([]model.Transaction, error)
 	// DistinctAccountAssetPairs returns every (account_id, asset_id) pair that
 	// has at least one non-deleted transaction for the user. Used by the
 	// positions rebuild to materialize positions.quantity = Σ amount per pair
@@ -561,6 +585,65 @@ func (r *transactionRepo) HasReconcilingTxn(ctx context.Context, userID, account
 		return false, err
 	}
 	return n > 0, nil
+}
+
+func (r *transactionRepo) ListReconciling(ctx context.Context, userID, accountID int64) ([]model.Transaction, error) {
+	var out []model.Transaction
+	if err := r.db.WithContext(ctx).
+		Where("user_id = ? AND account_id = ? AND kind IN ?",
+			userID, accountID, []string{model.KindOpeningBalance, model.KindAdjustment}).
+		Order("transaction_date ASC, id ASC").
+		Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *transactionRepo) FoldQuantityBefore(ctx context.Context, userID, accountID, assetID int64, beforeDate time.Time, beforeID int64) (decimal.Decimal, error) {
+	var s string
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(amount), 0)::text
+		FROM transactions
+		WHERE deleted_at IS NULL
+		  AND user_id = ? AND account_id = ? AND asset_id = ?
+		  AND (transaction_date < ? OR (transaction_date = ? AND id < ?))
+	`, userID, accountID, assetID, beforeDate, beforeDate, beforeID).Scan(&s).Error; err != nil {
+		return decimal.Zero, err
+	}
+	d, err := decimal.NewFromString(s)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	return d, nil
+}
+
+func (r *transactionRepo) AcknowledgeAdjustment(ctx context.Context, userID, transactionID int64, note *string) (*model.Transaction, error) {
+	now := time.Now().UTC()
+	res := r.db.WithContext(ctx).
+		Model(&model.Transaction{}).
+		Where("id = ? AND user_id = ? AND kind = ?", transactionID, userID, model.KindAdjustment).
+		Updates(map[string]any{
+			"acknowledged_at":   now,
+			"acknowledged_note": note,
+		})
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, ErrNotFound
+	}
+	return r.GetByID(ctx, userID, transactionID)
+}
+
+func (r *transactionRepo) ListUnacknowledgedAdjustments(ctx context.Context, userID int64) ([]model.Transaction, error) {
+	var out []model.Transaction
+	if err := r.db.WithContext(ctx).
+		Where("user_id = ? AND kind = ? AND acknowledged_at IS NULL", userID, model.KindAdjustment).
+		Order("transaction_date ASC, id ASC").
+		Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *transactionRepo) SoftDelete(ctx context.Context, userID, id int64) error {

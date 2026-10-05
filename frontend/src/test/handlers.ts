@@ -22,6 +22,9 @@ export const handlers = [
   // Categories / accounts / assets
   http.get(`${API}/categories`, () => list(fx.categories)),
   http.get(`${API}/accounts`, () => list(fx.accounts)),
+  http.get(`${API}/accounts/:id`, () => item(fx.account1)),
+  http.get(`${API}/accounts/:id/reconciliation`, () => item(fx.reconciliationReport)),
+  http.patch(`${API}/transactions/:id/acknowledge`, () => item(fx.transaction1)),
   http.get(`${API}/assets`, () => list(fx.assets)),
 
   // Budgets / goals

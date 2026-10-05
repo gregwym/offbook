@@ -129,6 +129,7 @@ describe('useScopedInsights (personal scope)', () => {
         balance_complete: true,
         source: 'manual',
         last_synced_at: null,
+        needs_attention: false,
       },
     ])
     expect(data.category_trend).toEqual(fx.categoryTrend)

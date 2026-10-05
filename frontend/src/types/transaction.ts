@@ -9,6 +9,11 @@ export type Transaction = {
   account_id: number
   asset_id: number
   category_id?: number | null
+  // kind classifies the row (ADR-0017). 'flow' is ordinary cash movement;
+  // 'opening_balance'/'adjustment' are reconciliation rows (#370) — quantity
+  // facts excluded from spending/budget analytics. 'trade_leg' is one side
+  // of a paired trade.
+  kind: TransactionKind
   amount: string
   description?: string | null
   description_clean?: string | null
@@ -22,12 +27,20 @@ export type Transaction = {
   is_transfer: boolean
   transfer_pair_id?: number | null
   notes?: string | null
+  // caused_by_observation_id/acknowledged_* are reconciliation metadata
+  // (#370), meaningful only on kind='adjustment'/'opening_balance' rows.
+  caused_by_observation_id?: number | null
+  acknowledged_at?: string | null
+  acknowledged_note?: string | null
   created_at: string
   updated_at: string
 }
 
 export const TRANSACTION_SOURCES = ['manual', 'plaid', 'csv', 'pdf'] as const
 export type TransactionSource = (typeof TRANSACTION_SOURCES)[number]
+
+export const TRANSACTION_KINDS = ['flow', 'trade_leg', 'opening_balance', 'adjustment'] as const
+export type TransactionKind = (typeof TRANSACTION_KINDS)[number]
 
 // CreateTransactionInput mirrors backend handler.createTransactionRequest.
 // Per ADR-0013, no `currency` field — the asset is derived server-side

@@ -77,6 +77,7 @@ type AccountService struct {
 	plaidItemRepo  repository.PlaidItemRepository
 	valuationSvc   *valuation.Service
 	balanceObsRepo repository.BalanceObservationRepository
+	reconcileSvc   *ReconciliationService
 }
 
 func NewAccountService(
@@ -111,6 +112,14 @@ func (s *AccountService) WithValuation(v *valuation.Service) *AccountService {
 // both fields stay nil on every response.
 func (s *AccountService) WithBalanceObservationRepo(r repository.BalanceObservationRepository) *AccountService {
 	s.balanceObsRepo = r
+	return s
+}
+
+// WithReconciliation injects the #370 "needs attention" flag computation.
+// Same optional-dependency pattern as the other With* methods; without it,
+// every response's NeedsAttention stays false.
+func (s *AccountService) WithReconciliation(r *ReconciliationService) *AccountService {
+	s.reconcileSvc = r
 	return s
 }
 
@@ -316,6 +325,9 @@ func (s *AccountService) GetResponse(ctx context.Context, userID, id int64) (*Ac
 	if err := s.fillObservations(ctx, userID, []*AccountResponse{&resp}); err != nil {
 		return nil, err
 	}
+	if err := s.fillReconciliation(ctx, userID, []*AccountResponse{&resp}); err != nil {
+		return nil, err
+	}
 	return &resp, nil
 }
 
@@ -341,7 +353,28 @@ func (s *AccountService) ListResponse(ctx context.Context, userID int64, f repos
 	if err := s.fillObservations(ctx, userID, ptrs); err != nil {
 		return nil, 0, err
 	}
+	if err := s.fillReconciliation(ctx, userID, ptrs); err != nil {
+		return nil, 0, err
+	}
 	return out, total, nil
+}
+
+// fillReconciliation sets each response's NeedsAttention from the #370
+// unacknowledged-adjustment flag, computed once per request across every
+// account rather than per-account. A nil reconcileSvc (no wiring, or a unit
+// test) leaves every response at the zero value (false).
+func (s *AccountService) fillReconciliation(ctx context.Context, userID int64, resps []*AccountResponse) error {
+	if len(resps) == 0 || s.reconcileSvc == nil {
+		return nil
+	}
+	flagged, err := s.reconcileSvc.AccountsNeedingAttention(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("list accounts needing attention: %w", err)
+	}
+	for _, r := range resps {
+		r.NeedsAttention = flagged[r.ID]
+	}
+	return nil
 }
 
 // fillObservations joins each response's most recent

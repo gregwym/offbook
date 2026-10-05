@@ -65,3 +65,17 @@ Pre-prod (dev DBs wiped & rebuilt), staged to keep PRs reviewable:
 - Net worth, allocation, and per-asset value become computable at any point in time from stored facts, and every aggregate becomes a regenerable cache.
 - One mechanism (`adjustment`) handles corporate actions, history-window gaps, and reconciliation — no special cases.
 - Cost: every position-writing path (Plaid sync, manual trade, opening balance) must write transactions and derive positions; the flow-analytics filter moves from `is_transfer` to `kind`. Concentrated in the follow-up, behind the foundation laid here.
+
+## Addendum: Reconciliation view (#370)
+
+The engine above (observations → fold-vs-reported → `opening_balance`/`adjustment` rows) shipped with no UI. This addendum documents the surface added in #370 — `GET /accounts/:id/reconciliation` and the Reconciliation page linked from Accounts/Insights/Transactions.
+
+**Vocabulary, for the UI and for anyone debugging a number:**
+
+- **Fold** — the fact. `Σ transactions.amount` per `(account, asset)`. This is what the app actually believes is held, derived purely from the ledger.
+- **Observation** — a checkpoint. A dated, sourced report of what an institution said was true (`account_balance_observations`). Never mutated, never the source of truth — just "what we were told, and when."
+- **Adjustment** (and its day-0 sibling, `opening_balance`) — the explicit residual. The dated, typed transaction `ReconcilePosition` writes so fold catches up to the observation. If fold and observation already agreed, no row is written — the checkpoint shows "matched, no row."
+
+**Per-checkpoint reconstruction.** For a checkpoint with a reconciling row, `prior_fold` is **not** read from any stored field — it's reconstructed as `Σ amount` for that `(account, asset)` strictly before the row's `(transaction_date, id)`. This makes the view self-auditing: it never trusts the engine's own delta math, it recomputes it from the ledger independently. The reconciling row also carries `caused_by_observation_id`, an explicit (best-effort-backfilled on pre-#370 rows) link back to the observation that caused it — audit convenience only; the flag math never depends on it.
+
+**The "needs attention" threshold.** An unacknowledged `adjustment` is flagged when `abs(delta) / abs(prior_fold) >= RECONCILIATION_FLAG_PERCENT_THRESHOLD` (default 1%), or unconditionally when `prior_fold` is zero (an adjustment against nothing held is 100% unexplained by construction). Chosen as a percentage, not a currency amount, because `amount` is a quantity in the asset's own unit (BTC, shares, USD) — a dimensionless ratio is the only threshold that means the same thing for a $10 adjustment on a $50 cash account and a 0.0001 BTC adjustment on a crypto wallet. `opening_balance` is never flagged: it's the expected day-0 anchor, not an unexplained drift. Acknowledging an adjustment (optionally with a note) clears the flag via `acknowledged_at`/`acknowledged_note` on the transaction row — metadata only, never a ledger rewrite.

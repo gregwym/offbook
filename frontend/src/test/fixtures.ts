@@ -27,6 +27,7 @@ import type {
 } from '../types/householdAggregator'
 import type { HouseholdDetail, MembersListing } from '../types/household'
 import type { PlaidItem } from '../types/plaid'
+import type { ReconciliationReport } from '../types/reconciliation'
 import type { SavingsGoal } from '../types/savingsGoal'
 import type { Transaction } from '../types/transaction'
 import type { UserSettingsView } from '../types/userSettings'
@@ -80,6 +81,7 @@ export const account1: Account = {
   last_sync_error: null,
   last_observed_at: null,
   last_observed_source: null,
+  needs_attention: false,
 }
 
 export const accounts: Account[] = [account1]
@@ -134,6 +136,7 @@ export const transaction1: Transaction = {
   account_id: 1,
   asset_id: 1,
   category_id: 1,
+  kind: 'flow',
   amount: '-50.000000000000000000',
   description: 'WHOLEFDS MKT',
   description_clean: 'Whole Foods',
@@ -284,3 +287,25 @@ export const householdAccountSummaries: HouseholdAccountSummary[] = []
 export const householdCategoryTrend: HouseholdCategoryTrendItem[] = []
 export const householdTopMerchants: HouseholdMerchantSpendItem[] = []
 export const householdCashFlow: HouseholdCashFlowMonth[] = []
+
+export const reconciliationReport: ReconciliationReport = {
+  account_id: 1,
+  checkpoints: [
+    {
+      observation_id: 1,
+      asset_id: 1,
+      as_of: now,
+      source: 'plaid',
+      observed_quantity: '1000.000000000000000000',
+      prior_fold: '0',
+      delta: '1000.000000000000000000',
+      transaction_id: 1,
+      kind: 'opening_balance',
+      acknowledged: true,
+      acknowledged_at: null,
+      acknowledged_note: null,
+      needs_attention: false,
+    },
+  ],
+  needs_attention: false,
+}

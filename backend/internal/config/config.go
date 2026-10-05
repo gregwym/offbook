@@ -65,6 +65,15 @@ type Config struct {
 	AICategorizeDailyBudget         int     // AI_CATEGORIZE_DAILY_BUDGET — max Categorize() batch calls per day, instance-wide. Default 200.
 	AICategorizeBatchSize           int     // AI_CATEGORIZE_BATCH_SIZE — candidates per Categorize() call. Default 20.
 	AICategorizeConfidenceThreshold float64 // AI_CATEGORIZE_CONFIDENCE_THRESHOLD — verdicts below this are not committed. Default 0.6.
+
+	// ReconciliationFlagPercentThreshold (#370) gates the per-account "needs
+	// attention" flag: an unacknowledged adjustment row is flagged when
+	// abs(delta) / abs(prior ledger fold) is at or above this fraction (a
+	// zero prior fold always flags — any adjustment against nothing held is
+	// 100% unexplained by definition). Dimensionless (quantity ratio, not a
+	// currency amount), so it applies uniformly across fiat/crypto/equity —
+	// see docs/ADR/0017-event-sourced-quantity.md addendum.
+	ReconciliationFlagPercentThreshold float64 // RECONCILIATION_FLAG_PERCENT_THRESHOLD — default 0.01 (1%)
 }
 
 // PlaidConfigured reports whether the Plaid surface is enabled.
@@ -172,6 +181,8 @@ func Load() (Config, error) {
 		AICategorizeDailyBudget:         getenvInt("AI_CATEGORIZE_DAILY_BUDGET", 200),
 		AICategorizeBatchSize:           getenvInt("AI_CATEGORIZE_BATCH_SIZE", 20),
 		AICategorizeConfidenceThreshold: getenvFloat("AI_CATEGORIZE_CONFIDENCE_THRESHOLD", 0.6),
+
+		ReconciliationFlagPercentThreshold: getenvFloat("RECONCILIATION_FLAG_PERCENT_THRESHOLD", 0.01),
 	}
 
 	if isPlaceholderSecret(cfg.SessionSecret) {

@@ -37,6 +37,11 @@ export type Account = {
   // recorded observation (manual accounts; a Plaid account never reconciled).
   last_observed_at: string | null
   last_observed_source: string | null
+  // needs_attention is true when the account holds at least one
+  // unacknowledged adjustment transaction whose delta is large relative to
+  // the ledger fold immediately before it (#370). Review it on the
+  // account's /accounts/:id/reconciliation view.
+  needs_attention: boolean
 }
 
 // SyncStatus mirrors the CHECK constraint in migration 000027 on

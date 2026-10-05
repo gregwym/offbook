@@ -86,6 +86,10 @@ export type InsightsAccountRow = {
   balance_complete: boolean
   source: 'plaid' | 'manual'
   last_synced_at: string | null
+  // needs_attention surfaces the #370 unacknowledged-adjustment flag.
+  // Personal scope only — the household aggregator doesn't expose
+  // per-account reconciliation state (undefined in household scope).
+  needs_attention?: boolean
   owner_user_id?: number
   visibility?: 'balance_only' | 'balance_and_txns'
 }
@@ -274,6 +278,7 @@ async function loadPersonal(): Promise<InsightsData> {
       balance_complete: a.balance_complete,
       source: a.plaid_account_id ? 'plaid' : 'manual',
       last_synced_at: a.last_synced_at,
+      needs_attention: a.needs_attention,
     })),
     category_trend: trendResult.status === 'fulfilled' ? trendResult.value : [],
     top_merchants: merchantsResult.status === 'fulfilled' ? merchantsResult.value : [],

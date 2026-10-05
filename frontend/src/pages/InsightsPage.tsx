@@ -12,6 +12,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  AlertTriangle,
   LineChart as LineChartIcon,
   PieChart as PieChartIcon,
   PiggyBank,
@@ -693,7 +694,18 @@ function AccountsBand({ data }: { data: InsightsData }) {
               key={a.id}
               className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-3 px-5 py-2 text-sm"
             >
-              <span className="truncate text-gray-900">{a.name}</span>
+              <span className="truncate text-gray-900">
+                {a.name}
+                {a.needs_attention && (
+                  <Link
+                    to={`/accounts/${a.id}/reconciliation`}
+                    title="An adjustment on this account needs review — see the reconciliation view."
+                    className="ml-1.5 inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-amber-700 hover:bg-amber-100"
+                  >
+                    <AlertTriangle size={10} /> needs attention
+                  </Link>
+                )}
+              </span>
               <span className="text-xs text-gray-400">{a.account_type}</span>
               <span className="text-xs text-gray-400 capitalize">{a.source}</span>
               <span className="text-right">
