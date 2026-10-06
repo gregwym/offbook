@@ -33,14 +33,15 @@ func ReconcilePosition(
 	asOf time.Time,
 	source string,
 ) (*model.Transaction, error) {
-	if err := obsRepo.Insert(ctx, &model.AccountBalanceObservation{
+	obs := &model.AccountBalanceObservation{
 		UserID:           userID,
 		AccountID:        accountID,
 		AssetID:          assetID,
 		ObservedQuantity: reported,
 		AsOf:             asOf,
 		Source:           source,
-	}); err != nil {
+	}
+	if err := obsRepo.Insert(ctx, obs); err != nil {
 		return nil, fmt.Errorf("reconcile: record observation: %w", err)
 	}
 
@@ -64,14 +65,15 @@ func ReconcilePosition(
 		desc = "Opening balance"
 	}
 	recTx := &model.Transaction{
-		UserID:          userID,
-		AccountID:       accountID,
-		AssetID:         assetID,
-		Kind:            kind,
-		Amount:          delta,
-		Description:     &desc,
-		TransactionDate: asOf,
-		Source:          "system",
+		UserID:                userID,
+		AccountID:             accountID,
+		AssetID:               assetID,
+		Kind:                  kind,
+		Amount:                delta,
+		Description:           &desc,
+		TransactionDate:       asOf,
+		Source:                "system",
+		CausedByObservationID: &obs.ID,
 	}
 	if err := txRepo.Create(ctx, recTx); err != nil {
 		return nil, fmt.Errorf("reconcile: write %s: %w", kind, err)

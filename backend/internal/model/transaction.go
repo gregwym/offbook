@@ -46,9 +46,19 @@ type Transaction struct {
 	IsTransfer           bool            `gorm:"not null;default:false" json:"is_transfer"`
 	TransferPairID       *int64          `json:"transfer_pair_id,omitempty"`
 	Notes                *string         `json:"notes,omitempty"`
-	CreatedAt            time.Time       `json:"created_at"`
-	UpdatedAt            time.Time       `json:"updated_at"`
-	DeletedAt            gorm.DeletedAt  `gorm:"index" json:"-"`
+	// CausedByObservationID links an opening_balance/adjustment row to the
+	// account_balance_observations row that caused it (ADR-0017 §
+	// reconciliation; #370). Audit linkage only — nil on ordinary flow rows
+	// and on legacy reconciling rows written before this column existed.
+	CausedByObservationID *int64 `json:"caused_by_observation_id,omitempty"`
+	// AcknowledgedAt/AcknowledgedNote let a user mark an adjustment reviewed
+	// (#370) without altering ledger fields. Only meaningful on kind=adjustment
+	// rows; nil everywhere else.
+	AcknowledgedAt   *time.Time     `json:"acknowledged_at,omitempty"`
+	AcknowledgedNote *string        `json:"acknowledged_note,omitempty"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Account      *Account     `gorm:"foreignKey:AccountID" json:"-"`
 	Asset        *Asset       `gorm:"foreignKey:AssetID" json:"-"`

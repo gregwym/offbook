@@ -20,6 +20,7 @@ import { SignupPage } from './pages/SignupPage'
 const InsightsPage = lazy(() => import('./pages/InsightsPage').then((m) => ({ default: m.InsightsPage })))
 const AccountsPage = lazy(() => import('./pages/AccountsPage').then((m) => ({ default: m.AccountsPage })))
 const AccountsAddPage = lazy(() => import('./pages/AccountsAddPage').then((m) => ({ default: m.AccountsAddPage })))
+const ReconciliationPage = lazy(() => import('./pages/ReconciliationPage').then((m) => ({ default: m.ReconciliationPage })))
 const TransactionsPage = lazy(() => import('./pages/TransactionsPage').then((m) => ({ default: m.TransactionsPage })))
 const RulesPage = lazy(() => import('./pages/RulesPage').then((m) => ({ default: m.RulesPage })))
 const BudgetsPage = lazy(() => import('./pages/BudgetsPage').then((m) => ({ default: m.BudgetsPage })))
@@ -62,6 +63,7 @@ export default function App() {
           <Route path="/dashboard" element={<Navigate to="/insights" replace />} />
           <Route path="/accounts" element={<LazyRoute><AccountsPage /></LazyRoute>} />
           <Route path="/accounts/add" element={<LazyRoute><AccountsAddPage /></LazyRoute>} />
+          <Route path="/accounts/:id/reconciliation" element={<LazyRoute><ReconciliationPage /></LazyRoute>} />
           {/* /connect and /import are absorbed by /accounts/add (v6 §03 + §07).
               Keep the old paths around as redirects so bookmarks still land
               somewhere useful — they'll be dropped entirely in a later cleanup. */}

@@ -12,6 +12,7 @@ DELETE /api/v1/transactions/:id
 GET /api/v1/accounts
 GET /api/v1/accounts/:id
 GET /api/v1/accounts/:id/pii
+GET /api/v1/accounts/:id/reconciliation
 GET /api/v1/accounts/:id/shares
 GET /api/v1/ai/threads
 GET /api/v1/ai/threads/:id/messages
@@ -70,6 +71,7 @@ PATCH /api/v1/me/scope
 PATCH /api/v1/me/settings
 PATCH /api/v1/savings-goals/:id
 PATCH /api/v1/transactions/:id
+PATCH /api/v1/transactions/:id/acknowledge
 POST /api/v1/accounts
 POST /api/v1/accounts/:id/trades
 POST /api/v1/accounts/:id/transactions/import

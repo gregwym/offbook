@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { LineChart, Pencil, Plus, Trash2, Upload } from 'lucide-react'
+import { AlertTriangle, LineChart, Pencil, Plus, Trash2, Upload } from 'lucide-react'
 import { AccountVisibilityChip } from '../components/AccountVisibilityChip'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
@@ -91,7 +91,18 @@ export function AccountsPage() {
             )}
             {accounts.map((a) => (
               <tr key={a.id} className="hover:bg-gray-50">
-                <td className="px-4 py-2 font-medium text-gray-900">{a.name}</td>
+                <td className="px-4 py-2 font-medium text-gray-900">
+                  {a.name}
+                  {a.needs_attention && (
+                    <Link
+                      to={`/accounts/${a.id}/reconciliation`}
+                      title="An adjustment on this account needs review — see the reconciliation view."
+                      className="ml-1.5 inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-amber-700 hover:bg-amber-100"
+                    >
+                      <AlertTriangle size={10} /> needs attention
+                    </Link>
+                  )}
+                </td>
                 <td className="px-4 py-2 text-gray-700">{a.institution_slug}</td>
                 <td className="px-4 py-2 text-gray-700">{a.account_type}</td>
                 <td className="px-4 py-2 text-gray-700">{a.last_four ?? '—'}</td>

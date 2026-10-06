@@ -481,10 +481,25 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
   // = asset.symbol when available; fall back to the parent account's
   // currency for older rows that haven't been backfilled.
   const currency = asset?.symbol ?? account?.currency ?? 'USD'
+  // opening_balance/adjustment rows are reconciliation facts (ADR-0017), not
+  // ordinary flow — flag them visually and link to the per-account
+  // reconciliation view (#370) rather than letting them blend into spending.
+  const isReconciling = tx.kind === 'opening_balance' || tx.kind === 'adjustment'
   return (
-    <tr className="hover:bg-gray-50">
+    <tr className={`hover:bg-gray-50 ${isReconciling ? 'bg-amber-50/60' : ''}`}>
       <td className={`px-3 py-2 text-gray-700 ${indented ? 'pl-8' : ''}`}><DateDisplay value={tx.transaction_date} /></td>
-      <td className="px-3 py-2 text-gray-900">{tx.description ?? '—'}</td>
+      <td className="px-3 py-2 text-gray-900">
+        {tx.description ?? '—'}
+        {isReconciling && account && (
+          <Link
+            to={`/accounts/${account.id}/reconciliation`}
+            title="Reconciliation row — see the account's reconciliation view."
+            className="ml-1.5 inline-flex items-center rounded border border-amber-200 bg-amber-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-amber-700 hover:bg-amber-100"
+          >
+            {tx.kind === 'opening_balance' ? 'opening balance' : 'adjustment'}
+          </Link>
+        )}
+      </td>
       <td className="px-3 py-2 text-gray-700">{tx.merchant_name ?? '—'}</td>
       <td className="px-3 py-2 text-right">
         <AmountDisplay amount={tx.amount} currency={currency} signed />

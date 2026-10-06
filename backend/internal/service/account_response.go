@@ -42,4 +42,13 @@ type AccountResponse struct {
 	// observation (manual accounts; a Plaid account never yet reconciled).
 	LastObservedAt     *time.Time `json:"last_observed_at"`
 	LastObservedSource *string    `json:"last_observed_source"`
+
+	// NeedsAttention is true when the account holds at least one
+	// unacknowledged adjustment transaction whose delta is large relative to
+	// the ledger fold immediately before it (#370) — surfaced on Accounts/
+	// Insights until the user reviews it via the reconciliation view. False
+	// (never nil) when no reconciliation wiring is present, matching
+	// BalanceComplete's "no wiring means don't claim a signal we can't back"
+	// contract inverted for a boolean flag: default to "nothing to flag".
+	NeedsAttention bool `json:"needs_attention"`
 }

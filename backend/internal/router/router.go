@@ -46,10 +46,19 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	priceRepo := repository.NewPriceRepository(gormDB)
 	balanceObservationRepo := repository.NewBalanceObservationRepository(gormDB)
 	valuationSvc := valuation.NewService(positionRepo, priceRepo, assetRepo, accountRepo)
+	transactionRepo := repository.NewTransactionRepository(gormDB)
+
+	// Reconciliation view + "needs attention" flag (#370): read-only over
+	// transaction/observation repos, same PII-free shape as every service
+	// outside pii_service.
+	reconciliationSvc := service.NewReconciliationService(transactionRepo, balanceObservationRepo, accountRepo, cfg.ReconciliationFlagPercentThreshold)
+	reconciliationHandler := handler.NewReconciliationHandler(reconciliationSvc)
+
 	accountSvc := service.NewAccountService(gormDB, accountRepo, assetRepo, positionRepo).
 		WithPlaidItemRepo(plaidItemRepo).
 		WithValuation(valuationSvc).
-		WithBalanceObservationRepo(balanceObservationRepo)
+		WithBalanceObservationRepo(balanceObservationRepo).
+		WithReconciliation(reconciliationSvc)
 	accountHandler := handler.NewAccountHandler(accountSvc)
 
 	// PII flow: pii_repo is wired ONLY into pii_service, which is wired ONLY
@@ -58,7 +67,6 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	piiSvc := service.NewPIIService(piiRepo, accountSvc)
 	piiHandler := handler.NewPIIHandler(piiSvc)
 
-	transactionRepo := repository.NewTransactionRepository(gormDB)
 	categoryRepo := repository.NewCategoryRepository(gormDB)
 	ruleRepo := repository.NewCategorizationRuleRepository(gormDB)
 	transactionSvc := service.NewTransactionService(transactionRepo, accountRepo, categoryRepo).
@@ -194,6 +202,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		authHandler.RegisterAuthenticated(secured)
 		accountHandler.Register(secured)
 		piiHandler.RegisterAccountRoutes(secured)
+		reconciliationHandler.Register(secured)
 		transactionHandler.Register(secured)
 		tradeHandler.Register(secured)
 		assetHandler.Register(secured)
