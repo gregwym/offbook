@@ -74,6 +74,12 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		WithJobRepo(repository.NewIngestionJobRepository(gormDB))
 	transactionHandler := handler.NewTransactionHandler(transactionSvc)
 
+	// Transfer matching (#371): deterministic cross-account pair proposals +
+	// confirm/unlink. Read-only over transactionRepo like reconciliationSvc
+	// above — no pii_repo, no new tables.
+	transferMatchingSvc := service.NewTransferMatchingService(transactionRepo)
+	transferHandler := handler.NewTransferHandler(transferMatchingSvc)
+
 	tradeSvc := service.NewTradeService(gormDB, accountRepo, assetRepo, transactionRepo, positionRepo, priceRepo, userRepo)
 	tradeHandler := handler.NewTradeHandler(tradeSvc)
 	assetHandler := handler.NewAssetHandler(assetRepo)
@@ -204,6 +210,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 		piiHandler.RegisterAccountRoutes(secured)
 		reconciliationHandler.Register(secured)
 		transactionHandler.Register(secured)
+		transferHandler.Register(secured)
 		tradeHandler.Register(secured)
 		assetHandler.Register(secured)
 		categoryHandler.Register(secured)

@@ -142,6 +142,9 @@ func NewDashboardRepository(db *gorm.DB) DashboardRepository {
 // Summarize aggregates over [from, to) for the given user. Net worth +
 // account count are NOT period-scoped (current state of the books);
 // income/spending/transaction count + by-category ARE period-scoped.
+// Income/spending and by-category both exclude is_transfer=true rows — a
+// confirmed transfer between the user's own accounts (#371) is not income
+// or spending — same convention as SpendByCategory/CashFlowByMonth below.
 func (r *dashboardRepo) Summarize(ctx context.Context, userID int64, from, to time.Time) (*DashboardSummaryAggregates, error) {
 	out := &DashboardSummaryAggregates{}
 
@@ -166,6 +169,7 @@ func (r *dashboardRepo) Summarize(ctx context.Context, userID int64, from, to ti
 		FROM transactions
 		WHERE deleted_at IS NULL
 		  AND user_id = ?
+		  AND is_transfer = FALSE
 		  AND kind = 'flow'
 		  AND transaction_date >= ?
 		  AND transaction_date <  ?
@@ -201,6 +205,7 @@ func (r *dashboardRepo) Summarize(ctx context.Context, userID int64, from, to ti
 		LEFT JOIN categories c ON c.id = t.category_id
 		WHERE t.deleted_at IS NULL
 		  AND t.user_id = ?
+		  AND t.is_transfer = FALSE
 		  AND t.kind = 'flow'
 		  AND t.transaction_date >= ?
 		  AND t.transaction_date <  ?

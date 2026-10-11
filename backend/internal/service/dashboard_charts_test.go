@@ -133,6 +133,91 @@ func TestDashboard_SpendByCategory_OutflowsOnlyAndTransfersExcluded(t *testing.T
 	}
 }
 
+// TestDashboard_Summarize_ConfirmedTransferExcludedFromIncomeAndSpending is
+// the #371 regression: a user moving money between two of their own
+// accounts must not see it as income on one side and spending on the
+// other. Before Confirm, both the headline income/spending totals (which,
+// pre-#371, were missing the is_transfer predicate SpendByCategory already
+// had) and the SpendByCategory chart show the pair; after Confirm they must
+// both drop to zero/empty.
+func TestDashboard_Summarize_ConfirmedTransferExcludedFromIncomeAndSpending(t *testing.T) {
+	svc, userID, accountA, g := newDashboardSvc(t)
+	ctx := context.Background()
+	usdID := ptrAssetID(t, g, accountA)
+
+	accB := &model.Account{
+		UserID: userID, Name: "DashAcct2-" + time.Now().Format("150405.000000"),
+		InstitutionSlug: "fixture", AccountType: "savings", Currency: "USD",
+	}
+	if err := g.Create(accB).Error; err != nil {
+		t.Fatalf("seed account B: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("account_id = ?", accB.ID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, accB.ID)
+	})
+
+	d := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
+	out := &model.Transaction{UserID: userID, AccountID: accountA, AssetID: usdID, Amount: decimal.NewFromInt(-400), TransactionDate: d, Source: "manual"}
+	in := &model.Transaction{UserID: userID, AccountID: accB.ID, AssetID: usdID, Amount: decimal.NewFromInt(400), TransactionDate: d, Source: "manual"}
+	if err := g.Create(out).Error; err != nil {
+		t.Fatalf("seed outflow: %v", err)
+	}
+	if err := g.Create(in).Error; err != nil {
+		t.Fatalf("seed inflow: %v", err)
+	}
+
+	before, err := svc.Summarize(ctx, userID, service.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Summarize (before confirm): %v", err)
+	}
+	if before.Income != "400" || before.Spending != "400" {
+		t.Fatalf("before confirm: income=%s spending=%s, want 400/400 (unmatched transfer looks like ordinary flow)", before.Income, before.Spending)
+	}
+	spendBefore, err := svc.SpendByCategory(ctx, userID, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("SpendByCategory (before confirm): %v", err)
+	}
+	if len(spendBefore) != 1 {
+		t.Fatalf("SpendByCategory (before confirm) = %+v, want 1 uncategorized row", spendBefore)
+	}
+
+	transferSvc := service.NewTransferMatchingService(repository.NewTransactionRepository(g))
+	if _, _, err := transferSvc.Confirm(ctx, userID, out.ID, in.ID); err != nil {
+		t.Fatalf("Confirm transfer: %v", err)
+	}
+
+	after, err := svc.Summarize(ctx, userID, service.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Summarize (after confirm): %v", err)
+	}
+	if after.Income != "0" || after.Spending != "0" {
+		t.Errorf("after confirm: income=%s spending=%s, want 0/0 (confirmed transfer must drop out of both)", after.Income, after.Spending)
+	}
+	if len(after.ByCategory) != 0 {
+		t.Errorf("after confirm: by_category = %+v, want empty", after.ByCategory)
+	}
+	spendAfter, err := svc.SpendByCategory(ctx, userID, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("SpendByCategory (after confirm): %v", err)
+	}
+	if len(spendAfter) != 0 {
+		t.Errorf("SpendByCategory (after confirm) = %+v, want empty", spendAfter)
+	}
+}
+
+// ptrAssetID returns accountID's primary_quote_asset_id — a tiny raw lookup
+// so the regression test above can give both legs the same asset without
+// duplicating newDashboardSvc's account-creation hook logic.
+func ptrAssetID(t *testing.T, g *gorm.DB, accountID int64) int64 {
+	t.Helper()
+	var id int64
+	if err := g.Raw(`SELECT primary_quote_asset_id FROM accounts WHERE id = ?`, accountID).Scan(&id).Error; err != nil {
+		t.Fatalf("lookup primary_quote_asset_id: %v", err)
+	}
+	return id
+}
+
 // TestDashboard_SpendByCategory_TenantIsolation.
 func TestDashboard_SpendByCategory_TenantIsolation(t *testing.T) {
 	svc, userA, _, g := newDashboardSvc(t)

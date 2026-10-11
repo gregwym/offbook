@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronRight, Eye, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react'
+import { ArrowRightLeft, ChevronDown, ChevronRight, Eye, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { DateDisplay } from '../components/DateDisplay'
 import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
 import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
+import { TransferMatchesModal } from '../components/TransferMatchesModal'
 import { listTransactions } from '../api/transactions'
+import { listTransferCandidates, unlinkTransfer } from '../api/transfers'
+import type { TransferCandidate } from '../api/transfers'
 import { useAccountsStore } from '../store/accountsStore'
 import { useAssetsStore } from '../store/assetsStore'
 import { useCategoriesStore } from '../store/categoriesStore'
@@ -59,10 +62,22 @@ export function TransactionsPage() {
     filter.categorization_method === 'plaid_default',
   )
   const [reviewCount, setReviewCount] = useState<number | null>(null)
+  // Transfer-match proposals (#371) — a separate review queue from "needs
+  // review" categorization. Recomputed fresh on mount/after each sync, same
+  // as reviewCount above; nothing links until the user confirms a pair in
+  // the modal.
+  const [transferCandidates, setTransferCandidates] = useState<TransferCandidate[]>([])
+  const [reviewingTransfers, setReviewingTransfers] = useState(false)
   // bannerDismissed mirrors localStorage by key. We let it lag behind a
   // sync-driven key change for one frame, but the showBanner logic also
   // checks against the live key, so the user never sees a stale banner.
   const [dismissedKey, setDismissedKey] = useState<string | null>(null)
+
+  const refreshTransferCandidates = () => {
+    void listTransferCandidates()
+      .then((r) => setTransferCandidates(r.items))
+      .catch(() => { /* swallow — the banner/modal just won't surface */ })
+  }
 
   useEffect(() => {
     void fetchAccounts()
@@ -70,6 +85,7 @@ export function TransactionsPage() {
     void fetchCategories()
     void fetchRules()
     void fetch()
+    refreshTransferCandidates()
   }, [fetch, fetchAccounts, fetchAssets, fetchCategories, fetchRules])
 
   // Same priority heuristic as RulesPage — new rules outrank existing ones
@@ -249,6 +265,26 @@ export function TransactionsPage() {
         </div>
       )}
 
+      {transferCandidates.length > 0 && (
+        <div className="mt-4 flex items-start justify-between gap-3 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900">
+          <div className="flex items-start gap-2">
+            <ArrowRightLeft size={16} className="mt-0.5 shrink-0" />
+            <span>
+              {transferCandidates.length} possible transfer{transferCandidates.length === 1 ? '' : 's'} found between
+              your own accounts —{' '}
+              <button
+                type="button"
+                onClick={() => setReviewingTransfers(true)}
+                className="underline hover:text-indigo-700"
+              >
+                review matches
+              </button>
+              .
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -266,6 +302,17 @@ export function TransactionsPage() {
             <span className={needsReview ? 'text-amber-700' : 'text-gray-500'}>· {reviewCount}</span>
           )}
         </button>
+        {transferCandidates.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setReviewingTransfers(true)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <ArrowRightLeft size={12} />
+            Possible transfers
+            <span className="text-gray-500">· {transferCandidates.length}</span>
+          </button>
+        )}
       </div>
 
       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-5">
@@ -355,6 +402,11 @@ export function TransactionsPage() {
                       await remove(t.id)
                     }
                   }}
+                  onUnlinkTransfer={async () => {
+                    await unlinkTransfer(t.id)
+                    refreshTransferCandidates()
+                    await fetch()
+                  }}
                 />
               )
             })}
@@ -386,6 +438,20 @@ export function TransactionsPage() {
           onSubmit={async (input) => {
             await create(input)
             setAdding(false)
+            refreshTransferCandidates()
+          }}
+        />
+      )}
+
+      {reviewingTransfers && (
+        <TransferMatchesModal
+          candidates={transferCandidates}
+          accountByID={accountByID}
+          assetByID={assetByID}
+          onClose={() => setReviewingTransfers(false)}
+          onConfirmed={() => {
+            refreshTransferCandidates()
+            void fetch()
           }}
         />
       )}
@@ -394,7 +460,7 @@ export function TransactionsPage() {
         <ImportTransactionsModal
           accounts={accounts}
           onClose={() => setImporting(false)}
-          onImported={() => { void fetch() }}
+          onImported={() => { void fetch(); refreshTransferCandidates() }}
         />
       )}
 
@@ -471,12 +537,15 @@ type RowProps = {
   onCategoryChange: (catID: number | null) => void
   onCreateRule: () => void
   onDelete: () => Promise<void>
+  // Unlinks a confirmed transfer match (#371). Absent for rows that can
+  // never be a transfer leg (e.g. paired-trade legs rendered read-only).
+  onUnlinkTransfer?: () => Promise<void>
   // Optional indent for rows rendered as legs of an expanded paired
   // trade. Keeps the visual hierarchy clear.
   indented?: boolean
 }
 
-function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onDelete, indented }: RowProps) {
+function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onDelete, onUnlinkTransfer, indented }: RowProps) {
   // Per ADR-0013, the unit on a transaction is asset_id. Display currency
   // = asset.symbol when available; fall back to the parent account's
   // currency for older rows that haven't been backfilled.
@@ -498,6 +567,20 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
           >
             {tx.kind === 'opening_balance' ? 'opening balance' : 'adjustment'}
           </Link>
+        )}
+        {tx.is_transfer && onUnlinkTransfer && (
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm('Unlink this transfer? Both sides will go back to counting as ordinary transactions.')) {
+                void onUnlinkTransfer()
+              }
+            }}
+            title="Confirmed transfer — click to unlink"
+            className="ml-1.5 inline-flex items-center rounded border border-indigo-200 bg-indigo-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-indigo-700 hover:bg-indigo-100"
+          >
+            transfer
+          </button>
         )}
       </td>
       <td className="px-3 py-2 text-gray-700">{tx.merchant_name ?? '—'}</td>
