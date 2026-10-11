@@ -60,6 +60,7 @@ GET /api/v1/savings-goals/:id
 GET /api/v1/setup/status
 GET /api/v1/transactions
 GET /api/v1/transactions/:id
+GET /api/v1/transfers/candidates
 PATCH /api/v1/accounts/:id
 PATCH /api/v1/budgets/:id
 PATCH /api/v1/categorization-rules/:id
@@ -110,6 +111,8 @@ POST /api/v1/savings-goals
 POST /api/v1/savings-goals/:id/contributions
 POST /api/v1/setup/admin
 POST /api/v1/transactions
+POST /api/v1/transactions/:id/unlink-transfer
 POST /api/v1/transactions/import/jobs/:job_id/commit
+POST /api/v1/transfers/confirm
 PUT /api/v1/accounts/:id/pii
 PUT /api/v1/accounts/:id/shares/:householdID

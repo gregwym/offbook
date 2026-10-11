@@ -164,6 +164,37 @@ type TransactionRepository interface {
 	// concurrent import. Like CreateBatch, this only guards LIVE duplicates;
 	// soft-deleted rows sit outside the partial index.
 	ImportBatch(ctx context.Context, txns []model.Transaction) (int64, error)
+	// ListTransferCandidates is the deterministic matcher for #371: it finds
+	// live kind=flow transactions for userID that are not already a transfer,
+	// pairs each with the closest-by-date opposite-amount, same-asset
+	// transaction in a DIFFERENT account within windowDays, and returns each
+	// live transaction in at most one pair (closest date wins; lower id
+	// breaks ties). Same-asset only — cross-currency matching needs FX
+	// inference and is deferred (see issue #371 "Out of Scope"). Pure read;
+	// nothing is persisted or linked.
+	ListTransferCandidates(ctx context.Context, userID int64, windowDays int) ([]TransferCandidate, error)
+	// LinkTransferPair sets is_transfer=true and a symmetric transfer_pair_id
+	// (A→B.ID, B→A.ID — same scheme as CreateTradePair) on two existing live
+	// transactions scoped to userID. The repo only enforces user ownership and
+	// row existence; the caller (TransferMatchingService) enforces the
+	// accounting rules (different accounts, kind=flow, opposite amounts, not
+	// already paired). Wrapped in one DB transaction — see database.md on
+	// multi-row writes.
+	LinkTransferPair(ctx context.Context, userID, idA, idB int64) (*model.Transaction, *model.Transaction, error)
+	// UnlinkTransferPair clears is_transfer+transfer_pair_id on transactionID
+	// and its linked partner (if the partner is still live), scoped to userID.
+	// Returns ErrNotFound if transactionID doesn't exist or isn't currently
+	// linked as a transfer.
+	UnlinkTransferPair(ctx context.Context, userID, transactionID int64) error
+}
+
+// TransferCandidate pairs two live, unmatched kind=flow transactions proposed
+// by ListTransferCandidates as the same real-world transfer. Confirming a
+// candidate (TransferMatchingService.Confirm) is what actually links them —
+// nothing here is auto-applied.
+type TransferCandidate struct {
+	A model.Transaction
+	B model.Transaction
 }
 
 // CategorizationScopes enumerates the valid `scope` values for

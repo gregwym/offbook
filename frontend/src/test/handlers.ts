@@ -37,6 +37,9 @@ export const handlers = [
   http.get(`${API}/categorization-rules`, () => list(fx.rules)),
   http.get(`${API}/categorization-verdicts`, () => list(fx.categorizationVerdicts)),
 
+  // Transfer matching (#371) — happy path has no pending proposals.
+  http.get(`${API}/transfers/candidates`, () => list([])),
+
   // Dashboard (personal Insights band)
   http.get(`${API}/dashboard/summary`, () => item(fx.dashboardSummary)),
   http.get(`${API}/dashboard/net-worth`, () => list(fx.netWorthTrend)),
