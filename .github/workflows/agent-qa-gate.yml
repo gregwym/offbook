@@ -15,7 +15,8 @@ permissions:
 jobs:
   adjudicate:
     name: Verify independent QA evidence
-    # Explicit pilot opt-in; do not unexpectedly create red checks on existing PRs.\n    if: ${{ github.event.pull_request.base.ref == 'main' && vars.OFFBOOK_AGENT_QA_ENABLED == 'true' }}
+    # Explicit pilot opt-in; do not unexpectedly create red checks on existing PRs.
+    if: ${{ github.event.pull_request.base.ref == 'main' && vars.OFFBOOK_AGENT_QA_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     concurrency:
       group: qa-verdict-${{ github.event.pull_request.number }}
