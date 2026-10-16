@@ -1,0 +1,25 @@
+# Monarch reference behavior matrix — observed evidence and Offbook gap tracking
+
+Purpose: independent Product/UX critic evidence for [Daily Driver v1](DAILY-DRIVER-V1.md) and [Experience Maturity Gate](EXPERIENCE-MATURITY-GATE.md). **This is NOT a checklist claiming Offbook already has these features.** All Offbook implementation/UI parity fields begin `unverified` until code inspection and actual browser QA.
+
+Evidence captured: **2026-10-15** from Monarch's official public help documentation. These articles may describe features/version variants not visible in the current interface; do not claim current pixel/UI equivalence without observed screenshots from permitted access.
+
+| ID | User journey and Monarch's documented behavior | Evidence | Offbook UX + behavior parity | Required independent assessment |
+| --- | --- | --- | --- | --- |
+| TX-01 | Create rules that rename merchant/category, tag, hide, set review status, and use a changes preview; supports smart splits and rule ordering | [Creating Transaction Rules](https://help.monarchmoney.com/hc/en-us/articles/360048393372-Transaction-rules), updated 2025-05-09 | **UNVERIFIED**; inspect code and browser | Can user understand a rule's impact *before* saving, edit/revert, distinguish category vs hidden/review, and predict effects on budgets? |
+| TX-02 | Hide a transaction from budget/cash flow without deleting its full transaction-list record; reversible | [Hiding or Unhiding Transactions](https://help.monarchmoney.com/hc/en-us/articles/4405041904916-Hide-Transactions), updated 2024-12-07 | **UNVERIFIED** | After hide/reveal and repeated sync, list, balance, review, Insights and budget must agree; visible affordance and undo |
+| TX-03 | Pending transaction manual edits may be lost at posting; Monarch exposes a preference controlling editing pending items | [Tips & Tricks for Using Monarch](https://help.monarch.com/hc/en-us/articles/28953573066260-Tips-Tricks-for-Using-Monarch), updated 2026-09-23 | **UNVERIFIED** | Repeat pending→posted flow with user edits, warnings, review state, retry/deduplication; don't silently discard user work |
+| TX-04 | Transfers and credit-card payments are not income/expense budget events | [Creating Your Budget](https://help.monarchmoney.com/hc/en-us/articles/360048883631-Budgets) and [Tips & Tricks](https://help.monarch.com/hc/en-us/articles/28953573066260-Tips-Tricks-for-Using-Monarch) | **UNVERIFIED** | Move funds and pay cards; budget, net worth and transaction ledger remain mathematically consistent and explainable |
+| BUD-01 | Rollover carries remaining categories into subsequent months with clear calculation and mobile controls | [Rollover Budgets](https://help.monarchmoney.com/hc/en-us/articles/4411119762196-Rollover-budget-feature), updated 2025-02-13 | **UNVERIFIED / scope to confirm** | Toggle month carryover, over-budget and starting balance; explain difference to ordinary monthly budget |
+| ONB-01 | Initial account connection guides user through setup tasks and refresh/error recovery | [Getting Started with Monarch](https://help.monarchmoney.com/hc/en-us/articles/360048393272-Getting-Started-Guide), updated 2025-07-16 | **UNVERIFIED** | New-user first run with no existing dataset; connection, incomplete sync, manual fallback, empty/processing/error states |
+| IMP-01 | CSV import is provided, but its documentation says import cannot be undone directly | [Import Transaction Data Manually](https://help.monarchmoney.com/hc/en-us/articles/4409682789908-Import-data-manually-from-banks-or-other-finance-apps), updated 2025-02-09 | **UNVERIFIED; Offbook may deliberately improve** | Preview validation, duplicate detection, result audit, clear recovery/undo; compare outcomes, not imitate a weakness |
+
+### Known evidence conflict requiring product judgment
+
+[May 2025 rules documentation](https://help.monarchmoney.com/hc/en-us/articles/360048393372-Transaction-rules) describes rule execution when new *non-pending* transactions arrive. [September 2026 tips](https://help.monarch.com/hc/en-us/articles/28953573066260-Tips-Tricks-for-Using-Monarch) says *rules still run on pending transactions*. The later source may reflect an updated product policy. **Do not guess**. Record Monarch UI verification as `unverified` until confirmed, and choose/test a user-understandable Offbook policy independently. A contradicting reference never justifies silent data loss.
+
+## Reviewer process
+
+For each ID, Product Agent appends: inspected Offbook code paths, target policy/ADR, source version, covered vs missing behavior and issue links. QA/UX critic then appends: runnable synthetic fixture, desktop/mobile screenshot or trace links, number of interactions, task completion, friction, accuracy, error/recovery handling and experience-scorecard dimensions (0–4 with evidence). Do not flip to `verified-equivalent` because API routes or tests exist; require the browser journey and benchmark evidence.
+
+If a current Monarch screen is inaccessible, use `verified-doc / UI-unverified` and a justified Offbook UX design rather than fabricated visual parity.
