@@ -8,14 +8,19 @@ For *new* behavior use `docs/product/PRODUCT-CONTRACT.md`, researched behavior s
 
 Until a deliberate redesign ships, existing household privacy, account ownership, PII access rules, AI data exclusions, ledger accounting, and valuations must continue to pass. Proposed simplified household UX is not yet implemented.
 
-## QA Trigger / Certification
+## Batched Independent QA
 
-- PR-triggered or scheduled **synthetic-only** QA is allowed without owner interaction.
-- Verify the exact PR head commit or a selected `main` delta. A new head commit invalidates a prior QA PASS.
-- Independent QA must use its own checkout, isolated QA DB/stack and separate agent session from the developer.
-- Record PASS, FAIL or BLOCKED, with SHA, scenario coverage, sanitized evidence and residual risk. Missing browser/Docker/GitHub permissions -> BLOCKED, never PASS.
-- Do not connect to Plaid production, real bank accounts, the Pi's live database, or owner secrets.
-- Functional PRs require independent QA plus required CI; high-risk finance/security/migration/release PRs also require owner review.
+Developer-run targeted tests and **required GitHub CI** protect every PR. **Independent AI QA runs in batches**, not on each push or PR, to maximize Opus development throughput. The default sweep is twice weekly or after roughly eight merges when scheduling permits, plus a final independent QA of the exact release candidate.
+
+For each sweep:
+
+1. Read [Goal #423](https://github.com/gregwym/offbook/issues/423), [Daily Driver charter](product/DAILY-DRIVER-V1.md) and [agent communication protocol](dev/agent-communication-protocol.md).
+2. Determine the last accepted QA checkpoint from Goal #423 comments (or Discussion #199). Select a **pinned main SHA** and verify the last checkpoint is its ancestor; include all intervening merged PRs.
+3. Run isolated Compose/Playwright/API/DB tests with synthetic personas. Combine changed-workflow checks and baseline money/privacy regression tests.
+4. Report PASS/FAIL/BLOCKED for the exact `from_sha` → `to_sha` range; include checked flows, evidence and new Bug Issues with severity. No fabricated coverage.
+5. If P0/P1, Engineering must fix it before unrelated feature work. The QA agent does not change the author's code.
+
+QA agents may share the same GitHub account as Engineering but must run as **separate sessions** and workspaces. No dedicated bot identity or per-PR attestation is required. **CI-green PRs may merge before batch QA**; this makes `main` an integration branch, never a production release authorization. Existing Pi Prod remains manual.
 
 ## Worktree And Environment Isolation
 
