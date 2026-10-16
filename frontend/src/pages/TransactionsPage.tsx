@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ArrowRightLeft, Check, CheckCheck, ChevronDown, ChevronRight, Eye, Plus, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { DateDisplay } from '../components/DateDisplay'
 import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
@@ -58,7 +58,26 @@ export function TransactionsPage() {
   // filter (reviewed=false) — explicit review state, independent of how a row
   // was categorized. reviewCount is a separate query so the chip/banner can
   // announce a number independent of whatever filter the user is looking at.
-  const [needsReview, setNeedsReview] = useState<boolean>(filter.reviewed === false)
+  // The chip lives in the URL (?review=1) so a reload or shared link keeps the
+  // inbox open instead of silently dropping back to the full list.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const needsReview = searchParams.get('review') === '1'
+  const setNeedsReview = useCallback(
+    (next: boolean | ((v: boolean) => boolean)) => {
+      setSearchParams(
+        (prev) => {
+          const cur = prev.get('review') === '1'
+          const val = typeof next === 'function' ? next(cur) : next
+          const out = new URLSearchParams(prev)
+          if (val) out.set('review', '1')
+          else out.delete('review')
+          return out
+        },
+        { replace: true },
+      )
+    },
+    [setSearchParams],
+  )
   const [reviewCount, setReviewCount] = useState<number | null>(null)
   // Row selection for bulk review, plus the last review action so an
   // accidental click can be undone without a reload.
