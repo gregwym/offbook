@@ -37,12 +37,35 @@ func (s *TransactionService) ExtractAndStage(
 	extractor ingestion.Extractor,
 	consentedAt *time.Time,
 ) (*ImportResult, error) {
+	return s.ExtractAndStageWith(ctx, userID, accountID, doc, extractor, consentedAt, false)
+}
+
+// ExtractAndStageWith is ExtractAndStage with an explicit duplicate override.
+// Unless allowDuplicate is set, a byte-identical document already committed
+// into the account returns *DuplicateStatementError BEFORE any provider egress
+// (#376); row-level external_id dedup remains the backstop either way.
+func (s *TransactionService) ExtractAndStageWith(
+	ctx context.Context,
+	userID, accountID int64,
+	doc ingestion.Document,
+	extractor ingestion.Extractor,
+	consentedAt *time.Time,
+	allowDuplicate bool,
+) (*ImportResult, error) {
 	if s.jobRepo == nil {
 		return nil, ErrImportStagingUnavailable
 	}
 	// Reject a foreign account before spending an extraction call.
 	if _, err := s.fetchOwnedAccount(ctx, userID, accountID); err != nil {
 		return nil, err
+	}
+	hash := contentHash(doc.Data)
+	prior, err := s.findPrior(ctx, userID, accountID, hash)
+	if err != nil {
+		return nil, err
+	}
+	if prior != nil && !allowDuplicate {
+		return nil, &DuplicateStatementError{Prior: *prior}
 	}
 
 	ext, err := extractor.Extract(ctx, doc)
@@ -57,6 +80,7 @@ func (s *TransactionService) ExtractAndStage(
 		return nil, err
 	}
 	reconcile(preview, ext)
+	preview.DuplicateOf = prior
 
 	// Stage the validated extraction so commit applies it verbatim.
 	staged, err := json.Marshal(ext)
@@ -76,7 +100,10 @@ func (s *TransactionService) ExtractAndStage(
 		Status:      "extracted",
 		RowsTotal:   &total,
 		Extraction:  staged,
+		ContentHash: &hash,
 	}
+	applyResultToJob(job, preview)
+	job.RowsImported = nil // set at commit
 	if doc.Filename != "" {
 		fn := doc.Filename
 		job.FileName = &fn
@@ -119,9 +146,13 @@ func (s *TransactionService) CommitJob(ctx context.Context, userID, jobID int64)
 		return nil, err
 	}
 
+	// Carry statement-total reconciliation onto the commit result and the audit
+	// row; ImportStatement alone doesn't compute it.
+	reconcile(res, &ext)
+
 	now := time.Now()
 	job.Status = "completed"
-	job.RowsImported = &res.InsertedCount
+	applyResultToJob(job, res)
 	job.CompletedAt = &now
 	if err := s.jobRepo.Update(ctx, job); err != nil {
 		return nil, fmt.Errorf("finalize import job: %w", err)

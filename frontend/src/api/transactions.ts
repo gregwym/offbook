@@ -2,6 +2,7 @@ import { apiClient, type ApiItem, type ApiList } from './client'
 import type {
   ColumnMapping,
   CreateTransactionInput,
+  ImportHistoryEntry,
   ImportResult,
   Transaction,
   UpdateTransactionInput,
@@ -99,15 +100,26 @@ function asImportError(err: unknown): never {
   throw err
 }
 
+// listImportHistory returns the account's committed imports, newest first (#376).
+export async function listImportHistory(accountID: number): Promise<ImportHistoryEntry[]> {
+  const res = await apiClient.get<ApiList<ImportHistoryEntry>>(`/accounts/${accountID}/imports`)
+  return res.data.data
+}
+
 // extractStatement uploads a PDF or photo (or CSV) to the user's configured AI
 // provider for extraction. This is a real egress, so it always sends
 // consent=true — callers MUST obtain explicit user consent first. The backend
 // extracts once and stages the rows, returning a preview with a job_id; review,
 // then call commitImportJob to apply. Nothing is written until commit.
-export async function extractStatement(accountID: number, file: File): Promise<ImportResult> {
+export async function extractStatement(
+  accountID: number,
+  file: File,
+  opts: { allowDuplicate?: boolean } = {},
+): Promise<ImportResult> {
   const form = new FormData()
   form.append('file', file)
   form.append('consent', 'true')
+  if (opts.allowDuplicate) form.append('allow_duplicate', 'true')
   try {
     const res = await apiClient.post<ApiItem<ImportResult>>(
       `/accounts/${accountID}/transactions/import/extract`,

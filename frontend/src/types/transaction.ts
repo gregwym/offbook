@@ -108,6 +108,34 @@ export type ImportResult = {
   reconciled?: boolean | null
   row_sum?: string
   doc_totals?: string[]
+  // duplicate_of is set when byte-identical content was already committed into
+  // this account (#376). Informational — row-level dedup still applies.
+  duplicate_of?: PriorImport
+}
+
+export type PriorImport = {
+  job_id: number
+  file_name?: string
+  imported_at?: string
+}
+
+// ImportHistoryEntry mirrors backend service.ImportHistoryEntry (#376).
+export type ImportHistoryEntry = {
+  job_id: number
+  source: string
+  extractor?: string
+  file_name?: string
+  imported_at: string
+  rows_total: number
+  rows_imported: number
+  rows_duplicate: number
+  rows_error: number
+  row_sum?: string
+  doc_totals?: string[]
+  // reconciled is null when the document had no statement total to compare;
+  // difference is the gap to the nearest total when reconciled is false.
+  reconciled: boolean | null
+  difference?: string
 }
 
 // UpdateTransactionInput: sparse patch. `clear_category: true` with a null

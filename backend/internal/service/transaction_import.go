@@ -73,6 +73,10 @@ type ImportResult struct {
 	Reconciled *bool    `json:"reconciled,omitempty"`
 	RowSum     string   `json:"row_sum,omitempty"`
 	DocTotals  []string `json:"doc_totals,omitempty"`
+	// DuplicateOf is set when byte-identical document content was already
+	// committed into this account (#376). Informational: row-level dedup still
+	// prevents double-inserts.
+	DuplicateOf *PriorImport `json:"duplicate_of,omitempty"`
 }
 
 // ImportStatement classifies extracted statement rows against the target
