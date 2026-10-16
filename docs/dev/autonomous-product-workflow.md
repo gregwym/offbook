@@ -10,17 +10,17 @@ Owner has delegated engineering implementation and integration merges; **do not 
 
 Product research is **demand-driven**: replenish the issue queue when fewer than three ready, independent Daily Driver issues remain, or an edge-case decision blocks engineering. Avoid paid/routine Monarch research merely to create backlog volume.
 
-Independent QA is **batched**, not on each push or PR: scheduled twice weekly by default (or after ~8 merged PRs), against a pinned `main` SHA and the commit range since the previous QA checkpoint. QA may perform targeted high-risk review earlier for known P0/P1 suspicion, but is **not a routine merge prerequisite**.
+Independent QA **and independent Product Experience Critic** are batched, not on each push or PR: twice weekly or ~8 merges against a pinned `main` SHA range. QA must follow [Experience Maturity Gate](../product/EXPERIENCE-MATURITY-GATE.md), evaluating full journeys, UI polish, error recovery, mobile, and source-backed Monarch behaviors with actual browser evidence. QA may perform targeted high-risk review earlier for known P0/P1 suspicion, but is **not a routine merge prerequisite**.
 
 ## Autonomous cycle
 
-1. Read [Daily Driver charter](../product/DAILY-DRIVER-V1.md), [handoff protocol](agent-communication-protocol.md), open Issues/PRs and code to determine true implementation state. Prioritize open QA P0/P1 issues over feature work.
+1. Read [Daily Driver charter](../product/DAILY-DRIVER-V1.md), [handoff protocol](agent-communication-protocol.md), open Issues/PRs and code to determine true implementation state. Prioritize open QA P0/P1 **and P2 core-journey UX defects** over unrelated new features.
 2. Claim one accepted issue via canonical `agent/issue-N` branch. Only one Engineering writer at a time; open PR early so a restarted session can resume. Prefer vertical slices with explicit user-visible acceptance and deterministic regression tests.
 3. Implement and validate with synthetic/Plaid Sandbox data only. Run relevant local checks; `main` merges require **all required GitHub CI checks green** for the exact PR SHA. Fix red checks, don't re-run them blindly without diagnosing failure.
 4. **Squash-merge automatically** once required CI is green and the branch protection permits it. Update Issue with the merged SHA and acceptance achieved. Do not ask owner to review code; an unresolved permission/branch protection constraint is a documented infrastructure blocker, not a reason to claim a merge succeeded.
 5. Repeat on next accepted issue when time/quota remain; otherwise end cleanly with next queue item and blockers. Never merge directly into prod or access its secrets.
-6. QA independently reviews an integrated `main` commit range **in batches**, tests critical browser/API/financial invariants, files Bug Issues (P0/P1 first), and records its last QAed main SHA plus PASS/FAIL/BLOCKED and coverage.
-7. Developer's next iteration prioritizes batch-QA P0/P1 issues and regression tests. Once target flows all pass and final candidate has batch-QA PASS and restore evidence, mark Daily Driver v1 ready for owner's separate production release.
+6. QA independently reviews an integrated `main` commit range **in batches**, tests critical browser/API/financial invariants, files Bug Issues (P0/P1 plus P2 core UX first), and separately records technical PASS/FAIL/BLOCKED and experience MATURE/NOT MATURE/BLOCKED, a screenshot-backed scorecard and last QAed main SHA. Technical PASS cannot close the maturity goal.
+7. Developer's next iteration prioritizes batch-QA P0/P1 issues and regression tests. Only when all target flows actually work at desktop/mobile size, final independent Product Experience audit scores >=3 per applicable dimension with no open core P2, financial reliability/repeat ingestion and backup restore are verified, may QA propose Daily Driver v1 MATURE on the exact candidate SHA. Production release still belongs to owner.
 
 ## Safety and stop conditions
 
