@@ -28,7 +28,7 @@ title: "Bug: "
 <!-- Sanitized screenshots, browser trace, API/DB assertion; no real banking data. -->
 
 ## Severity
-<!-- P0 privacy/data-loss; P1 money wrong/core workflow broken; P2 major UX; P3 polish. -->
+<!-- P0 financial data loss/PII; P1 wrong money or core task blocked; P2 CORE UX confusing/inconsistent/unpolished/inaccessible task (blocks MATURE); P3 isolated minor cosmetic only. -->
 
 ## Regression Coverage
 <!-- Add automated failing test and verify after fix. -->
