@@ -34,7 +34,7 @@ git -C ../offbook-qa checkout main
 git -C ../offbook-qa pull --ff-only
 ```
 
-Run QA from the QA worktree. Use a branch or detached commit only when the user explicitly asks to QA that target. Do not switch the developer's active worktree.
+Run QA from the QA worktree. For **automatically triggered PR QA**, check out the exact PR head commit (detached) in a separate worktree/checkout; manually requested PR QA works the same way. For scheduled main regression, use a recorded main SHA. Do not switch or mutate the developer's active worktree. Follow the verdict marker and trusted identity rules in [agent-communication-protocol.md](dev/agent-communication-protocol.md).
 
 QA tooling requires a visible QA-mode signal. The default signal is running from a worktree whose directory name is `offbook-qa` or ends in `-qa`. If a scoped QA run must happen elsewhere, explicitly set:
 
