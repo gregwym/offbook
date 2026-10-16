@@ -19,6 +19,9 @@ As a user, I can...
 ## Financial / Authorization Invariants
 <!-- What MUST remain true about amounts, ledger, balances, review, PII and ownership. -->
 
+## Experience & Polish Contract
+<!-- Explain how user discovers and completes this journey unaided: desktop/mobile, feedback, undo/retry, loading/empty/error states, visual/copy consistency and source-backed benchmark/deviations. See docs/product/EXPERIENCE-MATURITY-GATE.md. -->
+
 ## Acceptance Scenarios
 - [ ] Given ... When ... Then ...
 - [ ] Given an error or repeated event ... Then ...
