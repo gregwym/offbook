@@ -113,7 +113,7 @@ describe('ImportTransactionsModal import history (#376)', () => {
     expect(section).toHaveTextContent('VTI')
     expect(section).toHaveTextContent('new asset')
     expect(section).toHaveTextContent('Opening balance +12.5')
-    expect(section).toHaveTextContent('Opening balance +1000')
+    expect(section).toHaveTextContent('Opening balance 1,000.00 USD')
     expect(section).toHaveTextContent('unparseable quantity "lots" — skipped')
   })
 })
