@@ -52,6 +52,8 @@ export type NetWorthPoint = {
   // false when an asset held at this month-end had no available price, so
   // `total` is a partial sum (#282).
   complete: boolean
+  // Month-end value split by asset kind (#374 drill-in); slices sum to total.
+  by_kind?: { kind: string; value: string; complete: boolean }[]
 }
 
 // AssetClassAllocation mirrors backend service.AssetClassAllocation (#341).

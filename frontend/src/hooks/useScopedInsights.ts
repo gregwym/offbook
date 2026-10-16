@@ -46,6 +46,8 @@ export type InsightsTrendPoint = {
   // false when an asset held at this month-end had no available price, so
   // `value` is a partial sum (#282/#339).
   complete: boolean
+  // Personal scope only: month-end value per asset kind (#374 drill-in).
+  by_kind?: { kind: string; value: string; complete: boolean }[]
 }
 
 export type InsightsAllocationRow = {
@@ -211,7 +213,7 @@ export function useScopedInsights(): Result & { reload: () => void } & TrendCont
               t.map((p) => ({ date: p.date.slice(0, 10), value: p.value, complete: p.complete })),
             )
           : getNetWorth(months).then((t) =>
-              t.map((p) => ({ date: p.date.slice(0, 10), value: p.total, complete: p.complete })),
+              t.map((p) => ({ date: p.date.slice(0, 10), value: p.total, complete: p.complete, by_kind: p.by_kind })),
             )
       fetchTrend
         .then((trend) => {
@@ -316,6 +318,7 @@ async function loadPersonal(trendMonths = 12): Promise<InsightsData> {
       date: p.date.slice(0, 10),
       value: p.total,
       complete: p.complete,
+      by_kind: p.by_kind,
     })),
     allocation: allocation.map((a) => ({ kind: a.kind, value: a.value, complete: a.complete })),
     budgets: budgetRows,

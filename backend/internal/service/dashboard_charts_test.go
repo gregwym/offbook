@@ -726,3 +726,41 @@ func TestDashboard_TopMerchants_TenantIsolation(t *testing.T) {
 		t.Errorf("user A got %d merchants, want 0 — user B's spend leaked", len(items))
 	}
 }
+
+// TestDashboard_NetWorth_ByKindSumsToTotal: with the asset repo wired, each
+// point splits by asset kind (#374 drill-in) and the slices sum to the total;
+// an unpriced kind is flagged incomplete without hiding the priced kind.
+func TestDashboard_NetWorth_ByKindSumsToTotal(t *testing.T) {
+	svc, userID, accountID, g := newDashboardSvc(t)
+	svc.WithAssetRepo(repository.NewAssetRepository(g))
+	ctx := context.Background()
+	usdID := testutil.LookupUSDAssetID(t, g)
+	eurID := testutil.LookupAssetID(t, g, "EUR", "fiat")
+
+	seedNetWorthTxn(t, g, userID, accountID, usdID, model.KindOpeningBalance, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), "1000")
+	seedNetWorthTxn(t, g, userID, accountID, eurID, model.KindOpeningBalance, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), "100")
+	insertNetWorthPrice(t, g, eurID, usdID, "1.50", time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC))
+
+	rows, err := svc.NetWorth(ctx, userID, 3) // March, April, May
+	if err != nil {
+		t.Fatalf("NetWorth: %v", err)
+	}
+	for i, r := range rows {
+		if len(r.ByKind) == 0 {
+			t.Fatalf("row[%d] has no by_kind", i)
+		}
+		sum := decimal.Zero
+		for _, k := range r.ByKind {
+			sum = sum.Add(decimal.RequireFromString(k.Value))
+		}
+		if !sum.Equal(decimal.RequireFromString(r.Total)) {
+			t.Errorf("row[%d] by_kind sums to %s, total %s", i, sum, r.Total)
+		}
+	}
+	if rows[0].Complete {
+		t.Errorf("March should be incomplete (EUR unpriced)")
+	}
+	if !rows[1].Complete || rows[1].Total != "1150" {
+		t.Errorf("April = {%s %v}, want {1150 true}", rows[1].Total, rows[1].Complete)
+	}
+}
