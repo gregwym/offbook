@@ -81,4 +81,39 @@ describe('ImportTransactionsModal import history (#376)', () => {
     await waitFor(() => expect(calls).toBe(2))
     await waitFor(() => expect(screen.queryByText(/already imported this exact statement/)).not.toBeInTheDocument())
   })
+
+  it('previews statement holdings and the ledger effect before commit (#375)', async () => {
+    server.use(
+      http.post(`${API}/accounts/:id/transactions/import/extract`, () =>
+        HttpResponse.json({
+          data: {
+            committed: false, source: 'pdf', mapping: { date: '', amount: '', description: '' }, headers: [],
+            total_rows: 0, new_count: 0, duplicate_count: 0, error_count: 0, review_count: 1, inserted_count: 0,
+            rows: [], job_id: 11,
+            closing_balance: {
+              symbol: 'USD', reported: '1100.00', as_of: '2026-05-31T00:00:00Z',
+              effect: { current_quantity: '100', adjustment: '1000', kind: 'opening_balance' },
+            },
+            positions: [
+              { line: 1, symbol: 'VTI', asset_kind: 'fund', quantity: '12.5', as_of: '2026-05-31T00:00:00Z',
+                confidence: 0.95, needs_review: false, asset_status: 'new',
+                effect: { current_quantity: '0', adjustment: '12.5', kind: 'opening_balance' } },
+              { line: 2, symbol: 'BAD', asset_kind: 'fund', quantity: '0', as_of: '2026-05-31T00:00:00Z',
+                confidence: 0.9, needs_review: false, error: 'unparseable quantity "lots"' },
+            ],
+          },
+        }),
+      ),
+    )
+    const { container } = renderModal()
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['%PDF'], 'stmt.pdf', { type: 'application/pdf' })] } })
+    fireEvent.click(screen.getByRole('button', { name: /Extract with AI/ }))
+    const section = await screen.findByRole('region', { name: 'Statement holdings' })
+    expect(section).toHaveTextContent('VTI')
+    expect(section).toHaveTextContent('new asset')
+    expect(section).toHaveTextContent('Opening balance +12.5')
+    expect(section).toHaveTextContent('Opening balance +1000')
+    expect(section).toHaveTextContent('unparseable quantity "lots" — skipped')
+  })
 })

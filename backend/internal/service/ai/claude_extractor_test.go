@@ -213,3 +213,33 @@ func writeExtractText(t *testing.T, w http.ResponseWriter, text string) {
 		t.Fatalf("encode response: %v", err)
 	}
 }
+
+// TestClaudeExtractor_BrokeragePositions: positions + closing balance are
+// re-validated deterministically; a hallucinated quantity becomes an error
+// position, never an admitted one.
+func TestClaudeExtractor_BrokeragePositions(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeExtractText(t, w, `{"rows":[],"doc_totals":[],`+
+			`"positions":[{"symbol":"vti","name":"Vanguard Total","asset_kind":"fund","quantity":"12.5","price":"250.10","value":"3126.25","confidence":0.95},`+
+			`{"symbol":"BTC","asset_kind":"crypto","quantity":"lots","confidence":0.9}],`+
+			`"closing_balance":"15,234.56","statement_date":"2026-05-31"}`)
+	}))
+	defer srv.Close()
+	ex, _ := NewClaudeExtractor(ClaudeConfig{APIKey: "k", Endpoint: srv.URL})
+	out, err := ex.Extract(context.Background(), ingestion.Document{MIME: "application/pdf", Data: []byte("%PDF")})
+	if err != nil {
+		t.Fatalf("positions-only statement must not be an empty extraction: %v", err)
+	}
+	if len(out.Positions) != 2 {
+		t.Fatalf("positions = %d", len(out.Positions))
+	}
+	if p := out.Positions[0]; !p.Valid() || p.Symbol != "VTI" || p.Quantity.String() != "12.5" || p.AsOf.Day() != 31 {
+		t.Errorf("position 0 = %+v", p)
+	}
+	if out.Positions[1].Valid() {
+		t.Error("hallucinated quantity must be rejected")
+	}
+	if out.ClosingBalance == nil || out.ClosingBalance.String() != "15234.56" || out.ClosingBalanceAt == nil {
+		t.Errorf("closing balance = %v at %v", out.ClosingBalance, out.ClosingBalanceAt)
+	}
+}

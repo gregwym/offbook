@@ -77,6 +77,13 @@ type ImportResult struct {
 	// committed into this account (#376). Informational: row-level dedup still
 	// prevents double-inserts.
 	DuplicateOf *PriorImport `json:"duplicate_of,omitempty"`
+	// Statement positions + closing balance (#375). Positions lists every
+	// extracted holding with the reconciling row it would (or did) produce;
+	// PositionsReconciled/AdjustmentsWritten are set on commit.
+	Positions           []PositionPreview `json:"positions,omitempty"`
+	ClosingBalance      *BalancePreview   `json:"closing_balance,omitempty"`
+	PositionsReconciled int               `json:"positions_reconciled,omitempty"`
+	AdjustmentsWritten  int               `json:"adjustments_written,omitempty"`
 }
 
 // ImportStatement classifies extracted statement rows against the target
@@ -189,6 +196,23 @@ func (s *TransactionService) ImportStatement(ctx context.Context, userID, accoun
 			return nil, fmt.Errorf("import batch: %w", err)
 		}
 		res.InsertedCount = int(inserted)
+	}
+
+	if len(ext.Positions) > 0 || ext.ClosingBalance != nil {
+		newSum := decimal.Zero
+		for _, r := range res.Rows {
+			if r.Status == ImportNew {
+				newSum = newSum.Add(r.Amount)
+			}
+		}
+		if commit {
+			// Fold already includes the rows inserted above.
+			if err := s.commitPositions(ctx, userID, account, ext, res); err != nil {
+				return nil, fmt.Errorf("reconcile statement positions: %w", err)
+			}
+		} else if err := s.previewPositions(ctx, userID, account, ext, newSum, res); err != nil {
+			return nil, err
+		}
 	}
 	return res, nil
 }

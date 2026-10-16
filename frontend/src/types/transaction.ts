@@ -111,6 +111,43 @@ export type ImportResult = {
   // duplicate_of is set when byte-identical content was already committed into
   // this account (#376). Informational — row-level dedup still applies.
   duplicate_of?: PriorImport
+  positions?: PositionPreview[]
+  closing_balance?: BalancePreview
+  positions_reconciled?: number
+  adjustments_written?: number
+}
+
+// ── Statement positions + closing balance (#375) — mirrors backend service ──
+
+export type ReconcileEffect = {
+  current_quantity: string
+  // reported − current_quantity; "0" means no ledger row is written.
+  adjustment: string
+  kind: 'opening_balance' | 'adjustment' | ''
+}
+
+export type PositionPreview = {
+  line: number
+  symbol: string
+  name?: string
+  asset_kind: string
+  quantity: string
+  price?: string
+  value?: string
+  as_of: string
+  confidence: number
+  needs_review: boolean
+  error?: string
+  // 'new' = the asset is created on commit; shown so it is never silent.
+  asset_status?: 'existing' | 'new'
+  effect?: ReconcileEffect
+}
+
+export type BalancePreview = {
+  symbol: string
+  reported: string
+  as_of: string
+  effect: ReconcileEffect
 }
 
 export type PriorImport = {
