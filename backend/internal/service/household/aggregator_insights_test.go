@@ -349,6 +349,43 @@ func TestAggregator_NetWorthTrend_InGraceExcluded(t *testing.T) {
 	}
 }
 
+// TestAggregator_NetWorthTrend_PrivateExcluded covers (a) on the historical
+// series (#374): an account with no share row, or whose share was dropped,
+// never contributes to any month-end point, even though its ledger has
+// history in the window.
+func TestAggregator_NetWorthTrend_PrivateExcluded(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	usd := testutil.LookupUSDAssetID(t, g)
+	ownerID := seedUser(t, g, "nwt-priv-owner")
+	hh := seedHouseholdRow(t, g, ownerID, "NWTPrivate", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+
+	shared := seedAccount(t, g, ownerID, "shared")
+	balOnly := seedAccount(t, g, ownerID, "balance-only")
+	private := seedAccount(t, g, ownerID, "private")
+	jan := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedHoldingTxn(t, g, ownerID, shared.ID, usd, model.KindOpeningBalance, jan, "100")
+	seedHoldingTxn(t, g, ownerID, balOnly.ID, usd, model.KindOpeningBalance, jan, "25")
+	seedHoldingTxn(t, g, ownerID, private.ID, usd, model.KindOpeningBalance, jan, "9999")
+	setShare(t, g, shared.ID, hh.ID, model.VisibilityBalanceAndTxns)
+	setShare(t, g, balOnly.ID, hh.ID, model.VisibilityBalanceOnly)
+
+	agg.SetClock(func() time.Time { return time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) })
+	out, err := agg.NetWorthTrend(ctx, hh.ID, 3)
+	if err != nil {
+		t.Fatalf("NetWorthTrend: %v", err)
+	}
+	if len(out) != 3 {
+		t.Fatalf("len(out) = %d, want 3", len(out))
+	}
+	for _, p := range out {
+		if p.Value != "125" {
+			t.Errorf("point %+v != 125 — private account leaked (or balance_only dropped)", p)
+		}
+	}
+}
+
 // TestAggregator_AccountSummaries_FlagsStalePricing: an account holding an
 // asset whose only price is older than the valuation stale window reports
 // Complete=false; fresh-priced and primary-currency-only accounts report
