@@ -1,6 +1,6 @@
 # Daily Driver v1 — active Offbook delivery goal
 
-**Canonical tracking issue:** [#423](https://github.com/gregwym/offbook/issues/423).
+**Canonical tracking issue:** [#423](https://github.com/gregwym/offbook/issues/423). Mandatory release gate: [Experience Maturity](EXPERIENCE-MATURITY-GATE.md) and [source-backed Monarch comparison](MONARCH-BEHAVIOR-MATRIX.md).
 
 This is the ONE active objective for autonomous Engineering. Re-read this charter on every fresh session. Existing roadmap items and Monarch references help define behavior, but **do not override this target or justify unrelated feature work**.
 
@@ -23,10 +23,10 @@ This is a target fixture, not a claim that tests already exist.
 3. Transfers, credit-card payments, refunds, fees, splits and investments do not pollute spending or produce inconsistent net worth. Use exact decimal totals.
 4. Reconciliation visibly explains balance discrepancies, and partial/stale price coverage is flagged, not valued at zero without explanation.
 5. Month-level spending, budget actuals, and asset balances are internally consistent against fixtures.
-6. Existing CI and invariant regressions are green; an **independent batch QA** reviews the final release SHA / merged range; no open P0/P1 findings.
+6. Existing CI/invariants are green; independent QA and product-experience critic check actual desktop/mobile complete user journeys against dated Monarch references on the final SHA. Every applicable UX maturity dimension scores >=3 with linked evidence; no unresolved P0/P1 or core-journey P2 UX/polish bugs.
 7. Production release remains a separate owner-controlled manual action; Plaid Production approval is external dependency #362, not a reason for Cloud to request live credentials.
 
-The overall goal is **not DONE** because PRs were merged; it is DONE only when these user-visible checks and release readiness are demonstrated.
+Goal #423 is **not MATURE/DONE** merely because PRs merged or tests passed. Engineering may close implementation Issues, but only an independent final product-quality, usability and stability audit can recommend MATURE at the exact release SHA.
 
 ## Priority queue (validate actual code before creating work)
 
@@ -38,7 +38,7 @@ The overall goal is **not DONE** because PRs were merged; it is DONE only when t
 
 **Priority 3 — Import fallback:** #375 positions/balance statement extraction, #376 history/reconciliation/dedup. If a prerequisite is blocking, pick the next independently shippable slice.
 
-**Defects win:** Independent batch QA P0/P1 bugs outrank new features. Do not leave failed QA unresolved while starting more untested surfaces.
+**Defects and polish win:** Independent batch QA P0/P1 and P2 **core-user-journey** confusion, inconsistency, rough interaction or mobile UX outrank new feature work. Don't add new shallow features while core journeys are unfinished.
 
 M14 #384 is implementation-checkbox complete; audit real behavior instead of assuming unfinished code. M13–M17 roadmap documents can be stale. Maintain about 3–5 scoped, actionable issues, not a backlog of speculative ideas.
 
@@ -51,9 +51,9 @@ Do not spend successive sessions generating architecture commentary without veri
 ## Quality and release separation
 
 - Every PR: required CI with unit/integration/contract/migration/targeted baseline smoke and appropriate regression tests. **No per-PR AI QA requirement.**
-- Batch QA: review all merges since the last accepted checkpoint (default twice weekly or at ~8 merges, whichever sooner if an additional run is available); test shared user journeys on the integrated main SHA, file P0/P1 bugs, and report explicit coverage gaps.
+- Batch QA + Product Experience Critic: review merged commits twice weekly or ~8 merges, independently walk full user journeys on desktop/mobile and score experience with real screenshots/traces. Compare source-backed Monarch behavior (mark unverified visual claims); create P0/P1 and core P2 UX Issues, report gaps.
 - Auto-merge to **main** is delegated for normal code including financial logic and compatible additive migrations **only with mandatory deterministic checks and safe staged migration rules**. No bypass for red/missing CI or known P0/P1. Irreversible/destructive steps, external purchases/credentials, or production deployment are NOT delegated.
-- Production Pi remains manual, isolated from integration main; final batch QA + verified backups/restore gate a real-data release.
+- Production Pi remains manual, isolated from integration main; final **MATURE** scorecard, repeated stability checks and verified backups/restore gate a real-data release. Release-ready is not a claim of proven sustained-use reliability.
 
 ## Progress reporting
 
