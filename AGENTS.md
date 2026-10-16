@@ -26,35 +26,27 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 - For port-bound dev servers, always stop *by port* (`make stop` does this) — `go run` spawns a supervisor + child binary, so killing the saved PID isn't sufficient.
 
 ## Autonomous Workflow
-1. Read @docs/ROADMAP.md → find current milestone
-2. `gh issue list --state open --milestone "<current milestone>"`
-3. Pick top unstarted issue
-4. Read the issue's **Product Goal** first — that's the yardstick. Acceptance criteria are necessary but not sufficient; if you satisfy them and the product goal still isn't reachable by a user, the work isn't done.
-5. `git checkout -b feature/{issue-number}-{slug}`
-6. Implement to acceptance criteria.
-7. Run `make verify` from `backend/` (cwd persists: send `cd backend` as one Bash call, `command make verify` as the next — never `cd backend && ...`). `verify` chains `go vet`, `go test -race -p 1`, frontend lint, frontend build — same checks as CI.
-8. Commit, push, `gh pr create --body "Closes #{issue-number}"`.
-9. Move to next issue.
 
-**Large multi-milestone delivery (production-readiness plan):** when working the
-M13–M17 program from `docs/PRODUCTION-READINESS.md`, follow the self-paced,
-model-tiered loop defined in [`docs/dev/autonomous-delivery.md`](docs/dev/autonomous-delivery.md)
-— it pins the delivery order, the Opus/Sonnet/Fable tiering, and the quota-bound
-pacing so an autonomous session can resume the program across quota windows.
+**Current product direction:** [docs/product/PRODUCT-CONTRACT.md](docs/product/PRODUCT-CONTRACT.md) and [docs/dev/autonomous-product-workflow.md](docs/dev/autonomous-product-workflow.md). The earlier [autonomous-delivery.md](docs/dev/autonomous-delivery.md) is a historical M13–M15 campaign, not the new priority queue.
+
+- Product research verifies Monarch UX/behaviors using legitimate sources and records citations, observation dates and uncertainties. No inference of proprietary internals.
+- Developer delivers one complete user workflow/Issue per iteration on a feature branch, with financial invariant and UI/E2E test evidence.
+- Independent QA validates the **exact PR head SHA**, in another session/environment, using synthetic data; developer tests never constitute QA certification. A changed SHA invalidates earlier QA PASS.
+- Required CI + independent QA PASS gate functional PR merge. Owner review is additionally required for financial arithmetic, auth/PII, migrations, production-sync or release automation until superseded by a separately accepted policy.
+- Low-risk docs/tests-only changes may self-merge after required CI. Never write directly to `main`.
+- Run one autonomous code writer at a time; disable the local LaunchAgent before enabling a Cloud routine. The files in `infra/cloud-routines/` are templates, not registered jobs.
+- Never use real financial data, real bank credentials, or production database access in Cloud/QA.
 
 ## Autonomous QA
-- QA is manually triggered only. Do not run a standalone QA pass unless the user explicitly asks for it.
-- The same agent session should not be both developer and QA for the same change. Developer agents may run targeted verification, but they do not QA-certify their own work.
-- QA should work from `main`, preferably in a separate worktree, and should start its own isolated compose stack with `docker-compose.qa.yml` instead of using the development agent's running environment.
-- QA browser automation uses Playwright headless Chromium. Run from a `*-qa` worktree or set `OFFBOOK_ROLE=qa` so QA helper scripts can tell the role apart from development.
-- QA persona emails and credential derivation are defined in @docs/QA.md and are for the isolated QA stack only.
-- Follow @docs/QA.md for QA runs: use GitHub Discussion #199 as the QA Ledger, compare against the last QAed commit with `scripts/qa-last-reviewed.sh`, and include the "found at" commit when filing or commenting on bugs.
-- Acceptance tests live outside unit tests. They start as optional, manually run suites and are not merge-required until the owner explicitly promotes them. **Exception:** `acceptance/smoke/baseline.spec.ts` is promoted — it runs as the required `QA acceptance baseline smoke` CI check on every PR (#272). Every other suite stays opt-in.
+
+- PR-triggered and periodic independent QA against synthetic data may run **without manual invocation**; follow [docs/QA.md](docs/QA.md).
+- Use the isolated QA Compose stack and `OFFBOOK_ROLE=qa`. Report PASS/FAIL/BLOCKED with exact commit SHA, reproducible evidence and GitHub Discussion #199 ledger entries.
+- A baseline page smoke test is not proof of correct spending, account values or authorization. QA needs focused financial and user-journey checks.
 
 ## Git Discipline
 - Auto-commit completed work without asking.
 - **`main` is protected — all changes land via PR.** Never commit directly to `main`; always work on a feature branch (`{type}/{issue-number}-{slug}`) and push when opening/updating the PR.
-- **PRs may be merged without external review** — owner has pre-authorized self-merge for autonomous workflow. Prefer `gh pr merge --squash --delete-branch` once CI (if any) is green and the branch is mergeable.
+- **Conditional self-merge:** low-risk docs/tests-only PRs may self-merge with green CI. Product-functionality PRs require green CI and independent QA PASS for the exact head SHA; financial arithmetic, auth/PII, migrations, production-sync and release-automation PRs additionally require owner review.
 - NEVER `git commit --amend`, `git reset --hard`, or `git push --force` (any variant). No exceptions.
 - Fix mistakes with new commits, not history rewrites.
 
