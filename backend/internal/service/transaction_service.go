@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"gorm.io/gorm"
 	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
