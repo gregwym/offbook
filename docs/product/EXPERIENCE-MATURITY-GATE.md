@@ -82,6 +82,20 @@ For each relevant dimension assign `0=missing`, `1=broken`, `2=usable but rough`
 
 The **MATURE/DONE decision belongs to an independent final quality audit on the goal issue**. Engineering can mark individual implementation Issues closed but **must not close Goal #423 or write an unsupported parity claim**. If QA fails: open reproducible Issues, resume Engineering; re-audit the affected dimensions and integrated candidate, no invented confidence.
 
+## Automated Goal #423 closure guard
+
+A milestone cannot be marked complete merely by merging code. The [goal-maturity-guard.yml](../../.github/workflows/goal-maturity-guard.yml) GitHub Action listens for Goal #423 being closed as completed and checks the **latest** structured maturity certificate against current `main` SHA. If missing, stale, or incomplete, it automatically reopens the goal and explains why. `not_planned` cancellation is excluded.
+
+The independent final QA session posts an ordinary Issue #423 comment containing one standalone line (not a code fence in the actual comment):
+
+```text
+<!-- offbook-maturity:v1 {"head_sha":"<40-char-current-main-sha>","result":"MATURE","qa_run_url":"https://github.com/.../actions/runs/...","zero_open_blockers":true,"soak_verified":true,"backup_restore_verified":true,"journeys":[{"id":"first-run","scores":{"coverage":3,"correctness":3,"friction":3,"visual":3,"feedback":3,"cross-platform":3,"resilience":3,"reference":3},"evidence":["https://github.com/.../issues/423#issuecomment-..."]}, ...]} -->
+```
+
+Exact required journey IDs: `first-run`, `daily-review`, `monthly-budget`, `net-worth`, `recovery`, `mobile`. Required dimensions: `coverage`, `correctness`, `friction`, `visual`, `feedback`, `cross-platform`, `resilience`, `reference`. Each must be an integer **3 or 4**, with one or more real HTTPS evidence links per journey; no skipped dimensions or placeholders. `zero_open_blockers` means QA actually inspected open P0/P1 and core-journey P2 Issues, not just ran CI. The backup-restore flag must be supported by an actual run log and may not be asserted by an isolated Cloud session that cannot see the operation.
+
+**Limit:** this automated closure guard validates completeness, freshness and structured evidence; it cannot prove screenshots were inspected competently or detect unknown UX defects. QA must provide genuinely independent evaluation, rechecks and reasoned Monarch comparisons. The user does not need to review individual code PRs, but no system can objectively guarantee subjective taste or absolute commercial-product equivalence from agent scores alone.
+
 ## QA deliverable template
 
 ```md
