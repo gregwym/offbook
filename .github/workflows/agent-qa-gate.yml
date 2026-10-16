@@ -1,0 +1,85 @@
+# Trusted provenance gate for independent QA. NEVER checkout or execute PR code.
+# The QA evidence must come from a configured GitHub actor other than PR author.
+name: Agent QA verdict
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  statuses: write
+
+jobs:
+  adjudicate:
+    name: Verify independent QA evidence
+    if: ${{ github.event.pull_request.base.ref == 'main' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: qa-verdict-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout trusted main (never PR head)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Evaluate current-head QA evidence, publish commit status
+        uses: actions/github-script@v7
+        env:
+          OFFBOOK_QA_ACTORS: ${{ vars.OFFBOOK_QA_ACTORS }}
+        with:
+          script: |
+            const { spawnSync } = require('node:child_process');
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            const [comments, files] = await Promise.all([
+              github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: pr.number, per_page: 100,
+              }),
+              github.paginate(github.rest.pulls.listFiles, {
+                owner, repo, pull_number: pr.number, per_page: 100,
+              }),
+            ]);
+            // Docs and agent prompt templates can change without a dedicated
+            // QA verdict; any executable source/workflow/config requires one.
+            const docsOnly = files.length > 0 && files.every(({ filename }) =>
+              filename.startsWith('docs/') ||
+              filename.startsWith('infra/cloud-routines/') ||
+              filename.startsWith('.github/ISSUE_TEMPLATE/') ||
+              filename === '.github/PULL_REQUEST_TEMPLATE.md'
+            );
+            const input = {
+              headSha: pr.head.sha,
+              prAuthor: pr.user.login,
+              trustedActors: process.env.OFFBOOK_QA_ACTORS || '',
+              docsOnly,
+              comments,
+            };
+            const result = spawnSync('node', ['scripts/agent-protocol/qa-verdict.mjs'], {
+              input: JSON.stringify(input),
+              encoding: 'utf8',
+              timeout: 15000,
+            });
+            let verdict = { state: 'error', description: 'QA evaluation failed' };
+            if (!result.error && result.status === 0) {
+              try { verdict = JSON.parse(result.stdout); }
+              catch { core.warning('Invalid QA evaluator JSON'); }
+            } else {
+              core.warning(result.stderr || String(result.error));
+            }
+            const states = new Set(['success', 'failure', 'error', 'pending']);
+            if (!states.has(verdict.state)) verdict.state = 'error';
+            core.info(`QA verdict for PR #${pr.number} (${pr.head.sha}): ${verdict.state} - ${verdict.description}`);
+            await github.rest.repos.createCommitStatus({
+              owner,
+              repo,
+              sha: pr.head.sha,
+              state: verdict.state,
+              context: 'offbook/independent-qa',
+              description: (verdict.description || 'No QA evidence').slice(0, 140),
+              target_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
+            });
+            if (verdict.state !== 'success') core.setFailed(verdict.description || 'QA not approved');
