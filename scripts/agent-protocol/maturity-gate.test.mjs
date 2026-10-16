@@ -30,7 +30,7 @@ test('unverified soak or backup prevents premature DONE', () => {
   }
 });
 test('later negative report overrides earlier PASS', () => {
-  const r=wrap(make()); r.comments.push({id: 10, body:'<!-- offbook-maturity:v1 {"result":"NOT MATURE"} -->'});
+  const r=wrap(make()); r.comments.push({id: 10, user: { login: 'gregwym' }, body:'<!-- offbook-maturity:v1 {"result":"NOT MATURE"} -->'});
   assert.equal(checkMaturity(r).ok,false);
 });
 test('example.com placeholder is not valid evidence', () => {
