@@ -24,11 +24,15 @@ type TransactionFilter struct {
 	// filter chip to surface rows auto-assigned via plaid_default that the
 	// user hasn't confirmed or rule-overridden.
 	CategorizationMethod string
-	From                 *time.Time // inclusive lower bound on transaction_date
-	To                   *time.Time // inclusive upper bound on transaction_date
-	Search               string     // ILIKE %term% across description + merchant_name
-	Limit                int
-	Offset               int
+	// Reviewed, when non-nil, restricts to reviewed (true) or unreviewed
+	// (false) rows (#424). Unreviewed is restricted to kind=flow: reconciling
+	// rows and trade legs are system-written and never enter the inbox.
+	Reviewed *bool
+	From     *time.Time // inclusive lower bound on transaction_date
+	To       *time.Time // inclusive upper bound on transaction_date
+	Search   string     // ILIKE %term% across description + merchant_name
+	Limit    int
+	Offset   int
 }
 
 // TransactionRepository is the data-access contract for transactions.
@@ -112,6 +116,10 @@ type TransactionRepository interface {
 	// independent of any observation link (robust even for legacy rows
 	// written before caused_by_observation_id existed).
 	FoldQuantityBefore(ctx context.Context, userID, accountID, assetID int64, beforeDate time.Time, beforeID int64) (decimal.Decimal, error)
+	// SetReviewed sets (reviewedAt non-nil) or clears (nil) reviewed_at on the
+	// given rows, scoped to the user, and returns the number of rows changed.
+	// Ids belonging to other users / deleted rows are silently not matched.
+	SetReviewed(ctx context.Context, userID int64, ids []int64, reviewedAt *time.Time) (int64, error)
 	// AcknowledgeAdjustment marks an adjustment transaction reviewed (#370)
 	// without altering ledger fields (amount/kind/quantity facts are
 	// untouched — same category as the existing Notes field). Only rows with
@@ -251,6 +259,13 @@ func (r *transactionRepo) List(ctx context.Context, userID int64, f TransactionF
 	}
 	if m := f.CategorizationMethod; m != "" {
 		q = q.Where("categorization_method = ?", m)
+	}
+	if f.Reviewed != nil {
+		if *f.Reviewed {
+			q = q.Where("reviewed_at IS NOT NULL")
+		} else {
+			q = q.Where("reviewed_at IS NULL AND kind = ?", model.KindFlow)
+		}
 	}
 	if f.From != nil {
 		q = q.Where("transaction_date >= ?", *f.From)
@@ -675,6 +690,18 @@ func (r *transactionRepo) ListUnacknowledgedAdjustments(ctx context.Context, use
 		return nil, err
 	}
 	return out, nil
+}
+
+func (r *transactionRepo) SetReviewed(ctx context.Context, userID int64, ids []int64, reviewedAt *time.Time) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	// Updates("reviewed_at", nil) writes NULL; updated_at is deliberately not
+	// bumped — review is metadata, not an edit of the transaction itself.
+	res := r.db.WithContext(ctx).Model(&model.Transaction{}).
+		Where("user_id = ? AND id IN ?", userID, ids).
+		UpdateColumn("reviewed_at", reviewedAt)
+	return res.RowsAffected, res.Error
 }
 
 func (r *transactionRepo) SoftDelete(ctx context.Context, userID, id int64) error {

@@ -264,3 +264,98 @@ func TestTransactionService_List_PassesThroughToRepo(t *testing.T) {
 }
 
 func int64Ptr(v int64) *int64 { return &v }
+
+// #424: review state is independent of categorization and of other users.
+func TestTransactionService_Review_Lifecycle(t *testing.T) {
+	svc, userID, accountID, categoryID, g := newTxSvc(t)
+	ctx := context.Background()
+
+	// Manual entry is born reviewed; an imported row (inserted directly, as
+	// the importers do) is born unreviewed.
+	manual, err := svc.Create(ctx, userID, validTxInput(accountID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manual.ReviewedAt == nil {
+		t.Fatal("manual create should be reviewed")
+	}
+	imported := &model.Transaction{UserID: userID, AccountID: accountID, AssetID: manual.AssetID,
+		Kind: model.KindFlow, Amount: decimal.NewFromInt(-5), Source: "csv", TransactionDate: manual.TransactionDate}
+	if err := g.Create(imported).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Transaction{}, []int64{manual.ID, imported.ID}) })
+
+	list := func(rev bool) []model.Transaction {
+		rows, _, err := svc.List(ctx, userID, repository.TransactionFilter{Reviewed: &rev, AccountID: &accountID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rows
+	}
+	if got := list(false); len(got) != 1 || got[0].ID != imported.ID {
+		t.Fatalf("unreviewed = %+v, want only imported", got)
+	}
+
+	// Changing the category does NOT implicitly review the row.
+	if _, err := svc.Update(ctx, userID, imported.ID, service.UpdateTransactionInput{CategoryID: &categoryID}); err != nil {
+		t.Fatal(err)
+	}
+	if got := list(false); len(got) != 1 {
+		t.Fatalf("category edit must not review: %d unreviewed", len(got))
+	}
+
+	// Bulk review is idempotent and keeps the original timestamp.
+	n, err := svc.SetReviewed(ctx, userID, []int64{imported.ID}, true)
+	if err != nil || n != 1 {
+		t.Fatalf("SetReviewed n=%d err=%v", n, err)
+	}
+	if len(list(false)) != 0 || len(list(true)) != 2 {
+		t.Fatal("expected inbox zero and two reviewed rows")
+	}
+
+	// Undo via single-row PATCH semantics.
+	rv := false
+	if _, err := svc.Update(ctx, userID, imported.ID, service.UpdateTransactionInput{Reviewed: &rv}); err != nil {
+		t.Fatal(err)
+	}
+	if got := list(false); len(got) != 1 {
+		t.Fatalf("undo failed: %d unreviewed", len(got))
+	}
+
+	// Another user cannot touch this user's rows.
+	other := seedTestUser(t, g)
+	if n, _ := svc.SetReviewed(ctx, other, []int64{imported.ID}, true); n != 0 {
+		t.Fatalf("cross-user review changed %d rows", n)
+	}
+	if len(list(false)) != 1 {
+		t.Fatal("cross-user review leaked")
+	}
+
+	// Batch bounds.
+	if _, err := svc.SetReviewed(ctx, userID, nil, true); !errors.Is(err, service.ErrInvalidReviewBatch) {
+		t.Fatalf("empty batch err = %v", err)
+	}
+}
+
+// Reconciling rows never enter the review inbox even though reviewed_at is NULL.
+func TestTransactionService_Review_InboxExcludesNonFlow(t *testing.T) {
+	svc, userID, accountID, _, g := newTxSvc(t)
+	ctx := context.Background()
+	base := &model.Transaction{UserID: userID, AccountID: accountID, Kind: model.KindFlow,
+		Amount: decimal.NewFromInt(1), Source: "csv", TransactionDate: time.Now()}
+	if err := g.Model(&model.Account{}).Select("primary_quote_asset_id").Where("id = ?", accountID).Scan(&base.AssetID).Error; err != nil {
+		t.Fatal(err)
+	}
+	adj := *base
+	adj.Kind = model.KindAdjustment
+	if err := g.Create(&adj).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Transaction{}, adj.ID) })
+	no := false
+	rows, total, err := svc.List(ctx, userID, repository.TransactionFilter{Reviewed: &no, AccountID: &accountID})
+	if err != nil || total != 0 || len(rows) != 0 {
+		t.Fatalf("adjustment leaked into inbox: total=%d err=%v", total, err)
+	}
+}

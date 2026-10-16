@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ArrowRightLeft, ChevronDown, ChevronRight, Eye, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { ArrowRightLeft, Check, CheckCheck, ChevronDown, ChevronRight, Eye, Plus, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { DateDisplay } from '../components/DateDisplay'
@@ -26,7 +26,7 @@ export function TransactionsPage() {
   const {
     transactions, total, loading, error,
     filter, page, pageSize,
-    fetch, setFilter, setPage, create, setCategory, remove,
+    fetch, setFilter, setPage, create, setCategory, remove, markReviewed,
   } = useTransactionsStore()
   const { accounts, fetch: fetchAccounts } = useAccountsStore()
   const { assets, fetch: fetchAssets } = useAssetsStore()
@@ -54,14 +54,17 @@ export function TransactionsPage() {
   const search = useDebounce(searchInput, 300)
   const [adding, setAdding] = useState(false)
   const [importing, setImporting] = useState(false)
-  // "Needs review" filter chip + banner. needsReview drives the store
-  // filter (categorization_method=plaid_default). reviewCount is a
-  // separate query so the banner can announce a number independent of
-  // whatever filter the user is currently looking at.
-  const [needsReview, setNeedsReview] = useState<boolean>(
-    filter.categorization_method === 'plaid_default',
-  )
+  // "Needs review" filter chip + banner (#424). needsReview drives the store
+  // filter (reviewed=false) — explicit review state, independent of how a row
+  // was categorized. reviewCount is a separate query so the chip/banner can
+  // announce a number independent of whatever filter the user is looking at.
+  const [needsReview, setNeedsReview] = useState<boolean>(filter.reviewed === false)
   const [reviewCount, setReviewCount] = useState<number | null>(null)
+  // Row selection for bulk review, plus the last review action so an
+  // accidental click can be undone without a reload.
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [reviewToast, setReviewToast] = useState<{ ids: number[]; reviewed: boolean; message: string } | null>(null)
+  const [reviewBusy, setReviewBusy] = useState(false)
   // Transfer-match proposals (#371) — a separate review queue from "needs
   // review" categorization. Recomputed fresh on mount/after each sync, same
   // as reviewCount above; nothing links until the user confirms a pair in
@@ -115,7 +118,7 @@ export function TransactionsPage() {
     setFilter({
       account_id: accountID === '' ? undefined : Number(accountID),
       category_id: categoryID === '' ? undefined : categoryID === 'null' ? null : Number(categoryID),
-      categorization_method: needsReview ? 'plaid_default' : undefined,
+      reviewed: needsReview ? false : undefined,
       from: from === '' ? undefined : from,
       to: to === '' ? undefined : to,
       search: search === '' ? undefined : search,
@@ -141,13 +144,38 @@ export function TransactionsPage() {
   // Pull the count of rows that would land in the "Needs review" filter,
   // independently from the main list (which honors all current filters).
   // limit=1 keeps the fetch cheap — we only need `total`.
+  const refreshReviewCount = useCallback(() => {
+    return listTransactions({ reviewed: false, limit: 1 })
+      .then((r) => setReviewCount(r.total))
+      .catch(() => { /* swallow — the count just won't surface */ })
+  }, [])
   useEffect(() => {
-    let cancelled = false
-    void listTransactions({ categorization_method: 'plaid_default', limit: 1 })
-      .then((r) => { if (!cancelled) setReviewCount(r.total) })
-      .catch(() => { /* swallow — banner just won't surface */ })
-    return () => { cancelled = true }
-  }, [recentSyncAt])
+    void refreshReviewCount()
+  }, [recentSyncAt, refreshReviewCount])
+
+  // Review / undo. The store updates optimistically and reverts on failure;
+  // the toast offers a one-click undo for the exact rows just changed.
+  const reviewRows = async (ids: number[], reviewed: boolean, offerUndo = true) => {
+    if (ids.length === 0) return
+    setReviewBusy(true)
+    try {
+      await markReviewed(ids, reviewed)
+      setSelected(new Set())
+      // Un-reviewing while the inbox is open: those rows aren't in the list
+      // (the optimistic update removed them), so reload to bring them back.
+      if (!reviewed && needsReview) await fetch()
+      setReviewToast(
+        offerUndo
+          ? { ids, reviewed, message: `${ids.length} transaction${ids.length === 1 ? '' : 's'} ${reviewed ? 'marked reviewed' : 'moved back to review'}.` }
+          : null,
+      )
+    } catch {
+      setReviewToast(null) // store.error renders the failure banner
+    } finally {
+      setReviewBusy(false)
+      void refreshReviewCount()
+    }
+  }
 
   // Dismissal is persisted in localStorage keyed by bannerKey, so a newer
   // sync (newer key) re-shows the banner without needing reset state. We
@@ -185,6 +213,20 @@ export function TransactionsPage() {
     recentlySynced
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  // Selection only ever applies to rows currently on screen.
+  const visibleIDs = useMemo(
+    () => transactions.filter((t) => t.kind === 'flow' || t.kind === undefined).map((t) => t.id),
+    [transactions],
+  )
+  const selectedIDs = visibleIDs.filter((id) => selected.has(id))
+  const allSelected = visibleIDs.length > 0 && selectedIDs.length === visibleIDs.length
+  const toggleSelected = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   const accountByID = useMemo(() => mapByID(accounts), [accounts])
   const assetByID = useMemo(() => mapByID(assets), [assets])
   const categoryByID = useMemo(() => mapByID(categories), [categories])
@@ -211,10 +253,12 @@ export function TransactionsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Transactions</h1>
-          <p className="mt-1 text-sm text-gray-500">{total} total</p>
+          <p className="mt-1 text-sm text-gray-500">
+            {needsReview ? `${total} to review` : `${total} total`}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -227,7 +271,7 @@ export function TransactionsPage() {
           <button
             type="button"
             onClick={() => setAdding(true)}
-            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+            className="inline-flex items-center gap-2 whitespace-nowrap rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
           >
             <Plus size={16} /> Add transaction
           </button>
@@ -243,7 +287,7 @@ export function TransactionsPage() {
           <div className="flex items-start gap-2">
             <Eye size={16} className="mt-0.5 shrink-0" />
             <span>
-              {reviewCount} row{reviewCount === 1 ? '' : 's'} need a category review after the recent sync —{' '}
+              {reviewCount} transaction{reviewCount === 1 ? '' : 's'} to review after the recent sync —{' '}
               <button
                 type="button"
                 onClick={() => setNeedsReview(true)}
@@ -289,6 +333,7 @@ export function TransactionsPage() {
         <button
           type="button"
           onClick={() => setNeedsReview((v) => !v)}
+          aria-pressed={needsReview}
           className={[
             'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium',
             needsReview
@@ -340,25 +385,87 @@ export function TransactionsPage() {
         </Field>
       </div>
 
+      {selectedIDs.length > 0 && (
+        <div
+          role="region"
+          aria-label="Bulk review"
+          className="sticky top-0 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900"
+        >
+          <span className="font-medium">{selectedIDs.length} selected</span>
+          <button
+            type="button"
+            disabled={reviewBusy}
+            onClick={() => void reviewRows(selectedIDs, true)}
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+          >
+            <CheckCheck size={16} /> Mark reviewed
+          </button>
+          {!needsReview && (
+            <button
+              type="button"
+              disabled={reviewBusy}
+              onClick={() => void reviewRows(selectedIDs, false)}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-indigo-300 bg-white px-3 py-1.5 text-sm font-medium text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
+            >
+              <Undo2 size={16} /> Needs review
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setSelected(new Set())}
+            className="ml-auto min-h-9 px-2 text-sm text-indigo-700 underline"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       <div className="mt-4 overflow-x-auto rounded-lg border border-gray-200 bg-white">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wider text-gray-500">
             <tr>
-              <th className="px-3 py-2 text-left">Date</th>
+              <th className="w-9 px-2 py-2 md:w-10 md:px-3">
+                <input
+                  type="checkbox"
+                  aria-label="Select all transactions on this page"
+                  checked={allSelected}
+                  disabled={visibleIDs.length === 0}
+                  onChange={() => setSelected(allSelected ? new Set() : new Set(visibleIDs))}
+                  className="h-4 w-4"
+                />
+              </th>
+              <th className="hidden px-3 py-2 text-left md:table-cell">Date</th>
               <th className="px-3 py-2 text-left">Description</th>
-              <th className="px-3 py-2 text-left">Merchant</th>
+              <th className="hidden px-3 py-2 text-left md:table-cell">Merchant</th>
               <th className="px-3 py-2 text-right">Amount</th>
-              <th className="px-3 py-2 text-left">Account</th>
-              <th className="px-3 py-2 text-left">Category</th>
-              <th className="px-3 py-2"></th>
+              <th className="hidden px-3 py-2 text-left md:table-cell">Account</th>
+              <th className="hidden px-3 py-2 text-left md:table-cell">Category</th>
+              <th className="px-3 py-2"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading && transactions.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>
+              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>
             )}
-            {!loading && transactions.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-400">No transactions match these filters.</td></tr>
+            {!loading && transactions.length === 0 && needsReview && (
+              <tr>
+                <td colSpan={8} className="px-4 py-10 text-center">
+                  <div className="text-base font-medium text-gray-900">You’re all caught up</div>
+                  <div className="mt-1 text-sm text-gray-500">
+                    Nothing left to review. New transactions from your next sync or import will show up here.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNeedsReview(false)}
+                    className="mt-3 min-h-9 rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    View all transactions
+                  </button>
+                </td>
+              </tr>
+            )}
+            {!loading && transactions.length === 0 && !needsReview && (
+              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">No transactions match these filters.</td></tr>
             )}
             {transactions.map((t) => {
               if (partnerSkip.has(t.id)) return null
@@ -395,6 +502,9 @@ export function TransactionsPage() {
                   asset={assetByID.get(t.asset_id)}
                   categories={categories}
                   currentCategory={t.category_id ? categoryByID.get(t.category_id) : undefined}
+                  selected={selected.has(t.id)}
+                  onSelect={() => toggleSelected(t.id)}
+                  onToggleReviewed={() => void reviewRows([t.id], t.reviewed_at == null)}
                   onCategoryChange={(catID) => { void setCategory(t.id, catID) }}
                   onCreateRule={() => openRuleFromTxn(t)}
                   onDelete={async () => {
@@ -478,6 +588,31 @@ export function TransactionsPage() {
         />
       )}
 
+      {reviewToast && (
+        <div
+          role="status"
+          className="fixed inset-x-4 bottom-4 z-30 flex items-center gap-3 rounded-md border border-gray-200 bg-white px-4 py-3 text-sm shadow-lg sm:left-auto sm:max-w-md"
+        >
+          <Check size={18} className="shrink-0 text-emerald-600" />
+          <span className="flex-1 text-gray-900">{reviewToast.message}</span>
+          <button
+            type="button"
+            onClick={() => {
+              void reviewRows(reviewToast.ids, !reviewToast.reviewed, false)
+            }}
+            className="min-h-9 rounded-md px-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            onClick={() => setReviewToast(null)}
+            className="text-gray-400 hover:text-gray-700"
+            aria-label="Dismiss"
+          >×</button>
+        </div>
+      )}
+
       {createdRuleToast && (
         <div className="fixed bottom-4 right-4 z-30 flex max-w-md items-start gap-3 rounded-md border border-emerald-200 bg-white px-4 py-3 text-sm shadow-lg">
           <Sparkles size={18} className="mt-0.5 text-emerald-600" />
@@ -537,6 +672,11 @@ type RowProps = {
   onCategoryChange: (catID: number | null) => void
   onCreateRule: () => void
   onDelete: () => Promise<void>
+  // Review state (#424). Absent for rows that don't take part in review
+  // (legs of an expanded paired trade).
+  selected?: boolean
+  onSelect?: () => void
+  onToggleReviewed?: () => void
   // Unlinks a confirmed transfer match (#371). Absent for rows that can
   // never be a transfer leg (e.g. paired-trade legs rendered read-only).
   onUnlinkTransfer?: () => Promise<void>
@@ -545,7 +685,7 @@ type RowProps = {
   indented?: boolean
 }
 
-function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onDelete, onUnlinkTransfer, indented }: RowProps) {
+function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onDelete, onUnlinkTransfer, indented, selected, onSelect, onToggleReviewed }: RowProps) {
   // Per ADR-0013, the unit on a transaction is asset_id. Display currency
   // = asset.symbol when available; fall back to the parent account's
   // currency for older rows that haven't been backfilled.
@@ -554,11 +694,40 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
   // ordinary flow — flag them visually and link to the per-account
   // reconciliation view (#370) rather than letting them blend into spending.
   const isReconciling = tx.kind === 'opening_balance' || tx.kind === 'adjustment'
+  const reviewable = onToggleReviewed != null && tx.kind === 'flow'
+  const unreviewed = reviewable && tx.reviewed_at == null
+  const label = tx.description ?? tx.merchant_name ?? 'transaction'
+  const categorySelect = (
+    <select
+      aria-label={`Category for ${label}`}
+      value={currentCategory ? currentCategory.id : ''}
+      onChange={(e) => {
+        const v = e.target.value
+        onCategoryChange(v === '' ? null : Number(v))
+      }}
+      className="min-h-9 w-full rounded border border-gray-300 px-1.5 py-1 text-sm md:w-auto"
+    >
+      <option value="">Uncategorized</option>
+      {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+    </select>
+  )
   return (
-    <tr className={`hover:bg-gray-50 ${isReconciling ? 'bg-amber-50/60' : ''}`}>
-      <td className={`px-3 py-2 text-gray-700 ${indented ? 'pl-8' : ''}`}><DateDisplay value={tx.transaction_date} /></td>
-      <td className="px-3 py-2 text-gray-900">
+    <tr className={`hover:bg-gray-50 ${isReconciling ? 'bg-amber-50/60' : ''} ${unreviewed ? 'border-l-2 border-l-amber-400' : ''}`}>
+      <td className="px-2 py-2 align-top md:px-3">
+        {reviewable && onSelect && (
+          <input
+            type="checkbox"
+            aria-label={`Select ${label}`}
+            checked={!!selected}
+            onChange={onSelect}
+            className="mt-1.5 h-4 w-4"
+          />
+        )}
+      </td>
+      <td className={`hidden px-3 py-2 align-top text-gray-700 md:table-cell ${indented ? 'pl-8' : ''}`}><DateDisplay value={tx.transaction_date} /></td>
+      <td className="px-2 py-2 align-top text-gray-900 md:px-3">
         {tx.description ?? '—'}
+        {unreviewed && <span className="sr-only"> (needs review)</span>}
         {isReconciling && account && (
           <Link
             to={`/accounts/${account.id}/reconciliation`}
@@ -582,30 +751,50 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             transfer
           </button>
         )}
+        {/* Narrow screens drop the Merchant/Account/Category columns; show
+            them stacked under the description instead of a squeezed table. */}
+        <div className="mt-1 space-y-1.5 md:hidden">
+          <div className="text-xs text-gray-500">
+            <DateDisplay value={tx.transaction_date} />
+            {[tx.merchant_name, account?.name].filter(Boolean).map((x) => ` · ${x}`).join('')}
+          </div>
+          {categorySelect}
+          <div className="flex gap-3 text-xs">
+            <button type="button" onClick={onCreateRule} className="min-h-9 text-indigo-700 underline">
+              Create rule
+            </button>
+            <button type="button" onClick={onDelete} className="min-h-9 text-red-700 underline">
+              Delete
+            </button>
+          </div>
+        </div>
       </td>
-      <td className="px-3 py-2 text-gray-700">{tx.merchant_name ?? '—'}</td>
-      <td className="px-3 py-2 text-right">
+      <td className="hidden px-3 py-2 align-top text-gray-700 md:table-cell">{tx.merchant_name ?? '—'}</td>
+      <td className="whitespace-nowrap px-2 py-2 text-right align-top md:px-3">
         <AmountDisplay amount={tx.amount} currency={currency} signed />
       </td>
-      <td className="px-3 py-2 text-gray-700">{account?.name ?? `#${tx.account_id}`}</td>
-      <td className="px-3 py-2">
-        <select
-          value={currentCategory ? currentCategory.id : ''}
-          onChange={(e) => {
-            const v = e.target.value
-            onCategoryChange(v === '' ? null : Number(v))
-          }}
-          className="rounded border border-gray-300 px-1.5 py-1 text-sm"
-        >
-          <option value="">Uncategorized</option>
-          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-      </td>
-      <td className="px-3 py-2 text-right">
+      <td className="hidden px-3 py-2 align-top text-gray-700 md:table-cell">{account?.name ?? `#${tx.account_id}`}</td>
+      <td className="hidden px-3 py-2 align-top md:table-cell">{categorySelect}</td>
+      <td className="whitespace-nowrap px-2 py-2 text-right align-top md:px-3">
+        {reviewable && (
+          <button
+            type="button"
+            onClick={onToggleReviewed}
+            className={`mr-1 inline-flex min-h-9 min-w-9 items-center justify-center rounded-md ${
+              unreviewed
+                ? 'border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                : 'text-emerald-600 hover:bg-gray-100'
+            }`}
+            aria-label={unreviewed ? `Mark ${label} reviewed` : `Reviewed: ${label} — click to move back to review`}
+            title={unreviewed ? 'Mark reviewed' : 'Reviewed — click to undo'}
+          >
+            <Check size={16} />
+          </button>
+        )}
         <button
           type="button"
           onClick={onCreateRule}
-          className="mr-2 text-gray-500 hover:text-indigo-700"
+          className="mr-1 hidden min-h-9 min-w-9 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-indigo-700 md:inline-flex"
           aria-label="Create rule from this transaction"
           title="Create rule from this transaction"
         >
@@ -614,7 +803,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
         <button
           type="button"
           onClick={onDelete}
-          className="text-gray-500 hover:text-red-700"
+          className="hidden min-h-9 min-w-9 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-red-700 md:inline-flex"
           aria-label="Delete"
         >
           <Trash2 size={16} />
@@ -681,10 +870,11 @@ function PairedTradeRow({
   return (
     <>
       <tr className="hover:bg-gray-50">
-        <td className="px-3 py-2 text-gray-700">
+        <td className="px-2 py-2 md:px-3"></td>
+        <td className="hidden px-3 py-2 text-gray-700 md:table-cell">
           <DateDisplay value={securityLeg.transaction_date} />
         </td>
-        <td className="px-3 py-2 text-gray-900">
+        <td className="px-2 py-2 text-gray-900 md:px-3">
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
@@ -698,8 +888,11 @@ function PairedTradeRow({
           <span className="ml-2 inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-indigo-700">
             trade
           </span>
+          <div className="mt-1 text-xs text-gray-500 md:hidden">
+            <DateDisplay value={securityLeg.transaction_date} /> · {account?.name ?? `#${securityLeg.account_id}`}
+          </div>
         </td>
-        <td className="px-3 py-2 text-gray-400">—</td>
+        <td className="hidden px-3 py-2 text-gray-400 md:table-cell">—</td>
         <td className="px-3 py-2 text-right">
           <div className="tabular-nums">
             <AmountDisplay amount={securityLeg.amount} currency={securityCurrency} signed />
@@ -708,8 +901,8 @@ function PairedTradeRow({
             <AmountDisplay amount={cashLeg.amount} currency={cashCurrency} signed />
           </div>
         </td>
-        <td className="px-3 py-2 text-gray-700">{account?.name ?? `#${securityLeg.account_id}`}</td>
-        <td className="px-3 py-2 text-gray-400 italic text-xs">expand to edit</td>
+        <td className="hidden px-3 py-2 text-gray-700 md:table-cell">{account?.name ?? `#${securityLeg.account_id}`}</td>
+        <td className="hidden px-3 py-2 text-gray-400 italic text-xs md:table-cell">expand to edit</td>
         <td className="px-3 py-2"></td>
       </tr>
       {expanded && (

@@ -54,11 +54,15 @@ type Transaction struct {
 	// AcknowledgedAt/AcknowledgedNote let a user mark an adjustment reviewed
 	// (#370) without altering ledger fields. Only meaningful on kind=adjustment
 	// rows; nil everywhere else.
-	AcknowledgedAt   *time.Time     `json:"acknowledged_at,omitempty"`
-	AcknowledgedNote *string        `json:"acknowledged_note,omitempty"`
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
-	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
+	AcknowledgedAt   *time.Time `json:"acknowledged_at,omitempty"`
+	AcknowledgedNote *string    `json:"acknowledged_note,omitempty"`
+	// ReviewedAt is explicit user review state (#424), independent of
+	// categorization. NULL = unreviewed (appears in the review inbox); set =
+	// a human confirmed it. Metadata only — never affects ledger/valuation.
+	ReviewedAt *time.Time     `json:"reviewed_at,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Account      *Account     `gorm:"foreignKey:AccountID" json:"-"`
 	Asset        *Asset       `gorm:"foreignKey:AssetID" json:"-"`
