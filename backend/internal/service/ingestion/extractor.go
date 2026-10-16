@@ -5,6 +5,9 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // Errors an Extractor may return; handlers map them to HTTP codes. CSV's
@@ -48,6 +51,14 @@ type Extraction struct {
 	// balance or "total debits") used to reconcile the row sum (ADR-0019 §3).
 	// Empty for CSV, which carries no document-level total. decimal strings.
 	DocTotals []string `json:"doc_totals,omitempty"`
+	// Positions are brokerage holdings read from the statement (#375); empty
+	// for CSV and bank statements. Re-validated like Rows.
+	Positions []ParsedPosition `json:"positions,omitempty"`
+	// ClosingBalance is the statement's reported account balance (signed
+	// account value, i.e. negative for amounts owed) with its date. Nil when
+	// absent. Reconciled against the account's cash asset on commit.
+	ClosingBalance   *decimal.Decimal `json:"closing_balance,omitempty"`
+	ClosingBalanceAt *time.Time       `json:"closing_balance_at,omitempty"`
 }
 
 // Extractor turns a Document into a neutral Extraction. The deterministic CSV

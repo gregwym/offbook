@@ -71,7 +71,8 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	ruleRepo := repository.NewCategorizationRuleRepository(gormDB)
 	transactionSvc := service.NewTransactionService(transactionRepo, accountRepo, categoryRepo).
 		WithRuleRepo(ruleRepo).
-		WithJobRepo(repository.NewIngestionJobRepository(gormDB))
+		WithJobRepo(repository.NewIngestionJobRepository(gormDB)).
+		WithStatementPositions(gormDB, repository.NewAssetRepository(gormDB))
 	transactionHandler := handler.NewTransactionHandler(transactionSvc)
 
 	// Transfer matching (#371): deterministic cross-account pair proposals +

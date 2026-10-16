@@ -29,4 +29,22 @@ type documentExtraction struct {
 	Rows      []extractedRow `json:"rows"`
 	DocTotals []string       `json:"doc_totals"`
 	Notes     string         `json:"notes"`
+	// Positions, ClosingBalance and StatementDate are the #375 additions
+	// (brokerage holdings + reported balance). All optional.
+	Positions      []extractedPosition `json:"positions"`
+	ClosingBalance string              `json:"closing_balance"`
+	StatementDate  string              `json:"statement_date"`
+}
+
+// extractedPosition is one holding the model proposes from a brokerage
+// statement (#375); raw strings, re-parsed by ingestion.NewPosition.
+type extractedPosition struct {
+	Symbol     string  `json:"symbol"`
+	Name       string  `json:"name"`
+	AssetKind  string  `json:"asset_kind"`
+	Quantity   string  `json:"quantity"`
+	Price      string  `json:"price"`
+	Value      string  `json:"value"`
+	AsOf       string  `json:"as_of"`
+	Confidence float64 `json:"confidence"`
 }

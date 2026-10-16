@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"gorm.io/gorm"
 	"strings"
 	"time"
 
@@ -81,6 +82,10 @@ type TransactionService struct {
 	// jobRepo backs the AI import staging store (ADR-0019 §7). Optional — when
 	// nil, ExtractAndStage/CommitJob return ErrImportStagingUnavailable.
 	jobRepo repository.IngestionJobRepository
+	// db + assetRepo enable statement position/closing-balance reconciliation
+	// (#375); see WithStatementPositions. Optional.
+	db        *gorm.DB
+	assetRepo repository.AssetRepository
 }
 
 func NewTransactionService(

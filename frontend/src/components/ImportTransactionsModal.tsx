@@ -11,7 +11,7 @@ import {
   listImportHistory,
 } from '../api/transactions'
 import type { Account } from '../types/account'
-import type { ColumnMapping, ImportHistoryEntry, ImportResult } from '../types/transaction'
+import type { ColumnMapping, ImportHistoryEntry, ImportResult, ReconcileEffect } from '../types/transaction'
 
 type Props = {
   accounts: Account[]
@@ -394,6 +394,8 @@ function PreviewSummary({ result, currency }: { result: ImportResult; currency?:
 
       {(isAI || result.reconciled != null) && <ReconcileNote result={result} currency={currency} />}
 
+      <StatementHoldings result={result} currency={currency} />
+
       <div className="overflow-hidden rounded-md border border-gray-200">
         <table className="w-full text-left text-sm">
           <thead className="bg-gray-50 text-xs uppercase text-gray-500">
@@ -444,6 +446,74 @@ function PreviewSummary({ result, currency }: { result: ImportResult; currency?:
         <p className="text-xs text-gray-500">Showing first {sample.length} of {rows.length} rows.</p>
       )}
     </div>
+  )
+}
+
+// describeEffect turns a reconcile effect into plain language: what the commit
+// will write to the account ledger (never a trade — adjustments are suspense
+// entries to explain, ADR-0017).
+function describeEffect(effect: ReconcileEffect): string {
+  if (Number(effect.adjustment) === 0) return 'Already matches your ledger — nothing to write'
+  const sign = Number(effect.adjustment) > 0 ? '+' : ''
+  const label = effect.kind === 'opening_balance' ? 'Opening balance' : 'Adjustment'
+  return `${label} ${sign}${effect.adjustment}`
+}
+
+// StatementHoldings previews the brokerage positions and closing balance the
+// statement reported, with the reconciling rows commit would write (#375).
+function StatementHoldings({ result, currency }: { result: ImportResult; currency?: string }) {
+  const positions = result.positions ?? []
+  const balance = result.closing_balance
+  if (positions.length === 0 && !balance) return null
+  return (
+    <section aria-label="Statement holdings" className="space-y-2 rounded-md border border-gray-200 p-3">
+      <h3 className="text-sm font-medium text-gray-800">Holdings &amp; balance from this statement</h3>
+      {balance && (
+        <p className="text-sm text-gray-700">
+          Closing balance <AmountDisplay amount={balance.reported} currency={currency} signed /> as of{' '}
+          <DateDisplay value={balance.as_of} /> —{' '}
+          <span className="text-gray-500">{describeEffect(balance.effect)}</span>
+        </p>
+      )}
+      {positions.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="text-xs uppercase text-gray-500">
+              <tr>
+                <th className="py-1 pr-3 font-medium">Holding</th>
+                <th className="py-1 pr-3 text-right font-medium">Quantity</th>
+                <th className="py-1 font-medium">Ledger effect</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {positions.map((p) => (
+                <tr key={p.line} className={p.error ? 'bg-red-50/40' : p.needs_review ? 'bg-amber-50/50' : undefined}>
+                  <td className="py-1 pr-3 text-gray-700">
+                    <span className="font-medium">{p.symbol}</span>
+                    {p.asset_status === 'new' && (
+                      <span className="ml-2 rounded border border-blue-300 bg-blue-50 px-1.5 py-0.5 text-xs text-blue-800">
+                        new asset
+                      </span>
+                    )}
+                    {p.needs_review && !p.error && (
+                      <span title={`low confidence: ${(p.confidence * 100).toFixed(0)}%`} className="ml-1.5 text-amber-600">
+                        <AlertTriangle size={13} className="inline" />
+                      </span>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap py-1 pr-3 text-right tabular-nums text-gray-700">
+                    {p.error ? '' : p.quantity}
+                  </td>
+                  <td className="py-1 text-gray-500">
+                    {p.error ? <span className="text-red-600">{p.error} — skipped</span> : p.effect ? describeEffect(p.effect) : ''}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   )
 }
 

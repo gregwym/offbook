@@ -24,12 +24,14 @@ const DefaultExtractMaxTokens = 8192
 const extractSystemPrompt = `You extract transactions from financial statements (bank, credit card, or brokerage) into strict JSON.
 Rules:
 - Output ONLY a single JSON object. No prose, no markdown code fences.
-- Schema: {"rows":[{"date":"YYYY-MM-DD","amount":"-12.34","description":"...","confidence":0.0}],"doc_totals":["-1234.56"],"notes":""}
+- Schema: {"rows":[{"date":"YYYY-MM-DD","amount":"-12.34","description":"...","confidence":0.0}],"doc_totals":["-1234.56"],"positions":[{"symbol":"VTI","name":"Vanguard Total Stock Market ETF","asset_kind":"fund","quantity":"12.5","price":"250.10","value":"3126.25","as_of":"YYYY-MM-DD","confidence":0.0}],"closing_balance":"15234.56","statement_date":"YYYY-MM-DD","notes":""}
 - amount: a decimal string. Negative = money out (debit/withdrawal/purchase); positive = money in (credit/deposit). Keep full precision; no currency symbols or thousands separators.
 - date: the transaction date as YYYY-MM-DD. If only a posting date is shown, use it.
 - description: the merchant or memo text, cleaned of statement noise.
 - confidence: 0–1, your certainty in THAT row. Lower it when a field was ambiguous, smudged, or inferred.
 - doc_totals: any statement totals you can read (closing balance delta, total debits/credits) as signed decimal strings, for reconciliation. Empty array if none.
+- positions: brokerage statements only — one entry per holding (ticker symbol, exact share/unit quantity, optional unit price and market value). asset_kind is one of equity, fund, crypto, bond, other. Empty array for bank/credit-card statements. Do not list cash as a position.
+- closing_balance: the statement's ending account balance as a signed decimal string (negative if the statement shows an amount owed, e.g. credit card or loan). Empty string if not shown. statement_date: the statement end date YYYY-MM-DD.
 - Include every transaction line you can read. Do NOT invent rows to make totals match.`
 
 const extractUserPrompt = `Extract all transactions from this statement as the JSON object described. Output only the JSON.`
@@ -143,7 +145,7 @@ func (e *ClaudeExtractor) Extract(ctx context.Context, doc ingestion.Document) (
 	if err != nil {
 		return nil, err
 	}
-	if len(parsed.Rows) == 0 {
+	if len(parsed.Rows) == 0 && len(parsed.Positions) == 0 && strings.TrimSpace(parsed.ClosingBalance) == "" {
 		return nil, ingestion.ErrEmptyExtraction
 	}
 
@@ -152,6 +154,14 @@ func (e *ClaudeExtractor) Extract(ctx context.Context, doc ingestion.Document) (
 	ext := &ingestion.Extraction{Source: source, DocTotals: parsed.DocTotals}
 	for i, r := range parsed.Rows {
 		ext.Rows = append(ext.Rows, ingestion.NewRow(i+1, r.Date, r.Amount, r.Description, r.Confidence))
+	}
+	stmtDate, _ := ingestion.ParseStatementDate(parsed.StatementDate)
+	for i, p := range parsed.Positions {
+		ext.Positions = append(ext.Positions, ingestion.NewPosition(
+			i+1, p.Symbol, p.Name, p.AssetKind, p.Quantity, p.Price, p.Value, p.AsOf, stmtDate, p.Confidence))
+	}
+	if bal, at, ok := ingestion.ParseClosingBalance(parsed.ClosingBalance, parsed.StatementDate); ok {
+		ext.ClosingBalance, ext.ClosingBalanceAt = &bal, &at
 	}
 	return ext, nil
 }
