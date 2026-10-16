@@ -12,10 +12,13 @@ const isHttps = value => {
     return u.protocol === 'https:' && Boolean(u.hostname) && !['example.com', 'example.org', 'example.net'].includes(u.hostname);
   } catch { return false; }
 };
-export function checkMaturity({ mainSha, comments = [] } = {}) {
+export function checkMaturity({ mainSha, comments = [], trustedActors = '' } = {}) {
   if (!SHA.test(mainSha || '')) return { ok: false, reason: 'Invalid main SHA' };
+  const allowed = new Set(String(trustedActors).split(/[\\s,]+/).map(s => s.toLowerCase()).filter(Boolean));
+  if (!allowed.size) return { ok: false, reason: 'No authorized maturity QA commenter configured' };
   const entries = [];
   for (const item of comments) {
+    if (!allowed.has(String(item.user?.login ?? '').toLowerCase())) continue;
     for (const line of String(item.body || '').split(/\r?\n/)) {
       const trimmed = line.trim();
       if (!trimmed.startsWith(MARKER) || !trimmed.endsWith(' -->')) continue;
