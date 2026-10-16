@@ -85,3 +85,14 @@ If a suite needs true first-boot state, run:
 ```sh
 OFFBOOK_ROLE=qa node acceptance/fixtures/cold-start.mjs
 ```
+
+## On-demand CI evidence (QA blocker #426)
+
+When a Cloud QA session cannot run Docker (Docker Hub 429s), trigger the
+**QA journeys** workflow (`.github/workflows/qa-journeys.yml`,
+`workflow_dispatch` with `ref` and `suite`). It boots the isolated QA stack on a
+GitHub runner, runs the suite on desktop + mobile Chromium with
+`ACCEPTANCE_EVIDENCE=1` (trace, screenshot and video kept for every test), and
+uploads the `qa-evidence` artifact (HTML report + `result.json` with the tested
+SHA). Synthetic data only. This is execution evidence for the QA agent, not a
+product-experience verdict by itself.

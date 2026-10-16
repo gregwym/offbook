@@ -2,6 +2,10 @@ import { defineConfig, devices } from '@playwright/test'
 
 const baseURL = process.env.ACCEPTANCE_BASE_URL ?? 'http://localhost:15173'
 const coldStartProjects = process.env.QA_COLD_START === '1'
+// ACCEPTANCE_EVIDENCE=1 (set by the on-demand qa-journeys workflow) keeps a
+// trace + screenshot + video for every test, passing or not, so an independent
+// QA agent can inspect the journeys without re-running them.
+const evidence = process.env.ACCEPTANCE_EVIDENCE === '1'
 
 export default defineConfig({
   testDir: '.',
@@ -15,9 +19,9 @@ export default defineConfig({
   outputDir: 'reports/artifacts',
   use: {
     baseURL,
-    trace: 'retain-on-failure',
-    screenshot: 'only-on-failure',
-    video: 'off',
+    trace: evidence ? 'on' : 'retain-on-failure',
+    screenshot: evidence ? 'on' : 'only-on-failure',
+    video: evidence ? 'on' : 'off',
   },
   projects: coldStartProjects ? [
     {
