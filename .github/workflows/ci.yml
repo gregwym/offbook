@@ -19,6 +19,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check scripts do not require cloud or secrets
         run: |
+          node --check scripts/agent-protocol/maturity-gate.mjs
+          node --test scripts/agent-protocol/maturity-gate.test.mjs
           bash -n scripts/agent-protocol/setup-labels.sh scripts/agent-protocol/cloud-preflight.sh .claude/hooks/pre-bash.sh
           bash scripts/agent-protocol/setup-labels.sh --dry-run
           printf '{"tool_input":{"command":"git checkout -b agent/issue-423"}}\n' | bash .claude/hooks/pre-bash.sh
