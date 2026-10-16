@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AlertTriangle, Sparkles, UploadCloud, X } from 'lucide-react'
 import { AmountDisplay } from './AmountDisplay'
 import { DateDisplay } from './DateDisplay'
@@ -8,9 +8,10 @@ import {
   commitImportJob,
   extractStatement,
   importTransactions,
+  listImportHistory,
 } from '../api/transactions'
 import type { Account } from '../types/account'
-import type { ColumnMapping, ImportResult } from '../types/transaction'
+import type { ColumnMapping, ImportHistoryEntry, ImportResult } from '../types/transaction'
 
 type Props = {
   accounts: Account[]
@@ -56,6 +57,16 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
   // Acknowledgement gate: when AI extraction flags low-confidence rows, the
   // user must confirm they've reviewed before commit is enabled (ADR-0019 §4).
   const [reviewedAck, setReviewedAck] = useState(false)
+  // AI duplicate-statement guard (#376): the backend refuses before any egress;
+  // the user can knowingly override.
+  const [duplicateBlocked, setDuplicateBlocked] = useState(false)
+  // Per-account import history (#376), keyed by the account it was fetched for
+  // so a stale response never shows under another account (loading = no match).
+  const [historyState, setHistoryState] = useState<{
+    accountID: string
+    entries: ImportHistoryEntry[]
+    failed: boolean
+  } | null>(null)
   // CSV manual-mapping fallback.
   const [headers, setHeaders] = useState<string[] | null>(null)
   const [mapping, setMapping] = useState<Partial<ColumnMapping>>({})
@@ -68,7 +79,18 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
   const needsManualMapping = headers !== null
   const mappingComplete = FIELDS.every((f) => (mapping[f.key] ?? '') !== '')
 
+  useEffect(() => {
+    if (!accountID) return
+    let cancelled = false
+    listImportHistory(Number(accountID))
+      .then((entries) => { if (!cancelled) setHistoryState({ accountID, entries, failed: false }) })
+      .catch(() => { if (!cancelled) setHistoryState({ accountID, entries: [], failed: true }) })
+    return () => { cancelled = true }
+  }, [accountID])
+  const historyReady = historyState?.accountID === accountID ? historyState : null
+
   const resetDerived = () => {
+    setDuplicateBlocked(false)
     setPreview(null)
     setJobID(null)
     setHeaders(null)
@@ -117,12 +139,13 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
   }
 
   // AI: extract+stage (the egress) → review → commit by job id.
-  const runExtract = async () => {
+  const runExtract = async (allowDuplicate = false) => {
     if (!guard()) return
     setError(null)
+    setDuplicateBlocked(false)
     setBusy('extract')
     try {
-      const result = await extractStatement(Number(accountID), file!)
+      const result = await extractStatement(Number(accountID), file!, { allowDuplicate })
       setPreview(result)
       setJobID(result.job_id ?? null)
     } catch (err) {
@@ -160,6 +183,11 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
   }
 
   const handleImportErr = (err: unknown) => {
+    if (err instanceof ImportError && err.code === 'DUPLICATE_STATEMENT') {
+      setDuplicateBlocked(true)
+      setError(null)
+      return
+    }
     if (err instanceof ImportError && (err.code === 'AI_IMPORT_UNAVAILABLE')) {
       setError('No AI provider is configured. Add a provider key in Settings to import PDFs or photos.')
       return
@@ -239,7 +267,36 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
             </div>
           )}
 
+          {duplicateBlocked && (
+            <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <p className="font-medium">You already imported this exact statement</p>
+              <p className="mt-0.5">
+                Nothing was sent to your AI provider. Re-extracting would only find the same transactions as duplicates.
+              </p>
+              <button
+                type="button"
+                onClick={() => runExtract(true)}
+                disabled={busy !== false}
+                className="mt-2 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+              >
+                Extract anyway
+              </button>
+            </div>
+          )}
+
+          {preview?.duplicate_of && (
+            <div role="status" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              This file matches a statement already imported
+              {preview.duplicate_of.file_name ? ` (“${preview.duplicate_of.file_name}”` : ''}
+              {preview.duplicate_of.imported_at ? `${preview.duplicate_of.file_name ? ', ' : ' ('}${new Date(preview.duplicate_of.imported_at).toLocaleDateString()}` : ''}
+              {preview.duplicate_of.file_name || preview.duplicate_of.imported_at ? ')' : ''}. Existing transactions are
+              skipped, so importing again won’t create duplicates.
+            </div>
+          )}
+
           {preview && <PreviewSummary result={preview} currency={account?.currency} />}
+
+          {accountID && <ImportHistoryList entries={historyReady?.entries ?? null} failed={historyReady?.failed ?? false} currency={account?.currency} />}
 
           {preview && (preview.review_count ?? 0) > 0 && (
             <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -289,7 +346,7 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
             ) : !preview ? (
               <button
                 type="button"
-                onClick={runExtract}
+                onClick={() => runExtract()}
                 disabled={busy !== false || !file}
                 className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
@@ -335,7 +392,7 @@ function PreviewSummary({ result, currency }: { result: ImportResult; currency?:
         )}
       </div>
 
-      {isAI && <ReconcileNote result={result} currency={currency} />}
+      {(isAI || result.reconciled != null) && <ReconcileNote result={result} currency={currency} />}
 
       <div className="overflow-hidden rounded-md border border-gray-200">
         <table className="w-full text-left text-sm">
@@ -415,6 +472,55 @@ function ReconcileNote({ result, currency }: { result: ImportResult; currency?: 
       {result.row_sum && <> <AmountDisplay amount={result.row_sum} currency={currency} signed /> </>}
       didn’t match the statement total{result.doc_totals && result.doc_totals.length > 0 ? ` (${result.doc_totals.join(', ')})` : ''} — review before importing.
     </p>
+  )
+}
+
+// ImportHistoryList is the per-account audit of committed imports (#376): what
+// was imported when, row outcomes, and whether it reconciled to the statement's
+// own total. A mismatch is called out in amber, never buried.
+function ImportHistoryList({
+  entries,
+  failed,
+  currency,
+}: {
+  entries: ImportHistoryEntry[] | null
+  failed: boolean
+  currency?: string
+}) {
+  if (entries === null) {
+    return <p className="text-xs text-gray-500">Loading import history…</p>
+  }
+  if (failed) {
+    return <p className="text-xs text-red-600">Couldn’t load import history. Imports still work.</p>
+  }
+  if (entries.length === 0) {
+    return <p className="text-xs text-gray-500">No imports into this account yet.</p>
+  }
+  return (
+    <section aria-label="Import history">
+      <h3 className="mb-1 text-xs font-medium uppercase text-gray-500">Previous imports</h3>
+      <ul className="divide-y divide-gray-100 rounded-md border border-gray-200 text-sm">
+        {entries.map((e) => (
+          <li key={e.job_id} className="px-3 py-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+              <span className="font-medium text-gray-800 break-all">{e.file_name || `${e.source.toUpperCase()} import`}</span>
+              <span className="text-xs text-gray-500">{new Date(e.imported_at).toLocaleDateString()}</span>
+            </div>
+            <div className="mt-0.5 text-xs text-gray-600">
+              {e.rows_imported} imported · {e.rows_duplicate} duplicate
+              {e.rows_error > 0 && <span className="text-red-600"> · {e.rows_error} error</span>}
+            </div>
+            {e.reconciled === true && <p className="mt-0.5 text-xs text-emerald-700">✓ Matched statement total</p>}
+            {e.reconciled === false && (
+              <p className="mt-0.5 flex items-center gap-1 text-xs font-medium text-amber-700">
+                <AlertTriangle size={12} /> Didn’t match statement total
+                {e.difference ? <> — off by <AmountDisplay amount={e.difference} currency={currency} /></> : null}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 

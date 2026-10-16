@@ -3,6 +3,8 @@ package model
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 // IngestionJob is the per-import audit trail and, for AI imports, the staging
@@ -25,6 +27,15 @@ type IngestionJob struct {
 	RowsTotal    *int       `json:"rows_total,omitempty"`
 	RowsImported *int       `json:"rows_imported,omitempty"`
 	ErrorMessage *string    `json:"error_message,omitempty"`
+	// Import-history fields (#376). ContentHash is the hex SHA-256 of the
+	// uploaded bytes (duplicate-statement detection); Reconciled is nil when the
+	// document carried no total to compare against.
+	ContentHash   *string          `json:"content_hash,omitempty"`
+	RowsDuplicate *int             `json:"rows_duplicate,omitempty"`
+	RowsError     *int             `json:"rows_error,omitempty"`
+	RowSum        *decimal.Decimal `gorm:"type:numeric(30,18)" json:"row_sum,omitempty"`
+	DocTotals     json.RawMessage  `gorm:"type:jsonb" json:"doc_totals,omitempty"`
+	Reconciled    *bool            `json:"reconciled,omitempty"`
 	// Extraction holds the staged ImportResult preview (rows + totals + CSV
 	// echo) for AI jobs awaiting commit. JSONB; nil for deterministic jobs.
 	Extraction  json.RawMessage `gorm:"type:jsonb" json:"extraction,omitempty"`

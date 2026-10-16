@@ -58,6 +58,8 @@ func (h *TransactionHandler) Register(g *gin.RouterGroup) {
 	// and stages rows; commit applies a staged job with no second egress.
 	g.POST("/accounts/:id/transactions/import/extract", h.ImportExtract)
 	g.POST("/transactions/import/jobs/:job_id/commit", h.ImportCommit)
+	// Per-account import history (#376): append-only read of ingestion_jobs.
+	g.GET("/accounts/:id/imports", h.ImportHistory)
 }
 
 // List returns a paginated, filtered slice of transactions.
@@ -375,12 +377,26 @@ func (h *TransactionHandler) Import(c *gin.Context) {
 		return
 	}
 	commit := c.PostForm("commit") == "true"
-	res, err := h.svc.ImportStatement(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, ext, commit)
+	res, err := h.svc.ImportDocument(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, doc, ext, commit)
 	if err != nil {
 		h.writeServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": res})
+}
+
+// ImportHistory lists the path account's committed imports, newest first.
+func (h *TransactionHandler) ImportHistory(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	entries, err := h.svc.ListImportHistory(c.Request.Context(), auth.MustUserID(c.Request.Context()), id)
+	if err != nil {
+		h.writeImportError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": entries, "total": len(entries)})
 }
 
 // ImportExtract runs the AI document extractor over an uploaded statement
@@ -389,6 +405,7 @@ func (h *TransactionHandler) Import(c *gin.Context) {
 //
 //	file    — the statement (required)
 //	consent — must be "true"; the upload is sent to the user's AI provider
+//	allow_duplicate — "true" to extract a document already imported into this account
 //
 // Returns an ImportResult preview with a job_id; the client reviews, then POSTs
 // to the commit endpoint. Writes no transactions.
@@ -446,7 +463,7 @@ func (h *TransactionHandler) ImportExtract(c *gin.Context) {
 		Data:     data,
 	}
 	now := time.Now()
-	res, err := h.svc.ExtractAndStage(c.Request.Context(), userID, id, doc, extractor, &now)
+	res, err := h.svc.ExtractAndStageWith(c.Request.Context(), userID, id, doc, extractor, &now, c.PostForm("allow_duplicate") == "true")
 	if err != nil {
 		h.writeImportError(c, err)
 		return
@@ -472,7 +489,14 @@ func (h *TransactionHandler) ImportCommit(c *gin.Context) {
 
 // writeImportError maps AI-import domain + extraction errors to HTTP codes.
 func (h *TransactionHandler) writeImportError(c *gin.Context, err error) {
+	var dup *service.DuplicateStatementError
 	switch {
+	case errors.As(err, &dup):
+		c.JSON(http.StatusConflict, gin.H{
+			"error": dup.Error() + " — nothing was sent to your AI provider",
+			"code":  "DUPLICATE_STATEMENT",
+			"prior": dup.Prior,
+		})
 	case errors.Is(err, ingestion.ErrUnsupportedMediaType):
 		c.JSON(http.StatusUnsupportedMediaType, gin.H{"error": err.Error(), "code": "IMPORT_UNSUPPORTED_TYPE"})
 	case errors.Is(err, ingestion.ErrEmptyExtraction):
