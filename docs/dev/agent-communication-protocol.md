@@ -55,21 +55,21 @@ Allowed results are `PASS`, `FAIL`, `BLOCKED`. An empty tests array or missing H
 
 `scripts/agent-protocol/qa-verdict.mjs` interprets the records and is covered by Node unit tests. `.github/workflows/agent-qa-gate.yml` evaluates them for canonical `agent/issue-<n>` PRs, using only the repository's trusted default-branch script, not PR-authored code.
 
-**Identity prerequisite:** set GitHub repository variable `OFFBOOK_QA_ACTORS` to a comma-separated allowlist of QA GitHub login(s) **different from the PR author**. A separate Cloud session with the **same** GitHub identity cannot provide cryptographically independent evidence, and the gate intentionally fails closed. A dedicated QA bot/app is recommended; do not weaken the check to make a same-user pilot green. The gate does not prove the tests themselves were run; it verifies trustworthy provenance, structure and SHA. GitHub CI and independent QA practice provide the rest.
+**Activation and identity prerequisites:** the validator is initially **opted out** so it cannot create surprise red status checks on existing PRs. Set GitHub repository variable `OFFBOOK_AGENT_QA_ENABLED=true` when ready to conduct the pilot; leave it unset/false otherwise. Also set GitHub repository variable `OFFBOOK_QA_ACTORS` to a comma-separated allowlist of QA GitHub login(s) **different from the PR author**. A separate Cloud session with the **same** GitHub identity cannot provide cryptographically independent evidence, and the gate intentionally fails closed. A dedicated QA bot/app is recommended; do not weaken the check to make a same-user pilot green. The gate does not prove the tests themselves were run; it verifies trustworthy provenance, structure and SHA. GitHub CI and independent QA practice provide the rest.
 
 The PR label is *not* evidence, and manually editing a PR body cannot generate QA approval.
 
 ## Merge and release
 
 - A code-writing Agent does not self-certify. For an agent branch: required repo CI green, latest trusted QA verdict PASS for exact head SHA, and (for finance/auth/PII/migrations/production-sync/release code) owner approval.
-- Enable the `Agent QA verdict` check as required in GitHub branch protection **only after the separate QA actor is configured and the pilot passes**. Merely committing the workflow does not change branch protection. For non-agent branches this check reports a no-op; they remain governed by the existing review policy. Labels or branch names alone cannot be a universal anti-bypass security guarantee.
+- Set `OFFBOOK_AGENT_QA_ENABLED=true` to run the pilot and trigger a fresh PR `labeled` event, then enable the `offbook/independent-qa` commit status as required in GitHub branch protection **only after the separate QA actor is configured and the pilot passes**. Merely committing the workflow does not change branch protection. For non-agent branches this check reports a no-op; they remain governed by the existing review policy. Labels or branch names alone cannot be a universal anti-bypass security guarantee.
 - The Pi **dev** deployment continues following `main` automatically; owner reports **prod** is manually deployed. No changes to Pi deployment policy are made here.
 - Never send real bank information, Plaid production secrets, or live DB state to Cloud QA.
 
 ## First autonomous pilot (one loop, no schedule)
 
 1. **Cloud environment:** run `bash scripts/agent-protocol/cloud-preflight.sh --quick` and then, in a disposable Cloud clone, `--full`. The full test boots the existing isolated QA Compose stack and runs baseline Playwright smoke. Report command outputs and any blockers.
-2. **Bootstrap:** owner applies labels and configures a separate QA GitHub actor; create Cloud Routines based on `infra/cloud-routines/` without enabling overlapping scheduled writers. Disable legacy Mac LaunchAgent if it is still active.
+2. **Bootstrap:** owner applies labels, configures a separate QA GitHub actor and sets `OFFBOOK_AGENT_QA_ENABLED=true` only on entering the pilot; create Cloud Routines based on `infra/cloud-routines/` without enabling overlapping scheduled writers. Disable legacy Mac LaunchAgent if it is still active.
 3. **Product:** create one small, low-risk, real Daily Driver Issue based on documented behavior. Do not create dozens of issues up front.
 4. **Engineering:** claim with deterministic branch and open a PR implementing the Issue.
 5. **QA:** validate PR head SHA independently, post verdict and toggle `agent:qa-verdict`.
