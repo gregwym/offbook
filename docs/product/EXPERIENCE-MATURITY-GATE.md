@@ -84,7 +84,7 @@ The **MATURE/DONE decision belongs to an independent final quality audit on the 
 
 ## Automated Goal #423 closure guard
 
-A milestone cannot be marked complete merely by merging code. The [goal-maturity-guard.yml](../../.github/workflows/goal-maturity-guard.yml) GitHub Action listens for Goal #423 being closed as completed and checks the **latest** structured maturity certificate against current `main` SHA. If missing, stale, or incomplete, it automatically reopens the goal and explains why. `not_planned` cancellation is excluded.
+A milestone cannot be marked complete merely by merging code. The [goal-maturity-guard.yml](../../.github/workflows/goal-maturity-guard.yml) GitHub Action listens for Goal #423 being closed as completed and checks the **latest** structured maturity certificate against current `main` SHA. If missing, stale, or incomplete, it automatically reopens the goal and explains why. For a public repository, the certificate is accepted only when the Issue comment is authored by the repository owner or a QA login explicitly authorized via `OFFBOOK_MATURITY_QA_ACTORS`; arbitrary public commenters cannot certify product maturity. `not_planned` cancellation is excluded.
 
 The independent final QA session posts an ordinary Issue #423 comment containing one standalone line (not a code fence in the actual comment):
 
