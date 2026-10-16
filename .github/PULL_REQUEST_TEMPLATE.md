@@ -10,6 +10,9 @@
 ## Financial / Security Invariants
 <!-- Explicitly state money, reconciliation, idempotency, privacy, PII and synchronization impact, or "none". -->
 
+## Product Experience & Polish (for user-visible changes)
+<!-- Explain how a user finds/completes this job unaided, with desktop/mobile screenshots/trace if available; evaluate wording, navigation/friction, empty/loading/saved/error/retry, visual consistency, and Monarch source-backed observable behavior. A CI-green feature is Implemented, not MATURE. -->
+
 ## Verification
 - [ ] Required repository CI checks passed
 - [ ] Automated unit/integration tests updated as appropriate
