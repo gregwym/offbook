@@ -10,15 +10,15 @@ Until a deliberate redesign ships, existing household privacy, account ownership
 
 ## Batched Independent QA
 
-Developer-run targeted tests and **required GitHub CI** protect every PR. **Independent AI QA runs in batches**, not on each push or PR, to maximize Opus development throughput. The default sweep is twice weekly or after roughly eight merges when scheduling permits, plus a final independent QA of the exact release candidate.
+**Independent Product Experience / UX Critic assessment is part of periodic QA and mandatory before milestone graduation.** Use [Experience Maturity Gate](product/EXPERIENCE-MATURITY-GATE.md) and [source-backed Monarch behavior matrix](product/MONARCH-BEHAVIOR-MATRIX.md). Developer-run targeted tests and **required GitHub CI** protect every PR. **Independent AI QA runs in batches**, not on each push or PR, to maximize Opus development throughput. The default sweep is twice weekly or after roughly eight merges when scheduling permits, plus a final independent QA of the exact release candidate.
 
 For each sweep:
 
 1. Read [Goal #423](https://github.com/gregwym/offbook/issues/423), [Daily Driver charter](product/DAILY-DRIVER-V1.md) and [agent communication protocol](dev/agent-communication-protocol.md).
 2. Determine the last accepted QA checkpoint from Goal #423 comments (or Discussion #199). Select a **pinned main SHA** and verify the last checkpoint is its ancestor; include all intervening merged PRs.
-3. Run isolated Compose/Playwright/API/DB tests with synthetic personas. Combine changed-workflow checks and baseline money/privacy regression tests.
-4. Report PASS/FAIL/BLOCKED for the exact `from_sha` → `to_sha` range; include checked flows, evidence and new Bug Issues with severity. No fabricated coverage.
-5. If P0/P1, Engineering must fix it before unrelated feature work. The QA agent does not change the author's code.
+3. Run isolated Compose/Playwright/API/DB tests with synthetic personas, plus full real-user first-run/daily-review/monthly-report/recovery journeys. Independently inspect actual desktop/mobile screenshots and traces for navigation, visual hierarchy, language, saved-state feedback, empty/loading/error/retry, accessibility, and performance. Compare Monarch behavior with dated official sources or legitimate UI and score the experience rubric 0–4 with evidence. Combine changed-workflow and baseline money/privacy regressions.
+4. Report functional **PASS/FAIL/BLOCKED** and experience **MATURE/NOT MATURE/BLOCKED** separately for exact `from_sha` → `to_sha`, with per-journey scorecard, screenshots/traces, dated benchmark differences and actionable P0/P1/P2 core UX issues. No fabricated coverage.
+5. If P0/P1 or **P2 core-journey usability/taste issue**, Engineering fixes it before unrelated feature work. The QA agent does not change the author's code.
 
 QA agents may share the same GitHub account as Engineering but must run as **separate sessions** and workspaces. No dedicated bot identity or per-PR attestation is required. **CI-green PRs may merge before batch QA**; this makes `main` an integration branch, never a production release authorization. Existing Pi Prod remains manual.
 
