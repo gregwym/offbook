@@ -1,0 +1,54 @@
+# Prevent Goal #423 being accidentally marked DONE after merely merging PRs.
+# Reopens only a "completed" close without evidence for current main.
+name: Daily Driver maturity closure guard
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  guard-maturity:
+    if: ${{ github.event.issue.number == 423 && github.event.issue.state_reason != 'not_planned' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify exact release SHA and product experience certificate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { spawnSync } = require('node:child_process');
+            const { owner, repo } = context.repo;
+            const [{ data: branch }, comments] = await Promise.all([
+              github.rest.repos.getBranch({ owner, repo, branch: context.payload.repository.default_branch }),
+              github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: 423, per_page: 100 }),
+            ]);
+            const data = { mainSha: branch.commit.sha, comments };
+            const check = spawnSync('node', ['scripts/agent-protocol/maturity-gate.mjs'], {
+              input: JSON.stringify(data), encoding: 'utf8', timeout: 15000,
+            });
+            let verdict = {ok: false, reason: 'Maturity validator unavailable'};
+            if (!check.error && check.status === 0) {
+              try { verdict = JSON.parse(check.stdout); }
+              catch { core.warning('Invalid maturity-validator output'); }
+            } else { core.warning(check.stderr || String(check.error)); }
+            if (!verdict.ok) {
+              // Closing the epic by checking issues is not proof of mature product.
+              await github.rest.issues.update({ owner, repo, issue_number: 423, state: 'open' });
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: 423,
+                body: 'Reopened automatically: **Daily Driver v1 is not yet independently certified MATURE** at current main `' + branch.commit.sha + '`. Reason: ' + verdict.reason + '. See docs/product/EXPERIENCE-MATURITY-GATE.md and the offbook-maturity:v1 evidence format. This is not a request for owner code review.',
+              });
+              core.setFailed('Goal #423 cannot close as completed: ' + verdict.reason);
+            } else {
+              core.info('Goal #423 maturity certificate verified: ' + verdict.reason);
+            }
