@@ -15,6 +15,8 @@ export type TransactionListFilter = {
   // "Needs review" chip — passing 'plaid_default' shows rows the engine
   // auto-assigned but the user hasn't confirmed.
   categorization_method?: 'plaid_default' | 'rule' | 'manual'
+  // false = the review inbox (unreviewed flow rows); true = reviewed rows (#424).
+  reviewed?: boolean
   from?: string  // YYYY-MM-DD
   to?: string
   search?: string
@@ -31,6 +33,7 @@ export async function listTransactions(
     params.category_id = f.category_id === null ? 'null' : f.category_id
   }
   if (f.categorization_method) params.categorization_method = f.categorization_method
+  if (f.reviewed !== undefined) params.reviewed = String(f.reviewed)
   if (f.from) params.from = f.from
   if (f.to) params.to = f.to
   if (f.search) params.search = f.search
@@ -49,6 +52,13 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
 export async function updateTransaction(id: number, input: UpdateTransactionInput): Promise<Transaction> {
   const res = await apiClient.patch<ApiItem<Transaction>>(`/transactions/${id}`, input)
   return res.data.data
+}
+
+// setTransactionsReviewed marks the given rows reviewed (or undoes it) in one
+// call; returns how many rows changed (#424).
+export async function setTransactionsReviewed(ids: number[], reviewed: boolean): Promise<number> {
+  const res = await apiClient.post<ApiItem<{ updated: number }>>('/transactions/review', { ids, reviewed })
+  return res.data.data.updated
 }
 
 export async function deleteTransaction(id: number): Promise<void> {

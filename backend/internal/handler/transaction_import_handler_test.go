@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -142,5 +143,28 @@ func TestImportCommit_InvalidJobID(t *testing.T) {
 	}
 	if got := codeOf(t, w.Body.Bytes()); got != "INVALID_REQUEST" {
 		t.Errorf("code = %q, want INVALID_REQUEST", got)
+	}
+}
+
+// #424: bulk review + reviewed filter reject malformed input before any DB call.
+func TestReviewEndpoints_Validation(t *testing.T) {
+	r := importRouter(nil, 7)
+	for _, tc := range []struct {
+		name, method, path, body string
+	}{
+		{"missing reviewed flag", http.MethodPost, "/api/v1/transactions/review", `{"ids":[1]}`},
+		{"empty ids", http.MethodPost, "/api/v1/transactions/review", `{"ids":[],"reviewed":true}`},
+		{"too many ids", http.MethodPost, "/api/v1/transactions/review", `{"ids":[` + strings.Repeat("1,", 500) + `1],"reviewed":true}`},
+		{"bad reviewed query", http.MethodGet, "/api/v1/transactions?reviewed=maybe", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest || codeOf(t, w.Body.Bytes()) != "INVALID_REQUEST" {
+				t.Fatalf("got %d %s", w.Code, w.Body.String())
+			}
+		})
 	}
 }

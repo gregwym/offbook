@@ -49,6 +49,8 @@ func (h *TransactionHandler) Register(g *gin.RouterGroup) {
 	g.GET("/transactions/:id", h.Get)
 	g.PATCH("/transactions/:id", h.Update)
 	g.DELETE("/transactions/:id", h.Delete)
+	// Bulk review state (#424).
+	g.POST("/transactions/review", h.SetReviewed)
 	// CSV statement import is account-scoped (#330): the account fixes the
 	// asset and the dedup namespace.
 	g.POST("/accounts/:id/transactions/import", h.Import)
@@ -118,6 +120,14 @@ func (h *TransactionHandler) List(c *gin.Context) {
 			})
 			return
 		}
+	}
+	if v := c.Query("reviewed"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "reviewed must be true or false", "code": "INVALID_REQUEST"})
+			return
+		}
+		f.Reviewed = &b
 	}
 	f.Search = c.Query("search")
 	if v := c.Query("limit"); v != "" {
@@ -234,6 +244,7 @@ type updateTransactionRequest struct {
 	TransactionDate *string          `json:"transaction_date"`
 	PostedDate      *string          `json:"posted_date"`
 	Notes           *string          `json:"notes"`
+	Reviewed        *bool            `json:"reviewed"`
 }
 
 func (h *TransactionHandler) Update(c *gin.Context) {
@@ -253,6 +264,7 @@ func (h *TransactionHandler) Update(c *gin.Context) {
 		Description:   req.Description,
 		MerchantName:  req.MerchantName,
 		Notes:         req.Notes,
+		Reviewed:      req.Reviewed,
 	}
 	if req.TransactionDate != nil {
 		td, ok := parseFlexibleDate(c, *req.TransactionDate, "transaction_date")
@@ -274,6 +286,31 @@ func (h *TransactionHandler) Update(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": t})
+}
+
+type setReviewedRequest struct {
+	IDs      []int64 `json:"ids"`
+	Reviewed *bool   `json:"reviewed"`
+}
+
+// SetReviewed handles POST /transactions/review — bulk mark reviewed/unreviewed
+// (#424). Body: {"ids":[...], "reviewed": true|false}.
+func (h *TransactionHandler) SetReviewed(c *gin.Context) {
+	var req setReviewedRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Reviewed == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ids and reviewed are required", "code": "INVALID_REQUEST"})
+		return
+	}
+	n, err := h.svc.SetReviewed(c.Request.Context(), auth.MustUserID(c.Request.Context()), req.IDs, *req.Reviewed)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidReviewBatch) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"updated": n}})
 }
 
 func (h *TransactionHandler) Delete(c *gin.Context) {

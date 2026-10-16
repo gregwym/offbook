@@ -57,3 +57,90 @@ describe('TransactionsPage smoke', () => {
     expect(await screen.findByRole('button', { name: /matched/i })).toBeInTheDocument()
   })
 })
+
+// #424: the daily review journey against a stateful fake of the review API.
+describe('TransactionsPage review inbox (#424)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  function installReviewApi() {
+    const rows = [1, 2, 3, 4].map((id) => ({
+      ...fx.transaction1,
+      id,
+      description: `MERCHANT ${id}`,
+      merchant_name: `Merchant ${id}`,
+      // Row 4 starts reviewed; 1-3 are the inbox. Row 1 is already
+      // categorized 'manual' — categorization must not imply reviewed.
+      reviewed_at: id === 4 ? '2026-07-01T00:00:00Z' : null,
+    }))
+    const reviewBodies: unknown[] = []
+    server.use(
+      http.get(`${API}/transactions`, ({ request }) => {
+        const r = new URL(request.url).searchParams.get('reviewed')
+        const data = rows.filter((t) => r == null || (r === 'false') === (t.reviewed_at == null))
+        return HttpResponse.json({ data, total: data.length })
+      }),
+      http.post(`${API}/transactions/review`, async ({ request }) => {
+        const body = (await request.json()) as { ids: number[]; reviewed: boolean }
+        reviewBodies.push(body)
+        for (const t of rows) {
+          if (body.ids.includes(t.id)) t.reviewed_at = body.reviewed ? '2026-07-02T00:00:00Z' : (null as unknown as string)
+        }
+        return HttpResponse.json({ data: { updated: body.ids.length } })
+      }),
+    )
+    return { rows, reviewBodies }
+  }
+
+  it('shows the inbox count, bulk-reviews to inbox zero, and undoes', async () => {
+    const { reviewBodies } = installReviewApi()
+    renderPage(<TransactionsPage />)
+    await expectHealthySmoke()
+
+    const chip = await screen.findByRole('button', { name: /needs review/i })
+    await waitFor(() => expect(chip).toHaveTextContent('3'))
+
+    fireEvent.click(chip)
+    await screen.findByText('3 to review')
+    expect(screen.queryByText('MERCHANT 4')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText(/select all transactions on this page/i))
+    expect(screen.getByText('3 selected')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^mark reviewed$/i }))
+
+    expect(await screen.findByText(/you.re all caught up/i)).toBeInTheDocument()
+    expect(reviewBodies).toEqual([{ ids: [1, 2, 3], reviewed: true }])
+    await waitFor(() => expect(screen.getByRole('button', { name: /needs review/i })).not.toHaveTextContent('3'))
+
+    // Accidental click? One-click undo brings all three back.
+    fireEvent.click(screen.getByRole('button', { name: /undo/i }))
+    expect(await screen.findByText('MERCHANT 1')).toBeInTheDocument()
+    expect(screen.getByText('3 to review')).toBeInTheDocument()
+    expect(reviewBodies[1]).toEqual({ ids: [1, 2, 3], reviewed: false })
+  })
+
+  it('reviews a single row without touching its category', async () => {
+    const { reviewBodies } = installReviewApi()
+    renderPage(<TransactionsPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /needs review/i }))
+    await screen.findByText('3 to review')
+
+    fireEvent.click(await screen.findByRole('button', { name: /mark merchant 2 reviewed/i }))
+    await screen.findByText('2 to review')
+    expect(reviewBodies).toEqual([{ ids: [2], reviewed: true }])
+  })
+
+  it('reverts and surfaces an error when the review call fails', async () => {
+    installReviewApi()
+    server.use(http.post(`${API}/transactions/review`, () => HttpResponse.json({ error: 'boom' }, { status: 500 })))
+    renderPage(<TransactionsPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /needs review/i }))
+    await screen.findByText('3 to review')
+
+    fireEvent.click(await screen.findByRole('button', { name: /mark merchant 1 reviewed/i }))
+    expect(await screen.findByText('boom')).toBeInTheDocument()
+    expect(screen.getByText('3 to review')).toBeInTheDocument()
+    expect(screen.getByText('MERCHANT 1')).toBeInTheDocument()
+  })
+})

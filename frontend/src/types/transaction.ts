@@ -32,6 +32,9 @@ export type Transaction = {
   caused_by_observation_id?: number | null
   acknowledged_at?: string | null
   acknowledged_note?: string | null
+  // reviewed_at is explicit user review state (#424), independent of
+  // categorization: null/absent = unreviewed (in the review inbox).
+  reviewed_at?: string | null
   created_at: string
   updated_at: string
 }
@@ -119,4 +122,6 @@ export type UpdateTransactionInput = {
   transaction_date?: string
   posted_date?: string | null
   notes?: string | null
+  // true marks reviewed, false undoes it; independent of category edits (#424).
+  reviewed?: boolean
 }

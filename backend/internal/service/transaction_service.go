@@ -62,6 +62,10 @@ type UpdateTransactionInput struct {
 	TransactionDate *time.Time
 	PostedDate      *time.Time
 	Notes           *string
+	// Reviewed sets (true) or clears (false) review state; nil leaves it alone.
+	// Review is independent of category edits (#424): changing a category does
+	// not implicitly mark a row reviewed, and vice versa.
+	Reviewed *bool
 }
 
 // TransactionService owns business rules for transactions.
@@ -139,6 +143,11 @@ func (s *TransactionService) Create(ctx context.Context, userID int64, in Create
 		PostedDate:      in.PostedDate,
 		Source:          src,
 		Notes:           in.Notes,
+	}
+	if src == "manual" {
+		// A row the user typed in themselves has, by definition, been seen.
+		now := time.Now().UTC()
+		t.ReviewedAt = &now
 	}
 	if in.CategoryID != nil {
 		method := "manual"
@@ -227,6 +236,16 @@ func (s *TransactionService) Update(ctx context.Context, userID, id int64, in Up
 	if in.Notes != nil {
 		t.Notes = in.Notes
 	}
+	if in.Reviewed != nil {
+		if *in.Reviewed {
+			if t.ReviewedAt == nil {
+				now := time.Now().UTC()
+				t.ReviewedAt = &now
+			}
+		} else {
+			t.ReviewedAt = nil
+		}
+	}
 
 	if err := s.repo.Update(ctx, t); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -235,6 +254,32 @@ func (s *TransactionService) Update(ctx context.Context, userID, id int64, in Up
 		return nil, fmt.Errorf("update transaction: %w", err)
 	}
 	return t, nil
+}
+
+// MaxReviewBatch caps one bulk review call.
+const MaxReviewBatch = 500
+
+// ErrInvalidReviewBatch is returned for an empty or oversized id list.
+var ErrInvalidReviewBatch = errors.New("ids must contain 1 to 500 transaction ids")
+
+// SetReviewed marks the given transactions reviewed (reviewed=true) or
+// unreviewed (false) in one statement and returns how many rows changed.
+// Idempotent; ids not owned by the user are ignored. Already-reviewed rows
+// keep their original reviewed_at on re-review.
+func (s *TransactionService) SetReviewed(ctx context.Context, userID int64, ids []int64, reviewed bool) (int64, error) {
+	if len(ids) == 0 || len(ids) > MaxReviewBatch {
+		return 0, ErrInvalidReviewBatch
+	}
+	var at *time.Time
+	if reviewed {
+		now := time.Now().UTC()
+		at = &now
+	}
+	n, err := s.repo.SetReviewed(ctx, userID, ids, at)
+	if err != nil {
+		return 0, fmt.Errorf("set reviewed: %w", err)
+	}
+	return n, nil
 }
 
 func (s *TransactionService) SoftDelete(ctx context.Context, userID, id int64) error {

@@ -121,3 +121,33 @@ func mustDate(s string) time.Time {
 	}
 	return t
 }
+
+// #424: a pending→posted amount change (or any resync) must never reset the
+// user's review state — reviewed rows stay reviewed, unreviewed stay NULL.
+func TestMergePlaidUpdate_PreservesReviewedAt(t *testing.T) {
+	reviewed := time.Date(2026, 5, 12, 9, 0, 0, 0, time.UTC)
+	incoming := plaidsvc.PlaidTransaction{
+		PlaidTransactionID: "ptx-9",
+		PlaidAccountID:     "pacct-1",
+		Amount:             decimal.NewFromFloat(10.00),
+		Currency:           "USD",
+		Name:               "COFFEE",
+		Date:               "2026-05-11",
+	}
+	for _, tc := range []struct {
+		name string
+		in   *time.Time
+	}{{"reviewed", &reviewed}, {"unreviewed", nil}} {
+		t.Run(tc.name, func(t *testing.T) {
+			existing := model.Transaction{ID: 1, UserID: 7, AccountID: 11, AssetID: 1, Source: "plaid",
+				PlaidTransactionID: ptr("ptx-9"), TransactionDate: mustDate("2026-05-10"), ReviewedAt: tc.in}
+			merged, err := plaidsvc.MergePlaidUpdate(existing, incoming, 11, 1, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (merged.ReviewedAt == nil) != (tc.in == nil) || (tc.in != nil && !merged.ReviewedAt.Equal(*tc.in)) {
+				t.Errorf("reviewed_at = %v, want %v", merged.ReviewedAt, tc.in)
+			}
+		})
+	}
+}

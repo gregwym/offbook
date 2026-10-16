@@ -3,6 +3,7 @@ import {
   createTransaction as apiCreate,
   deleteTransaction as apiDelete,
   listTransactions,
+  setTransactionsReviewed,
   updateTransaction as apiUpdate,
   type TransactionListFilter,
 } from '../api/transactions'
@@ -30,6 +31,9 @@ type State = {
   setCategory: (id: number, categoryID: number | null) => Promise<void>
   update: (id: number, input: UpdateTransactionInput) => Promise<Transaction>
   remove: (id: number) => Promise<void>
+  // Optimistic bulk review/undo (#424). In the review inbox (filter.reviewed
+  // === false) reviewed rows leave the list immediately; reverts on failure.
+  markReviewed: (ids: number[], reviewed: boolean) => Promise<void>
 }
 
 const PAGE_SIZE = 50
@@ -124,6 +128,28 @@ export const useTransactionsStore = create<State>((set, get) => ({
       return t
     } catch (err) {
       set({ error: errMsg(err) })
+      throw err
+    }
+  },
+
+  markReviewed: async (ids, reviewed) => {
+    const { transactions: before, total: totalBefore, filter } = get()
+    const idSet = new Set(ids)
+    const stamp = new Date().toISOString()
+    let next = before.map((t) =>
+      idSet.has(t.id) ? { ...t, reviewed_at: reviewed ? (t.reviewed_at ?? stamp) : null } : t,
+    )
+    let total = totalBefore
+    if (filter.reviewed !== undefined) {
+      const leaving = next.filter((t) => idSet.has(t.id) && (t.reviewed_at != null) !== filter.reviewed)
+      next = next.filter((t) => !leaving.includes(t))
+      total = Math.max(0, totalBefore - leaving.length)
+    }
+    set({ transactions: next, total, error: null })
+    try {
+      await setTransactionsReviewed(ids, reviewed)
+    } catch (err) {
+      set({ transactions: before, total: totalBefore, error: errMsg(err) })
       throw err
     }
   },
