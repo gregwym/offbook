@@ -34,6 +34,7 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 - Independent QA validates the **exact PR head SHA**, in another session/environment, using synthetic data; developer tests never constitute QA certification. A changed SHA invalidates earlier QA PASS.
 - Required CI + independent QA PASS gate functional PR merge. Owner review is additionally required for financial arithmetic, auth/PII, migrations, production-sync or release automation until superseded by a separately accepted policy.
 - Low-risk docs/tests-only changes may self-merge after required CI. Never write directly to `main`.
+- Follow [docs/dev/agent-communication-protocol.md](docs/dev/agent-communication-protocol.md): GitHub Issues are handoff, `agent/issue-N` branches are canonical claims (no force), and `offbook/independent-qa` records a trusted SHA-specific QA verdict. Labels are advisory, not locks or QA proof.
 - Run one autonomous code writer at a time; disable the local LaunchAgent before enabling a Cloud routine. The files in `infra/cloud-routines/` are templates, not registered jobs.
 - Never use real financial data, real bank credentials, or production database access in Cloud/QA.
 
