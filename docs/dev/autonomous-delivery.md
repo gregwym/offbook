@@ -1,3 +1,5 @@
+> **Historical M13–M15 delivery plan:** The current product maturity workflow is [autonomous-product-workflow.md](autonomous-product-workflow.md). Do not run this legacy worker concurrently with Cloud delivery; before enabling Cloud, disable the old local LaunchAgent.
+
 # Autonomous Delivery Harness — Production-Readiness Plan
 
 Durable definition of the self-paced loop that delivers
