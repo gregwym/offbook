@@ -1,54 +1,21 @@
 # Offbook QA Workflow
 
-Offbook QA is a manually triggered role. The same agent session should not both implement a change and certify it as QA. A developer agent may run focused checks while building, but autonomous QA starts only when the user explicitly asks for it, for example: "be QA", "run QA", "QA issue #123", or "QA since the last reviewed commit."
-
-QA work is evidence gathering, issue filing, and acceptance-test development. It must not make product code changes unless the user explicitly switches the session from QA to development. Browser automation uses Playwright with headless Chromium.
+QA is an **independent agent/session**, separate from development. QA may run automatically for product PRs or on a periodic synthetic-data schedule, in addition to manual runs. Developers may test their own implementation but cannot certify it. QA files reproducible issues and evidence; it must not implement a fix and then certify its own patch.
 
 ## Product Contract
 
-Treat these files as the QA contract before testing behavior:
+For *new* behavior use `docs/product/PRODUCT-CONTRACT.md`, researched behavior specifications once written, and accepted ADRs. Historical `docs/ROADMAP.md` and `docs/designs/*` are still evidence of current product behavior, but not immutable targets when superseded by an accepted product contract.
 
-- `docs/ROADMAP.md` for the shipped milestone goals.
-- `docs/designs/App Hierarchy v4.html` for locked information architecture, privacy, scope, and lifecycle rules.
-- `docs/designs/Offbook Hi-Fi v1.html` for intended page composition and visual direction.
-- `AGENTS.md` plus scoped rules under `.claude/rules/`.
+Until a deliberate redesign ships, existing household privacy, account ownership, PII access rules, AI data exclusions, ledger accounting, and valuations must continue to pass. Proposed simplified household UX is not yet implemented.
 
-The wireframe is not only visual. It defines product invariants:
+## QA Trigger / Certification
 
-- Personal and household scopes are mutually exclusive in the sidebar.
-- Household scope is the default after login when the user belongs to a household.
-- Personal data is private by default.
-- Sharing is per-account, not per-transaction.
-- Household pages show aggregates only, never other members' raw transactions or PII.
-- PII is masked by default and intentionally revealed only on account PII surfaces.
-- AI context preview shows what was sent and what was deliberately excluded.
-- Household AI uses household aggregates; personal AI uses only the user's own book.
-- Member lifecycle is testable: leave, grace, rejoin, purge, and last-owner protection.
-- Mobile must preserve the same workflows, not only avoid runtime crashes.
-
-## Manual Trigger Boundary
-
-QA is intentionally not part of the autonomous development loop.
-
-Development agents:
-
-1. Implement the requested issue.
-2. Run unit, lint, build, and targeted browser checks needed for confidence.
-3. Open or update the PR.
-4. Do not mark the work QA-certified.
-
-QA agents:
-
-1. Start only after a manual user request.
-2. Work from `main`, preferably in a separate git worktree, unless the user explicitly asks to QA a PR branch or specific commit.
-3. Start an isolated QA environment instead of using the development agent's running stack.
-4. Confirm the commit range under review.
-5. Verify behavior in headless Chrome and through API/database checks where relevant.
-6. File or comment on GitHub issues with evidence.
-7. Update the QA ledger with the last reviewed commit.
-8. Do not fix the bugs found in the same QA session.
-
-If the user asks the current agent to fix an issue found during QA, treat that as a role switch. Record the QA finding first, then stop calling the resulting work QA certification.
+- PR-triggered or scheduled **synthetic-only** QA is allowed without owner interaction.
+- Verify the exact PR head commit or a selected `main` delta. A new head commit invalidates a prior QA PASS.
+- Independent QA must use its own checkout, isolated QA DB/stack and separate agent session from the developer.
+- Record PASS, FAIL or BLOCKED, with SHA, scenario coverage, sanitized evidence and residual risk. Missing browser/Docker/GitHub permissions -> BLOCKED, never PASS.
+- Do not connect to Plaid production, real bank accounts, the Pi's live database, or owner secrets.
+- Functional PRs require independent QA plus required CI; high-risk finance/security/migration/release PRs also require owner review.
 
 ## Worktree And Environment Isolation
 
