@@ -11,6 +11,7 @@ DELETE /api/v1/savings-goals/:id
 DELETE /api/v1/transactions/:id
 GET /api/v1/accounts
 GET /api/v1/accounts/:id
+GET /api/v1/accounts/:id/imports
 GET /api/v1/accounts/:id/pii
 GET /api/v1/accounts/:id/reconciliation
 GET /api/v1/accounts/:id/shares

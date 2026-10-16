@@ -146,6 +146,10 @@ func (s *TransactionService) CommitJob(ctx context.Context, userID, jobID int64)
 		return nil, err
 	}
 
+	// Carry statement-total reconciliation onto the commit result and the audit
+	// row; ImportStatement alone doesn't compute it.
+	reconcile(res, &ext)
+
 	now := time.Now()
 	job.Status = "completed"
 	applyResultToJob(job, res)
