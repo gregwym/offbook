@@ -3,6 +3,9 @@
 Status: initial operating contract, **not** a claim that Monarch parity exists.
 
 ## Goal
+
+**Current concrete target:** [Daily Driver v1](DAILY-DRIVER-V1.md) and [Goal #423](https://github.com/gregwym/offbook/issues/423). Optimize for this end-to-end deliverable, not Monarch feature-count parity.
+
 Turn Offbook into a trustworthy personal finance daily driver. Prioritize correct ingestion, understandable money totals, usable transaction review, investing, budget and reports over completing an ever-growing feature list.
 
 ## Research contract
@@ -29,7 +32,7 @@ The research agent maintains `docs/product/MONARCH-BEHAVIOR-MATRIX.md` when the 
 Work in end-to-end vertical slices with frontend, backend, acceptance tests and error states together. Existing Roadmap checkbox status is not proof a behavior works; inspect code.
 
 ## Release gate
-No open P0/P1 issues; finance invariant regressions passing; independent QA **PASS on the exact release SHA**; verified backup restoration; safe migration/rollback plan; sync errors, missing prices and unexplained deltas surfaced instead of hidden. Begin a controlled owner-authorized real-data pilot, then monitor a 30-day dogfood window. Do not block the first pilot on an impossible promise of prior real-data testing.
+No open P0/P1 issues; finance invariant regressions passing; independent **batch** QA PASS for the exact release candidate SHA (not every development PR); verified backup restoration; safe migration/rollback plan; sync errors, missing prices and unexplained deltas surfaced instead of hidden. Begin a controlled owner-authorized real-data pilot, then monitor a 30-day dogfood window. Do not block the first pilot on an impossible promise of prior real-data testing.
 
 ## Product changes
 An implementation issue links a sourced behavior contract or an explicitly adopted Offbook requirement. A PR states Product Goal, scenarios, test evidence, financial/security impact, and migration/rollback consequences. Developer tests are not independent QA.
