@@ -12,8 +12,8 @@ CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""')
 # --- Check 1: branch name validation on `git checkout -b ...` ---
 if [[ "$CMD" =~ ^[[:space:]]*git[[:space:]]+checkout[[:space:]]+-b[[:space:]]+ ]]; then
   BRANCH=$(echo "$CMD" | sed -E 's/^[[:space:]]*git[[:space:]]+checkout[[:space:]]+-b[[:space:]]+//' | awk '{print $1}')
-  if ! [[ $BRANCH =~ ^(feature|fix|chore|docs)/[0-9]+-[a-z0-9-]+$ ]]; then
-    echo "Branch must follow: {type}/{issue-number}-{slug}" >&2
+  if ! [[ $BRANCH =~ ^(feature|fix|chore|docs)/[0-9]+-[a-z0-9-]+$ || $BRANCH =~ ^agent/issue-[0-9]+$ ]]; then
+    echo "Branch must follow {type}/{issue-number}-{slug} or agent/issue-<number>" >&2
     echo "Examples: feature/12-plaid-link, fix/34-decimal-rounding" >&2
     exit 2
   fi
