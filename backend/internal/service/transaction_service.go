@@ -22,6 +22,8 @@ var (
 	ErrInvalidAmount       = errors.New("amount must not be zero")
 	ErrInvalidSource       = errors.New("invalid source")
 	ErrMissingDate         = errors.New("transaction_date is required")
+	ErrInvalidSplits       = errors.New("invalid splits")
+	ErrSplitAmountLocked   = errors.New("transaction is split; clear its splits before changing the amount")
 )
 
 // validSources mirrors the transactions.source CHECK constraint (migration
@@ -216,6 +218,9 @@ func (s *TransactionService) Update(ctx context.Context, userID, id int64, in Up
 		if in.Amount.IsZero() {
 			return nil, ErrInvalidAmount
 		}
+		if len(t.Splits) > 0 && !in.Amount.Equal(t.Amount) {
+			return nil, ErrSplitAmountLocked
+		}
 		t.Amount = *in.Amount
 	}
 	if in.Description != nil {
@@ -259,6 +264,59 @@ func (s *TransactionService) Update(ctx context.Context, userID, id int64, in Up
 		return nil, fmt.Errorf("update transaction: %w", err)
 	}
 	return t, nil
+}
+
+// SplitInput is one requested split line (#438).
+type SplitInput struct {
+	CategoryID *int64
+	Amount     decimal.Decimal
+	Note       *string
+}
+
+// MaxSplits caps lines per transaction.
+const MaxSplits = 20
+
+// ReplaceSplits sets the category splits of a transaction (#438). Rules: flow,
+// non-transfer rows only; at least 2 lines (empty clears); every line non-zero
+// with the parent's sign; lines sum EXACTLY to the parent amount (decimal).
+// The parent's amount/ledger effect is never touched.
+func (s *TransactionService) ReplaceSplits(ctx context.Context, userID, id int64, in []SplitInput) (*model.Transaction, error) {
+	t, err := s.Get(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+	var splits []model.TransactionSplit
+	if len(in) > 0 {
+		if t.Kind != model.KindFlow || t.IsTransfer {
+			return nil, fmt.Errorf("%w: only non-transfer flow transactions can be split", ErrInvalidSplits)
+		}
+		if len(in) < 2 || len(in) > MaxSplits {
+			return nil, fmt.Errorf("%w: need between 2 and %d lines", ErrInvalidSplits, MaxSplits)
+		}
+		sum := decimal.Zero
+		for _, l := range in {
+			if l.Amount.IsZero() || l.Amount.Sign() != t.Amount.Sign() {
+				return nil, fmt.Errorf("%w: each line must be non-zero with the same sign as the transaction", ErrInvalidSplits)
+			}
+			if l.CategoryID != nil {
+				if err := s.assertCategoryExists(ctx, *l.CategoryID); err != nil {
+					return nil, err
+				}
+			}
+			sum = sum.Add(l.Amount)
+			splits = append(splits, model.TransactionSplit{CategoryID: l.CategoryID, Amount: l.Amount, Note: trimPtr(l.Note)})
+		}
+		if !sum.Equal(t.Amount) {
+			return nil, fmt.Errorf("%w: lines sum to %s but the transaction is %s", ErrInvalidSplits, sum.String(), t.Amount.String())
+		}
+	}
+	if err := s.repo.ReplaceSplits(ctx, userID, id, splits); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrTransactionNotFound
+		}
+		return nil, fmt.Errorf("replace splits: %w", err)
+	}
+	return s.Get(ctx, userID, id)
 }
 
 // MaxReviewBatch caps one bulk review call.

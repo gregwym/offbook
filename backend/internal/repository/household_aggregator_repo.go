@@ -296,7 +296,7 @@ func (r *householdAggregatorRepo) CategoryAggregates(ctx context.Context, accoun
 		SELECT t.category_id                    AS category_id,
 		       c.name                           AS name,
 		       COALESCE(SUM(t.amount), 0)::text AS amount
-		FROM transactions t
+		FROM spend_lines t
 		LEFT JOIN categories c ON c.id = t.category_id
 		WHERE t.deleted_at IS NULL
 		  AND t.account_id IN ?
@@ -332,7 +332,7 @@ func (r *householdAggregatorRepo) SpendingByCategory(ctx context.Context, accoun
 	var s string
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(SUM(-amount) FILTER (WHERE amount < 0), 0)::text
-		FROM transactions
+		FROM spend_lines
 		WHERE deleted_at IS NULL
 		  AND account_id IN ?
 		  AND category_id = ?
@@ -587,7 +587,7 @@ func (r *householdAggregatorRepo) CategoryTrend(ctx context.Context, accountIDs 
 			c.name                                             AS name,
 			date_trunc('month', t.transaction_date)::timestamptz AS month,
 			COALESCE(SUM(-t.amount), 0)::text                  AS amount
-		FROM transactions t
+		FROM spend_lines t
 		LEFT JOIN categories c ON c.id = t.category_id
 		WHERE t.deleted_at IS NULL
 		  AND t.account_id IN ?

@@ -118,3 +118,4 @@ POST /api/v1/transactions/review
 POST /api/v1/transfers/confirm
 PUT /api/v1/accounts/:id/pii
 PUT /api/v1/accounts/:id/shares/:householdID
+PUT /api/v1/transactions/:id/splits

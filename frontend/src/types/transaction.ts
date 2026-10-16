@@ -3,6 +3,14 @@
 // the transaction's unit is `asset_id` — for cash legs it equals the
 // parent account's primary_quote_asset; for trade security legs it's the
 // security (AAPL, BTC, …).
+export type TransactionSplit = {
+  id: number
+  transaction_id: number
+  category_id?: number | null
+  amount: string
+  note?: string | null
+}
+
 export type Transaction = {
   id: number
   user_id: number
@@ -35,6 +43,8 @@ export type Transaction = {
   // reviewed_at is explicit user review state (#424), independent of
   // categorization: null/absent = unreviewed (in the review inbox).
   reviewed_at?: string | null
+  // splits (#438): category allocation lines summing to amount; absent = unsplit.
+  splits?: TransactionSplit[]
   created_at: string
   updated_at: string
 }
