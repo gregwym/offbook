@@ -14,11 +14,12 @@ for executable in git node go pnpm docker; do
   fi
 done
 echo "Tool versions: node=$(node --version) go=$(go version) pnpm=$(pnpm --version)"
-node --test scripts/agent-protocol/qa-verdict.test.mjs
+bash -n scripts/agent-protocol/cloud-preflight.sh scripts/agent-protocol/setup-labels.sh
+bash scripts/agent-protocol/setup-labels.sh --dry-run
 docker compose version
 docker info >/dev/null || { echo "BLOCKED: Docker daemon is not reachable" >&2; exit 2; }
 if [[ "$MODE" == "--quick" ]]; then
-  echo "PASS: static protocol checks and Docker preflight. Run --full in a disposable Cloud checkout."
+  echo "PASS: static workflow checks and Docker preflight. Run --full in a disposable Cloud checkout."
   exit 0
 fi
 if [[ -e .env.qa || -e .env.qa.local ]]; then
