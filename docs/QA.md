@@ -22,6 +22,8 @@ For each sweep:
 
 QA agents may share the same GitHub account as Engineering but must run as **separate sessions** and workspaces. No dedicated bot identity or per-PR attestation is required. **CI-green PRs may merge before batch QA**; this makes `main` an integration branch, never a production release authorization. Existing Pi Prod remains manual.
 
+**Milestone graduation is separate from the batched functional QA result:** only after a full independent desktop/mobile Product Experience audit on the exact candidate SHA, all in-scope journeys score >=3 with browser evidence and no core P2, repeat stability and actual backup restore are verified, may QA post the `offbook-maturity:v1` certificate from [Experience Maturity Gate](product/EXPERIENCE-MATURITY-GATE.md). The Github goal-closure guard reopens #423 if marked done without current complete evidence. Do not ask the owner for line-by-line code review.
+
 ## Worktree And Environment Isolation
 
 QA should not share a working tree, containers, ports, browser profile, or database volume with an active development agent.
