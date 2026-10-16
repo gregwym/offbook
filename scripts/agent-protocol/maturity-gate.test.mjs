@@ -14,7 +14,8 @@ const make = () => ({
 });
 const wrap = report => ({
   mainSha: main,
-  comments: [{ id: 9, body: '<!-- offbook-maturity:v1 ' + JSON.stringify(report) + ' -->' }],
+  trustedActors: 'gregwym',
+  comments: [{ id: 9, user: {login: 'gregwym'}, body: '<!-- offbook-maturity:v1 ' + JSON.stringify(report) + ' -->' }],
 });
 test('complete evidence at exact current SHA passes', () => assert.equal(checkMaturity(wrap(make())).ok, true));
 test('no evidence fails', () => assert.equal(checkMaturity({ mainSha: main, comments: [] }).ok, false));
@@ -36,3 +37,8 @@ test('example.com placeholder is not valid evidence', () => {
   const r=make(); r.qa_run_url='https://example.com/fake'; assert.equal(checkMaturity(wrap(r)).ok,false);
 });
 test('non-MATURE result cannot pass', () => {const r=make();r.result='BLOCKED';assert.equal(checkMaturity(wrap(r)).ok,false)});
+
+test('public issue commenter cannot forge final maturity', () => {
+  const r = wrap(make()); r.comments[0].user.login = 'untrusted-public-commenter';
+  assert.equal(checkMaturity(r).ok, false);
+});
