@@ -97,7 +97,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	verdictHandler := handler.NewAICategorizationVerdictHandler(verdictSvc)
 
 	dashboardRepo := repository.NewDashboardRepository(gormDB)
-	dashboardSvc := service.NewDashboardService(dashboardRepo, transactionRepo, userRepo, valuationSvc)
+	dashboardSvc := service.NewDashboardService(dashboardRepo, transactionRepo, userRepo, valuationSvc).WithAssetRepo(assetRepo)
 
 	// Price refresh (ADR-0014): user-initiated, providers write into the
 	// prices time series the valuation layer already reads. CoinGecko

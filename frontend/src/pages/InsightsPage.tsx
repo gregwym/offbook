@@ -330,11 +330,57 @@ function NetWorthBand({
                   ◌ marked months include assets without prices — those totals are partial.
                 </div>
               )}
+              <KindBreakdown trend={trend} />
             </>
           )}
         </div>
       </div>
     </section>
+  )
+}
+
+// Asset-class drill-in (#374): first vs latest month-end value per kind, so
+// "what drove the change" is answerable without leaving Insights. Personal
+// scope only — household points carry no by_kind.
+function KindBreakdown({ trend }: { trend: InsightsData['net_worth_trend'] }) {
+  const first = trend[0]
+  const last = trend[trend.length - 1]
+  if (!last?.by_kind?.length) return null
+  const startOf = new Map((first?.by_kind ?? []).map((k) => [k.kind, k.value]))
+  return (
+    <details className="mt-2 text-xs">
+      <summary className="cursor-pointer font-medium text-indigo-600 hover:text-indigo-800">
+        By asset class
+      </summary>
+      <table className="mt-1 w-full">
+        <caption className="sr-only">Net worth by asset class, start vs latest month-end</caption>
+        <thead>
+          <tr className="text-left text-gray-500">
+            <th scope="col" className="py-1 font-medium">Class</th>
+            <th scope="col" className="py-1 text-right font-medium">{first.date.slice(0, 7)}</th>
+            <th scope="col" className="py-1 text-right font-medium">{last.date.slice(0, 7)}</th>
+            <th scope="col" className="py-1 text-right font-medium">Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          {last.by_kind.map((k) => {
+            const before = startOf.get(k.kind) ?? '0'
+            const delta = (num(k.value) - num(before)).toFixed(2)
+            return (
+              <tr key={k.kind} className="border-t border-gray-100">
+                <th scope="row" className="py-1 text-left font-normal capitalize text-gray-700">
+                  {k.kind}
+                  {!k.complete && <PartialBadge title="Some holdings of this class have no price — partial." />}
+                </th>
+                <td className="py-1 text-right"><AmountDisplay amount={before} /></td>
+                <td className="py-1 text-right"><AmountDisplay amount={k.value} /></td>
+                <td className="py-1 text-right"><AmountDisplay amount={delta} /></td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </details>
   )
 }
 

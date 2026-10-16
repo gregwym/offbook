@@ -52,3 +52,36 @@ describe('InsightsPage net-worth range selector', () => {
     expect(screen.getByRole('button', { name: '1Y' })).toHaveAttribute('aria-pressed', 'true')
   })
 })
+
+describe('InsightsPage net-worth asset-class drill-in', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('shows start vs latest value per asset class when by_kind is present', async () => {
+    server.use(
+      http.get('*/dashboard/net-worth', () =>
+        HttpResponse.json({
+          data: [
+            { date: '2026-03-31', total: '1000', complete: true, by_kind: [{ kind: 'fiat', value: '1000', complete: true }] },
+            {
+              date: '2026-05-31',
+              total: '1650',
+              complete: true,
+              by_kind: [
+                { kind: 'equity', value: '150', complete: true },
+                { kind: 'fiat', value: '1500', complete: false },
+              ],
+            },
+          ],
+          total: 2,
+        }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    fireEvent.click(await screen.findByText('By asset class'))
+    const row = screen.getByRole('rowheader', { name: /equity/i }).closest('tr') as HTMLElement
+    expect(row).toHaveTextContent('150.00')
+    expect(screen.getByRole('rowheader', { name: /fiat/i }).closest('tr')).toHaveTextContent('500.00')
+  })
+})

@@ -85,15 +85,33 @@ type NetWorthPoint struct {
 	Date     string `json:"date"`
 	Total    string `json:"total"`
 	Complete bool   `json:"complete"`
+	// ByKind is the same month-end value split by asset kind (#374 drill-in).
+	// Present only when an asset repo is wired; the kind values sum to Total.
+	ByKind []NetWorthKindValue `json:"by_kind,omitempty"`
+}
+
+// NetWorthKindValue is one asset-kind slice of a NetWorthPoint. Complete is
+// false when a position of this kind had no usable price at that date.
+type NetWorthKindValue struct {
+	Kind     string `json:"kind"`
+	Value    string `json:"value"`
+	Complete bool   `json:"complete"`
 }
 
 // DashboardService composes the summary from the dashboard repo.
 type DashboardService struct {
-	repo  repository.DashboardRepository
-	txns  repository.TransactionRepository
-	users repository.UserRepository
-	val   *valuation.Service
-	now   func() time.Time // injected so tests can fix the clock
+	repo   repository.DashboardRepository
+	txns   repository.TransactionRepository
+	users  repository.UserRepository
+	val    *valuation.Service
+	assets repository.AssetRepository // optional; enables NetWorth by_kind
+	now    func() time.Time           // injected so tests can fix the clock
+}
+
+// WithAssetRepo enables the per-asset-kind split on NetWorth points.
+func (s *DashboardService) WithAssetRepo(a repository.AssetRepository) *DashboardService {
+	s.assets = a
+	return s
 }
 
 func NewDashboardService(
@@ -226,9 +244,42 @@ func (s *DashboardService) NetWorth(ctx context.Context, userID int64, months in
 	asOfs := valuation.MonthEndGrid(s.now(), months)
 	// Any-age prices are acceptable for a historical trend; the freshness
 	// gate exists to flag a stale *current* price, not to blank out history.
-	series, err := s.val.WithStaleWindow(0).Series(ctx, asOfs, user.PrimaryCurrencyAssetID,
+	val := s.val.WithStaleWindow(0)
+	kindOf := map[int64]string{}
+	// byKind[asOf] collects the per-kind valuations for the drill-in.
+	byKind := map[time.Time][]NetWorthKindValue{}
+	series, err := val.Series(ctx, asOfs, user.PrimaryCurrencyAssetID,
 		func(ctx context.Context, asOf time.Time) ([]model.Position, error) {
-			return s.txns.FoldByUserAsOf(ctx, userID, asOf)
+			positions, err := s.txns.FoldByUserAsOf(ctx, userID, asOf)
+			if err != nil || s.assets == nil {
+				return positions, err
+			}
+			groups := map[string][]model.Position{}
+			var kinds []string
+			for _, p := range positions {
+				k, ok := kindOf[p.AssetID]
+				if !ok {
+					a, err := s.assets.GetByID(ctx, p.AssetID)
+					if err != nil {
+						return nil, err
+					}
+					k = a.Kind
+					kindOf[p.AssetID] = k
+				}
+				if _, seen := groups[k]; !seen {
+					kinds = append(kinds, k)
+				}
+				groups[k] = append(groups[k], p)
+			}
+			sort.Strings(kinds)
+			for _, k := range kinds {
+				v, err := val.ValuePositions(ctx, groups[k], asOf, user.PrimaryCurrencyAssetID)
+				if err != nil {
+					return nil, err
+				}
+				byKind[asOf] = append(byKind[asOf], NetWorthKindValue{Kind: k, Value: v.Value.String(), Complete: v.Complete()})
+			}
+			return positions, nil
 		})
 	if err != nil {
 		return nil, err
@@ -240,6 +291,7 @@ func (s *DashboardService) NetWorth(ctx context.Context, userID int64, months in
 			Date:     p.AsOf.Format("2006-01-02"),
 			Total:    p.Value.String(),
 			Complete: p.Complete(),
+			ByKind:   byKind[p.AsOf],
 		})
 	}
 	return out, nil
