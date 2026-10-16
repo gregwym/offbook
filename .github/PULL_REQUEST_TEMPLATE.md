@@ -14,11 +14,10 @@
 - [ ] Required repository CI checks passed
 - [ ] Automated unit/integration tests updated as appropriate
 - [ ] Relevant UI/E2E workflow acceptance checked (or documented why not)
-- [ ] Exact HEAD SHA identified for independent QA
+- [ ] Confirmed the PR has no known P0/P1 regression in the changed area
 
-**Independent QA:** Not requested / BLOCKED / FAIL / PASS  
-**QA evidence link + SHA:**  
-<!-- A checkmark is not a substitute for independent QA in a separate session. New commits invalidate old QA PASS. -->
+**QA batch / requested targeted QA:** (optional; integrated `main` is audited separately)  
+<!-- Independent AI QA is batched and is NOT a per-PR merge prerequisite. Existing deterministic CI remains mandatory. -->
 
 ## Schema / Release Risk
 <!-- Migration expand/migrate/contract plan, backup or rollback notes, or "not applicable". -->
@@ -26,4 +25,4 @@
 - [ ] This PR does **not** automatically authorize deployment to the Pi's production instance
 
 ## Review Gate
-<!-- For financial arithmetic, auth/PII, migrations, production sync or release automation: owner review is mandatory until stronger gates are formally adopted. -->
+<!-- Ordinary code changes, including tested financial logic and backward-compatible migrations, may auto-merge after required CI; owner approval is only for live production actions, paid credentials/services, destructive/irreversible operations, or explicit risk decisions. -->
