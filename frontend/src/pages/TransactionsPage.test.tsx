@@ -120,6 +120,14 @@ describe('TransactionsPage review inbox (#424)', () => {
     expect(reviewBodies[1]).toEqual({ ids: [1, 2, 3], reviewed: false })
   })
 
+  it('restores the Needs review inbox from the URL after a reload', async () => {
+    installReviewApi()
+    renderPage(<TransactionsPage />, '/transactions?review=1')
+    await screen.findByText('3 to review')
+    expect(screen.getByRole('button', { name: /needs review/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByText('MERCHANT 4')).not.toBeInTheDocument()
+  })
+
   it('reviews a single row without touching its category', async () => {
     const { reviewBodies } = installReviewApi()
     renderPage(<TransactionsPage />)

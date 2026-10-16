@@ -18,8 +18,8 @@ import { SCOPE_PERSONAL } from '../types/scope'
 // renderPage mounts a page component the way AppShell would — inside a
 // router (several pages use <Link>/useNavigate) — without pulling in the
 // full app shell/sidebar.
-export function renderPage(ui: ReactElement) {
-  return render(<MemoryRouter>{ui}</MemoryRouter>)
+export function renderPage(ui: ReactElement, initialEntry = '/') {
+  return render(<MemoryRouter initialEntries={[initialEntry]}>{ui}</MemoryRouter>)
 }
 
 // resetStores restores every zustand store's data fields to its initial
