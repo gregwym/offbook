@@ -452,11 +452,19 @@ function PreviewSummary({ result, currency }: { result: ImportResult; currency?:
 // describeEffect turns a reconcile effect into plain language: what the commit
 // will write to the account ledger (never a trade — adjustments are suspense
 // entries to explain, ADR-0017).
-function describeEffect(effect: ReconcileEffect): string {
+// money=true renders the adjustment as an amount in the account currency (the
+// closing balance); otherwise it is a share/unit quantity delta (a position).
+function describeEffect(effect: ReconcileEffect, money?: { currency?: string }): ReactNode {
   if (Number(effect.adjustment) === 0) return 'Already matches your ledger — nothing to write'
-  const sign = Number(effect.adjustment) > 0 ? '+' : ''
   const label = effect.kind === 'opening_balance' ? 'Opening balance' : 'Adjustment'
-  return `${label} ${sign}${effect.adjustment}`
+  if (money) {
+    return (
+      <>
+        {label} <AmountDisplay amount={effect.adjustment} currency={money.currency} signed />
+      </>
+    )
+  }
+  return `${label} ${Number(effect.adjustment) > 0 ? '+' : ''}${effect.adjustment}`
 }
 
 // StatementHoldings previews the brokerage positions and closing balance the
@@ -472,7 +480,7 @@ function StatementHoldings({ result, currency }: { result: ImportResult; currenc
         <p className="text-sm text-gray-700">
           Closing balance <AmountDisplay amount={balance.reported} currency={currency} signed /> as of{' '}
           <DateDisplay value={balance.as_of} /> —{' '}
-          <span className="text-gray-500">{describeEffect(balance.effect)}</span>
+          <span className="text-gray-500">{describeEffect(balance.effect, { currency })}</span>
         </p>
       )}
       {positions.length > 0 && (
