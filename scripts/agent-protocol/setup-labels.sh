@@ -14,7 +14,6 @@ labels=(
   "agent:qa-needed|fbca04|Independent QA needed"
   "agent:qa-failed|d93f0b|Independent QA failed or blocked"
   "agent:qa-passed|0e8a16|Informational QA pass, not a trusted gate"
-  "agent:qa-verdict|5319e7|Nudge to recalculate trusted QA verdict check"
 )
 for entry in "${labels[@]}"; do
   IFS='|' read -r name color description <<< "$entry"
