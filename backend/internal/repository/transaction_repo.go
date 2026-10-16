@@ -116,6 +116,10 @@ type TransactionRepository interface {
 	// independent of any observation link (robust even for legacy rows
 	// written before caused_by_observation_id existed).
 	FoldQuantityBefore(ctx context.Context, userID, accountID, assetID int64, beforeDate time.Time, beforeID int64) (decimal.Decimal, error)
+	// ReplaceSplits atomically replaces the category splits of one owned
+	// transaction (#438). An empty slice clears them. Returns ErrNotFound when
+	// the transaction is not the user's / is deleted.
+	ReplaceSplits(ctx context.Context, userID, txnID int64, splits []model.TransactionSplit) error
 	// SetReviewed sets (reviewedAt non-nil) or clears (nil) reviewed_at on the
 	// given rows, scoped to the user, and returns the number of rows changed.
 	// Ids belonging to other users / deleted rows are silently not matched.
@@ -242,7 +246,57 @@ func (r *transactionRepo) GetByID(ctx context.Context, userID, id int64) (*model
 		}
 		return nil, err
 	}
-	return &t, nil
+	rows := []model.Transaction{t}
+	if err := r.attachSplits(ctx, rows); err != nil {
+		return nil, err
+	}
+	return &rows[0], nil
+}
+
+// attachSplits fills Splits on each row with one query (#438).
+func (r *transactionRepo) attachSplits(ctx context.Context, rows []model.Transaction) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(rows))
+	idx := make(map[int64]int, len(rows))
+	for i := range rows {
+		ids[i] = rows[i].ID
+		idx[rows[i].ID] = i
+	}
+	var splits []model.TransactionSplit
+	if err := r.db.WithContext(ctx).Where("transaction_id IN ?", ids).Order("id ASC").Find(&splits).Error; err != nil {
+		return err
+	}
+	for _, sp := range splits {
+		i := idx[sp.TransactionID]
+		rows[i].Splits = append(rows[i].Splits, sp)
+	}
+	return nil
+}
+
+func (r *transactionRepo) ReplaceSplits(ctx context.Context, userID, txnID int64, splits []model.TransactionSplit) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var n int64
+		if err := tx.Model(&model.Transaction{}).Where("user_id = ? AND id = ?", userID, txnID).Count(&n).Error; err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		if err := tx.Where("transaction_id = ? AND user_id = ?", txnID, userID).Delete(&model.TransactionSplit{}).Error; err != nil {
+			return err
+		}
+		if len(splits) == 0 {
+			return nil
+		}
+		for i := range splits {
+			splits[i].ID = 0
+			splits[i].TransactionID = txnID
+			splits[i].UserID = userID
+		}
+		return tx.Create(&splits).Error
+	})
 }
 
 func (r *transactionRepo) List(ctx context.Context, userID int64, f TransactionFilter) ([]model.Transaction, int64, error) {
@@ -297,6 +351,9 @@ func (r *transactionRepo) List(ctx context.Context, userID int64, f TransactionF
 		Limit(limit).
 		Offset(f.Offset).
 		Find(&out).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := r.attachSplits(ctx, out); err != nil {
 		return nil, 0, err
 	}
 	return out, total, nil

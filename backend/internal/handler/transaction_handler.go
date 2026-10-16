@@ -51,6 +51,8 @@ func (h *TransactionHandler) Register(g *gin.RouterGroup) {
 	g.DELETE("/transactions/:id", h.Delete)
 	// Bulk review state (#424).
 	g.POST("/transactions/review", h.SetReviewed)
+	// Category splits (#438): replace-all; empty array clears.
+	g.PUT("/transactions/:id/splits", h.ReplaceSplits)
 	// CSV statement import is account-scoped (#330): the account fixes the
 	// asset and the dedup namespace.
 	g.POST("/accounts/:id/transactions/import", h.Import)
@@ -315,6 +317,38 @@ func (h *TransactionHandler) SetReviewed(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"updated": n}})
 }
 
+type splitLineRequest struct {
+	CategoryID *int64          `json:"category_id"`
+	Amount     decimal.Decimal `json:"amount"`
+	Note       *string         `json:"note"`
+}
+
+// ReplaceSplits handles PUT /transactions/:id/splits (#438).
+// Body: {"splits":[{"category_id":1,"amount":"-30.00"},...]}; [] clears.
+func (h *TransactionHandler) ReplaceSplits(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Splits []splitLineRequest `json:"splits"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Splits == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "splits array is required", "code": "INVALID_REQUEST"})
+		return
+	}
+	in := make([]service.SplitInput, len(req.Splits))
+	for i, l := range req.Splits {
+		in[i] = service.SplitInput{CategoryID: l.CategoryID, Amount: l.Amount, Note: l.Note}
+	}
+	t, err := h.svc.ReplaceSplits(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, in)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": t})
+}
+
 func (h *TransactionHandler) Delete(c *gin.Context) {
 	id, ok := parseID(c)
 	if !ok {
@@ -546,6 +580,8 @@ func (h *TransactionHandler) writeServiceError(c *gin.Context, err error) {
 		errors.Is(err, service.ErrMissingDate),
 		errors.Is(err, service.ErrInvalidCurrency):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_TRANSACTION"})
+	case errors.Is(err, service.ErrInvalidSplits), errors.Is(err, service.ErrSplitAmountLocked):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_SPLITS"})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
 	}

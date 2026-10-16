@@ -62,6 +62,15 @@ export async function setTransactionsReviewed(ids: number[], reviewed: boolean):
   return res.data.data.updated
 }
 
+export type SplitLineInput = { category_id: number | null; amount: string; note?: string }
+
+// replaceTransactionSplits sets (or, with [], clears) a transaction's category
+// splits (#438). Amounts carry the parent's sign and must sum to its amount.
+export async function replaceTransactionSplits(id: number, splits: SplitLineInput[]): Promise<Transaction> {
+  const res = await apiClient.put<ApiItem<Transaction>>(`/transactions/${id}/splits`, { splits })
+  return res.data.data
+}
+
 export async function deleteTransaction(id: number): Promise<void> {
   await apiClient.delete(`/transactions/${id}`)
 }

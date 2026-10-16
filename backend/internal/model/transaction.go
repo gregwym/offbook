@@ -64,6 +64,10 @@ type Transaction struct {
 	UpdatedAt  time.Time      `json:"updated_at"`
 	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
 
+	// Splits is populated by the repository on reads (#438); never persisted
+	// through this struct. Empty = unsplit.
+	Splits []TransactionSplit `gorm:"-" json:"splits,omitempty"`
+
 	Account      *Account     `gorm:"foreignKey:AccountID" json:"-"`
 	Asset        *Asset       `gorm:"foreignKey:AssetID" json:"-"`
 	Category     *Category    `gorm:"foreignKey:CategoryID" json:"-"`

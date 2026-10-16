@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ArrowRightLeft, Check, CheckCheck, ChevronDown, ChevronRight, Eye, Plus, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
+import { ArrowRightLeft, Check, CheckCheck, ChevronDown, ChevronRight, Eye, Plus, Scissors, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { DateDisplay } from '../components/DateDisplay'
 import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
+import { SplitTransactionModal } from '../components/SplitTransactionModal'
 import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
 import { TransferMatchesModal } from '../components/TransferMatchesModal'
 import { listTransactions } from '../api/transactions'
@@ -38,6 +39,7 @@ export function TransactionsPage() {
     apply: applyRules,
   } = useRulesStore()
   const [ruleSeed, setRuleSeed] = useState<RuleFormDefaults | null>(null)
+  const [splitting, setSplitting] = useState<Transaction | null>(null)
   // After a successful rule create from a txn, surface a toast with two
   // actions: jump to /rules, or re-apply to existing transactions.
   const [createdRuleToast, setCreatedRuleToast] = useState<string | null>(null)
@@ -526,6 +528,7 @@ export function TransactionsPage() {
                   onToggleReviewed={() => void reviewRows([t.id], t.reviewed_at == null)}
                   onCategoryChange={(catID) => { void setCategory(t.id, catID) }}
                   onCreateRule={() => openRuleFromTxn(t)}
+                  onSplit={() => setSplitting(t)}
                   onDelete={async () => {
                     if (window.confirm('Delete this transaction?')) {
                       await remove(t.id)
@@ -590,6 +593,16 @@ export function TransactionsPage() {
           accounts={accounts}
           onClose={() => setImporting(false)}
           onImported={() => { void fetch(); refreshTransferCandidates() }}
+        />
+      )}
+
+      {splitting && (
+        <SplitTransactionModal
+          tx={splitting}
+          currency={assetByID.get(splitting.asset_id)?.symbol ?? accountByID.get(splitting.account_id)?.currency ?? 'USD'}
+          categories={categories}
+          onClose={() => setSplitting(null)}
+          onSaved={() => { void fetch() }}
         />
       )}
 
@@ -690,6 +703,8 @@ type RowProps = {
   currentCategory?: Category
   onCategoryChange: (catID: number | null) => void
   onCreateRule: () => void
+  // Opens the split modal (#438); absent for rows that can't be split.
+  onSplit?: () => void
   onDelete: () => Promise<void>
   // Review state (#424). Absent for rows that don't take part in review
   // (legs of an expanded paired trade).
@@ -704,7 +719,7 @@ type RowProps = {
   indented?: boolean
 }
 
-function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onDelete, onUnlinkTransfer, indented, selected, onSelect, onToggleReviewed }: RowProps) {
+function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onSplit, onDelete, onUnlinkTransfer, indented, selected, onSelect, onToggleReviewed }: RowProps) {
   // Per ADR-0013, the unit on a transaction is asset_id. Display currency
   // = asset.symbol when available; fall back to the parent account's
   // currency for older rows that haven't been backfilled.
@@ -716,7 +731,18 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
   const reviewable = onToggleReviewed != null && tx.kind === 'flow'
   const unreviewed = reviewable && tx.reviewed_at == null
   const label = tx.description ?? tx.merchant_name ?? 'transaction'
-  const categorySelect = (
+  const splitCount = tx.splits?.length ?? 0
+  const splittable = onSplit != null && tx.kind === 'flow' && !tx.is_transfer
+  const categorySelect = splitCount > 0 ? (
+    <button
+      type="button"
+      onClick={onSplit}
+      aria-label={`Edit split for ${label}`}
+      className="min-h-9 rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-sm text-indigo-800 hover:bg-indigo-100"
+    >
+      Split · {splitCount} categories
+    </button>
+  ) : (
     <select
       aria-label={`Category for ${label}`}
       value={currentCategory ? currentCategory.id : ''}
@@ -782,6 +808,11 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             <button type="button" onClick={onCreateRule} className="min-h-9 text-indigo-700 underline">
               Create rule
             </button>
+            {splittable && splitCount === 0 && (
+              <button type="button" onClick={onSplit} className="min-h-9 text-indigo-700 underline">
+                Split
+              </button>
+            )}
             <button type="button" onClick={onDelete} className="min-h-9 text-red-700 underline">
               Delete
             </button>
@@ -808,6 +839,17 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             title={unreviewed ? 'Mark reviewed' : 'Reviewed — click to undo'}
           >
             <Check size={16} />
+          </button>
+        )}
+        {splittable && (
+          <button
+            type="button"
+            onClick={onSplit}
+            className="mr-1 hidden min-h-9 min-w-9 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-indigo-700 md:inline-flex"
+            aria-label={`Split ${label}`}
+            title="Split across categories"
+          >
+            <Scissors size={16} />
           </button>
         )}
         <button

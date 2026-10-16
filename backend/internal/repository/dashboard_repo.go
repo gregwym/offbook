@@ -201,7 +201,7 @@ func (r *dashboardRepo) Summarize(ctx context.Context, userID int64, from, to ti
 			t.category_id                     AS category_id,
 			c.name                            AS name,
 			COALESCE(SUM(t.amount), 0)::text  AS amount
-		FROM transactions t
+		FROM spend_lines t
 		LEFT JOIN categories c ON c.id = t.category_id
 		WHERE t.deleted_at IS NULL
 		  AND t.user_id = ?
@@ -246,7 +246,7 @@ func (r *dashboardRepo) SpendByCategory(ctx context.Context, userID int64, from,
 			c.name                                              AS name,
 			c.color                                             AS color,
 			COALESCE(SUM(-t.amount), 0)::text                    AS amount
-		FROM transactions t
+		FROM spend_lines t
 		LEFT JOIN categories c ON c.id = t.category_id
 		WHERE t.deleted_at IS NULL
 		  AND t.user_id = ?
@@ -444,7 +444,7 @@ func (r *dashboardRepo) CategoryTrend(ctx context.Context, userID int64, now tim
 			c.name                                             AS name,
 			date_trunc('month', t.transaction_date)::timestamptz AS month,
 			COALESCE(SUM(-t.amount), 0)::text                  AS amount
-		FROM transactions t
+		FROM spend_lines t
 		LEFT JOIN categories c ON c.id = t.category_id
 		WHERE t.deleted_at IS NULL
 		  AND t.user_id = ?

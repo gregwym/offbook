@@ -23,3 +23,14 @@ export function subDecimal(a: string, b: string): string {
   const frac = digits.slice(-SCALE).replace(/0+$/, '')
   return `${neg ? '-' : ''}${int}${frac ? '.' + frac : ''}`
 }
+
+// addDecimal returns a + b as a plain decimal string.
+export function addDecimal(a: string, b: string): string {
+  return subDecimal(a, subDecimal('0', b))
+}
+
+// absDecimal returns |a| as a plain decimal string.
+export function absDecimal(a: string): string {
+  const t = (a ?? '').trim()
+  return t.startsWith('-') ? subDecimal('0', t) : subDecimal(t, '0')
+}
