@@ -39,7 +39,7 @@ import { AmountDisplay } from '../components/AmountDisplay'
 import { FALLBACK_PIE_COLORS } from '../components/chartColors'
 import { PartialBadge } from '../components/PartialBadge'
 import { SetPriceModal } from '../components/SetPriceModal'
-import { useScopedInsights, type InsightsData } from '../hooks/useScopedInsights'
+import { TREND_RANGES, useScopedInsights, type InsightsData } from '../hooks/useScopedInsights'
 import { useScopeStore } from '../store/scopeStore'
 import { SCOPE_HOUSEHOLD } from '../types/scope'
 
@@ -99,7 +99,14 @@ export function InsightsPage() {
       )}
 
       {result.state === 'ready' && (
-        <InsightsBody data={result.data} onSetPrice={() => setSettingPrice(true)} />
+        <InsightsBody
+          data={result.data}
+          onSetPrice={() => setSettingPrice(true)}
+          trendMonths={result.trendMonths}
+          trendLoading={result.trendLoading}
+          trendError={result.trendError}
+          onTrendMonths={result.setTrendMonths}
+        />
       )}
 
       {settingPrice && (
@@ -109,7 +116,11 @@ export function InsightsPage() {
   )
 }
 
-function InsightsBody({ data, onSetPrice }: { data: InsightsData; onSetPrice: () => void }) {
+function InsightsBody({
+  data,
+  onSetPrice,
+  ...range
+}: { data: InsightsData; onSetPrice: () => void } & TrendRangeProps) {
   // Personal fresh-signup state: no accounts at all → single primary CTA
   // per v6 §02 A2, instead of five empty bands. Household scope keeps its
   // existing "share an account" empty state on the AccountsBand.
@@ -119,7 +130,7 @@ function InsightsBody({ data, onSetPrice }: { data: InsightsData; onSetPrice: ()
 
   return (
     <>
-      <NetWorthBand data={data} onSetPrice={onSetPrice} />
+      <NetWorthBand data={data} onSetPrice={onSetPrice} {...range} />
       <AllocationBand data={data} onSetPrice={onSetPrice} />
       <SpendingBand data={data} />
       <BudgetsGoalsBand data={data} />
@@ -195,7 +206,21 @@ function FreshSignupEmpty() {
 }
 
 // ───── Band 1: net worth headline + trend ─────
-function NetWorthBand({ data, onSetPrice }: { data: InsightsData; onSetPrice: () => void }) {
+type TrendRangeProps = {
+  trendMonths: number
+  trendLoading: boolean
+  trendError: boolean
+  onTrendMonths: (months: number) => void
+}
+
+function NetWorthBand({
+  data,
+  onSetPrice,
+  trendMonths,
+  trendLoading,
+  trendError,
+  onTrendMonths,
+}: { data: InsightsData; onSetPrice: () => void } & TrendRangeProps) {
   const trend = data.net_worth_trend
   const hasPartialMonths = trend.some((p) => !p.complete)
   return (
@@ -226,6 +251,31 @@ function NetWorthBand({ data, onSetPrice }: { data: InsightsData; onSetPrice: ()
           </div>
         </div>
         <div className="md:col-span-2">
+          <div className="mb-1 flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
+            {trendLoading && <span className="text-[11px] text-gray-400">Loading…</span>}
+            {trendError && (
+              <span role="alert" className="text-[11px] text-red-600">
+                Couldn’t load that range — still showing the previous one.
+              </span>
+            )}
+            <div role="group" aria-label="Net worth date range" className="inline-flex rounded-md border border-gray-200 p-0.5">
+              {TREND_RANGES.map((r) => (
+                <button
+                  key={r.months}
+                  type="button"
+                  aria-pressed={trendMonths === r.months}
+                  onClick={() => onTrendMonths(r.months)}
+                  className={`min-h-8 min-w-9 rounded px-2 text-xs font-medium ${
+                    trendMonths === r.months
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          </div>
           {trend.length === 0 ? (
             <div className="flex h-full items-center justify-center py-6 text-sm text-gray-400">
               No trend data yet — net worth will appear here as snapshots accumulate.

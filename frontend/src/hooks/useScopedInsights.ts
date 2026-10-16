@@ -6,7 +6,7 @@
 // aggregator is the only path for cross-user reads; this hook must never
 // call household repos directly. Personal scope hits the existing per-user
 // dashboard/portfolio/budget/goal/account endpoints.
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { listAccounts } from '../api/accounts'
 import { getBudgetSpend, listBudgets } from '../api/budgets'
 import { listCategories } from '../api/categories'
@@ -170,11 +170,69 @@ type Result =
 
 // reload refetches the active scope's data in place (used after actions
 // that change what the bands should show, e.g. a price refresh).
-export function useScopedInsights(): Result & { reload: () => void } {
+export const TREND_RANGES = [
+  { months: 3, label: '3M' },
+  { months: 6, label: '6M' },
+  { months: 12, label: '1Y' },
+  { months: 36, label: '3Y' },
+] as const
+
+type TrendControls = {
+  trendMonths: number
+  trendLoading: boolean
+  trendError: boolean
+  setTrendMonths: (months: number) => void
+}
+
+export function useScopedInsights(): Result & { reload: () => void } & TrendControls {
   const { active, hydrated, householdId } = useScopeStore()
   const [result, setResult] = useState<Result>({ state: 'loading' })
   const [nonce, setNonce] = useState(0)
   const reload = useCallback(() => setNonce((n) => n + 1), [])
+  const [trendMonths, setTrendMonthsState] = useState(12)
+  const [trendLoading, setTrendLoading] = useState(false)
+  const [trendError, setTrendError] = useState(false)
+  // Read by the full loaders so a reload keeps the user's chosen range;
+  // changing the range refetches only the trend, not the whole page.
+  const monthsRef = useRef(12)
+  const trendSeq = useRef(0)
+
+  const setTrendMonths = useCallback(
+    (months: number) => {
+      const previous = monthsRef.current
+      monthsRef.current = months
+      setTrendMonthsState(months)
+      setTrendLoading(true)
+      setTrendError(false)
+      const seq = ++trendSeq.current
+      const fetchTrend =
+        active === SCOPE_HOUSEHOLD && householdId != null
+          ? getHouseholdNetWorthTrend(months).then((t) =>
+              t.map((p) => ({ date: p.date.slice(0, 10), value: p.value, complete: p.complete })),
+            )
+          : getNetWorth(months).then((t) =>
+              t.map((p) => ({ date: p.date.slice(0, 10), value: p.total, complete: p.complete })),
+            )
+      fetchTrend
+        .then((trend) => {
+          if (seq !== trendSeq.current) return
+          setResult((r) =>
+            r.state === 'ready' ? { state: 'ready', data: { ...r.data, net_worth_trend: trend } } : r,
+          )
+        })
+        .catch(() => {
+          if (seq !== trendSeq.current) return
+          // Selection snaps back so the pressed button matches the chart.
+          monthsRef.current = previous
+          setTrendMonthsState(previous)
+          setTrendError(true)
+        })
+        .finally(() => {
+          if (seq === trendSeq.current) setTrendLoading(false)
+        })
+    },
+    [active, householdId],
+  )
 
   useEffect(() => {
     if (!hydrated) return
@@ -184,8 +242,8 @@ export function useScopedInsights(): Result & { reload: () => void } {
       try {
         const data =
           active === SCOPE_HOUSEHOLD && householdId != null
-            ? await loadHousehold()
-            : await loadPersonal()
+            ? await loadHousehold(monthsRef.current)
+            : await loadPersonal(monthsRef.current)
         if (!cancelled) setResult({ state: 'ready', data })
       } catch (err) {
         if (!cancelled) setResult({ state: 'error', error: errMsg(err) })
@@ -197,14 +255,14 @@ export function useScopedInsights(): Result & { reload: () => void } {
     }
   }, [active, hydrated, householdId, nonce])
 
-  return { ...result, reload }
+  return { ...result, reload, trendMonths, trendLoading, trendError, setTrendMonths }
 }
 
-async function loadPersonal(): Promise<InsightsData> {
+async function loadPersonal(trendMonths = 12): Promise<InsightsData> {
   const [summary, trend, allocation, budgets, goals, accountsResp, categories] =
     await Promise.all([
       getDashboardSummary('current_month'),
-      getNetWorth(12),
+      getNetWorth(trendMonths),
       getAllocation(),
       listBudgets(),
       listGoals(),
@@ -287,11 +345,11 @@ async function loadPersonal(): Promise<InsightsData> {
   }
 }
 
-async function loadHousehold(): Promise<InsightsData> {
+async function loadHousehold(trendMonths = 12): Promise<InsightsData> {
   const [dashboard, trend, allocation, accounts, budgetPace, goalProgress] =
     await Promise.all([
       getHouseholdDashboard('current_month'),
-      getHouseholdNetWorthTrend(12),
+      getHouseholdNetWorthTrend(trendMonths),
       getHouseholdAllocation(),
       getHouseholdAccountSummaries(),
       getBudgetPace('current_month'),
