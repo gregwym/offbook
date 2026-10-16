@@ -29,7 +29,7 @@ Disable the legacy local LaunchAgent via `command make delivery-uninstall` on it
 QA may run per PR and periodically against `main` on synthetic data. Discussion #199 remains the regression ledger. Never QA-certify code in the implementation session.
 
 ## Release isolation
-`main` is integration, not production. Dev/Staging may follow `main` with disposable data. Production on the Pi follows an **explicitly promoted stable branch** (for example `stable`) or a deliberately pinned commit. `FLAVOR=prod` auto-deploy fails closed unless explicitly configured with a non-`main` deploy branch. A merged PR does not automatically mean a financial-data production rollout.
+`main` is integration, not production. Dev/Staging may follow `main` with disposable data. The Pi has separate dev and production deployments. **Owner reports that only dev currently auto-deploys; prod is deployed manually. Preserve this arrangement.** Repository capability to install a prod timer is not proof it is enabled on the Pi; inspect actual systemd state before changing any host configuration. A merged PR does not automatically mean a production rollout.
 
 Protect the stable branch, verify restore from an off-host backup, and require owner-authorized promotion. Cloud agents get no production DB, Tailscale or live Plaid secrets. Owner handles credentials, Plaid approval and real-account linking.
 
