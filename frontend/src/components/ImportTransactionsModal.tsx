@@ -582,9 +582,12 @@ function ImportHistoryList({
             </div>
             {e.reconciled === true && <p className="mt-0.5 text-xs text-emerald-700">✓ Matched statement total</p>}
             {e.reconciled === false && (
-              <p className="mt-0.5 flex items-center gap-1 text-xs font-medium text-amber-700">
-                <AlertTriangle size={12} /> Didn’t match statement total
-                {e.difference ? <> — off by <AmountDisplay amount={e.difference} currency={currency} /></> : null}
+              <p className="mt-0.5 flex items-start gap-1 text-xs font-medium text-amber-700">
+                <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                <span>
+                  Didn’t match statement total
+                  {e.difference ? <> — off by <AmountDisplay amount={e.difference} currency={currency} /></> : null}
+                </span>
               </p>
             )}
           </li>
