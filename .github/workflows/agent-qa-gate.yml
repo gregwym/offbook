@@ -45,11 +45,15 @@ jobs:
             ]);
             // Docs and agent prompt templates can change without a dedicated
             // QA verdict; any executable source/workflow/config requires one.
-            const docsOnly = files.length > 0 && files.every(({ filename }) =>
+            const allowDocsPath = filename =>
               filename.startsWith('docs/') ||
               filename.startsWith('infra/cloud-routines/') ||
               filename.startsWith('.github/ISSUE_TEMPLATE/') ||
-              filename === '.github/PULL_REQUEST_TEMPLATE.md'
+              filename === '.github/PULL_REQUEST_TEMPLATE.md';
+            // A rename FROM executable source TO docs is not a docs-only PR.
+            const docsOnly = files.length > 0 && files.every(file =>
+              allowDocsPath(file.filename) &&
+              (!file.previous_filename || allowDocsPath(file.previous_filename))
             );
             const input = {
               headSha: pr.head.sha,
