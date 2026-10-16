@@ -25,30 +25,26 @@ When running via Claude's Bash tool, prefix `make` with `command` (`command make
 - **Env vars belong in `.env`, never prepended.** `DATABASE_URL=... go run ...` defeats the allowlist for the same reason. The repo-root `.env` (gitignored; template at `.env.example`) is auto-loaded by `godotenv` (resolved from both `backend/` and the repo root) and by `docker compose`. Keep `.env.example` updated when adding new keys.
 - For port-bound dev servers, always stop *by port* (`make stop` does this) — `go run` spawns a supervisor + child binary, so killing the saved PID isn't sufficient.
 
-## Autonomous Workflow
+## Autonomous Workflow — Engineering-first, batched QA
 
-**Current product direction:** [docs/product/PRODUCT-CONTRACT.md](docs/product/PRODUCT-CONTRACT.md) and [docs/dev/autonomous-product-workflow.md](docs/dev/autonomous-product-workflow.md). The earlier [autonomous-delivery.md](docs/dev/autonomous-delivery.md) is a historical M13–M15 campaign, not the new priority queue.
+The one active milestone is [Daily Driver v1](docs/product/DAILY-DRIVER-V1.md) (Goal [#423](https://github.com/gregwym/offbook/issues/423)). The source of truth is [autonomous-product-workflow.md](docs/dev/autonomous-product-workflow.md) and [agent-communication-protocol.md](docs/dev/agent-communication-protocol.md). Do not default to historical M13–M15 checkboxes.
 
-- Product research verifies Monarch UX/behaviors using legitimate sources and records citations, observation dates and uncertainties. No inference of proprietary internals.
-- Developer delivers one complete user workflow/Issue per iteration on a feature branch, with financial invariant and UI/E2E test evidence.
-- Independent QA validates the **exact PR head SHA**, in another session/environment, using synthetic data; developer tests never constitute QA certification. A changed SHA invalidates earlier QA PASS.
-- Required CI + independent QA PASS gate functional PR merge. Owner review is additionally required for financial arithmetic, auth/PII, migrations, production-sync or release automation until superseded by a separately accepted policy.
-- Low-risk docs/tests-only changes may self-merge after required CI. Never write directly to `main`.
-- Run one autonomous code writer at a time; disable the local LaunchAgent before enabling a Cloud routine. The files in `infra/cloud-routines/` are templates, not registered jobs.
-- Never use real financial data, real bank credentials, or production database access in Cloud/QA.
-
-## Autonomous QA
-
-- PR-triggered and periodic independent QA against synthetic data may run **without manual invocation**; follow [docs/QA.md](docs/QA.md).
-- Use the isolated QA Compose stack and `OFFBOOK_ROLE=qa`. Report PASS/FAIL/BLOCKED with exact commit SHA, reproducible evidence and GitHub Discussion #199 ledger entries.
-- A baseline page smoke test is not proof of correct spending, account values or authorization. QA needs focused financial and user-journey checks.
+- **Prefer implementation over prolonged planning.** Opus 5.5 is the preferred Engineering model when available; no weekly PR/token budget or arbitrarily low shipping cadence. Maintain a small queue of achievable acceptance-backed issues.
+- One Engineering writer at a time; each Issue uses a canonical `agent/issue-N` branch claim, one active PR/branch at a time. Reuse open work; do not duplicate. Cloud and legacy Mac LaunchAgent must not concurrently write.
+- Implement vertical slices including API/UI/regression tests, preserving decimal money, transfers, sync idempotence, reconciliation and PII invariants. For UI work, run desktop/mobile browser user journeys and fix obvious visual, friction, empty/loading/error/recovery and accessibility problems before merge. See [Experience Maturity Gate](docs/product/EXPERIENCE-MATURITY-GATE.md). Use synthetic/Plaid Sandbox data only in Cloud.
+- **Every PR requires green *required CI* at the exact head SHA, and may then be squash-merged to `main` by Engineering without owner code review.** Don't bypass CI or knowingly merge a P0/P1 regression. This includes routine financial-domain code changes and staged, reversible migrations.
+- **AI QA is not a per-PR merge gate.** An independent session performs financial QA **and product-experience/taste critique** on `main` in batches (default twice weekly or about eight merged PRs), records reviewed SHA range and findings on Goal #423, and opens Bug Issues. Fix P0/P1 findings before more unrelated features; reserve final release QA for the exact production candidate.
+- Prioritize P0/P1 **and core-journey P2 UX/polish** defects over unrelated new features. CI-green = merged implementation, never automatically MATURE; only independent final QA may propose closing Goal #423 with current SHA and actual UX evidence.
+- Stop for destructive/irreversible schema/data operations, real-bank/production secret access, paid external services, production rollout, or inability to meet existing protection rules — these need explicit owner authorization for the operation, **not code review**.
+- Github CLI permissions and Cloud environment must be tested before enabling scheduled writers. `infra/cloud-routines/` are prompt templates, not running jobs.
 
 ## Git Discipline
+
 - Auto-commit completed work without asking.
-- **`main` is protected — all changes land via PR.** Never commit directly to `main`; always work on a feature branch (`{type}/{issue-number}-{slug}`) and push when opening/updating the PR.
-- **Conditional self-merge:** low-risk docs/tests-only PRs may self-merge with green CI. Product-functionality PRs require green CI and independent QA PASS for the exact head SHA; financial arithmetic, auth/PII, migrations, production-sync and release-automation PRs additionally require owner review.
-- NEVER `git commit --amend`, `git reset --hard`, or `git push --force` (any variant). No exceptions.
-- Fix mistakes with new commits, not history rewrites.
+- **Protected `main`: work on a feature branch and merge by PR only.** Never push/commit directly to `main`.
+- After required CI succeeds, squash-merge authorized development PRs without a separate QA session or human code review. If branch rules prevent merge, report actual blocker; do not fake success.
+- NEVER `git commit --amend`, `git reset --hard`, or force-push. Fix mistakes with new commits.
+- Dev Pi may auto-update with merged `main`; Prod Pi remains manually deployed. Never automate or access Production.
 
 ## Migration Safety
 The pre-prod "wipe dev DBs and rebuild" era ends at M13 (#358). Once an instance holds real financial data, every schema change must be safe to take without risking that data.

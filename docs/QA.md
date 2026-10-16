@@ -8,14 +8,21 @@ For *new* behavior use `docs/product/PRODUCT-CONTRACT.md`, researched behavior s
 
 Until a deliberate redesign ships, existing household privacy, account ownership, PII access rules, AI data exclusions, ledger accounting, and valuations must continue to pass. Proposed simplified household UX is not yet implemented.
 
-## QA Trigger / Certification
+## Batched Independent QA
 
-- PR-triggered or scheduled **synthetic-only** QA is allowed without owner interaction.
-- Verify the exact PR head commit or a selected `main` delta. A new head commit invalidates a prior QA PASS.
-- Independent QA must use its own checkout, isolated QA DB/stack and separate agent session from the developer.
-- Record PASS, FAIL or BLOCKED, with SHA, scenario coverage, sanitized evidence and residual risk. Missing browser/Docker/GitHub permissions -> BLOCKED, never PASS.
-- Do not connect to Plaid production, real bank accounts, the Pi's live database, or owner secrets.
-- Functional PRs require independent QA plus required CI; high-risk finance/security/migration/release PRs also require owner review.
+**Independent Product Experience / UX Critic assessment is part of periodic QA and mandatory before milestone graduation.** Use [Experience Maturity Gate](product/EXPERIENCE-MATURITY-GATE.md) and [source-backed Monarch behavior matrix](product/MONARCH-BEHAVIOR-MATRIX.md). Developer-run targeted tests and **required GitHub CI** protect every PR. **Independent AI QA runs in batches**, not on each push or PR, to maximize Opus development throughput. The default sweep is twice weekly or after roughly eight merges when scheduling permits, plus a final independent QA of the exact release candidate.
+
+For each sweep:
+
+1. Read [Goal #423](https://github.com/gregwym/offbook/issues/423), [Daily Driver charter](product/DAILY-DRIVER-V1.md) and [agent communication protocol](dev/agent-communication-protocol.md).
+2. Determine the last accepted QA checkpoint from Goal #423 comments (or Discussion #199). Select a **pinned main SHA** and verify the last checkpoint is its ancestor; include all intervening merged PRs.
+3. Run isolated Compose/Playwright/API/DB tests with synthetic personas, plus full real-user first-run/daily-review/monthly-report/recovery journeys. Independently inspect actual desktop/mobile screenshots and traces for navigation, visual hierarchy, language, saved-state feedback, empty/loading/error/retry, accessibility, and performance. Compare Monarch behavior with dated official sources or legitimate UI and score the experience rubric 0–4 with evidence. Combine changed-workflow and baseline money/privacy regressions.
+4. Report functional **PASS/FAIL/BLOCKED** and experience **MATURE/NOT MATURE/BLOCKED** separately for exact `from_sha` → `to_sha`, with per-journey scorecard, screenshots/traces, dated benchmark differences and actionable P0/P1/P2 core UX issues. No fabricated coverage.
+5. If P0/P1 or **P2 core-journey usability/taste issue**, Engineering fixes it before unrelated feature work. The QA agent does not change the author's code.
+
+QA agents may share the same GitHub account as Engineering but must run as **separate sessions** and workspaces. No dedicated bot identity or per-PR attestation is required. **CI-green PRs may merge before batch QA**; this makes `main` an integration branch, never a production release authorization. Existing Pi Prod remains manual.
+
+**Milestone graduation is separate from the batched functional QA result:** only after a full independent desktop/mobile Product Experience audit on the exact candidate SHA, all in-scope journeys score >=3 with browser evidence and no core P2, repeat stability and actual backup restore are verified, may QA post the `offbook-maturity:v1` certificate from [Experience Maturity Gate](product/EXPERIENCE-MATURITY-GATE.md). The Github goal-closure guard reopens #423 if marked done without current complete evidence. Do not ask the owner for line-by-line code review.
 
 ## Worktree And Environment Isolation
 
@@ -34,7 +41,7 @@ git -C ../offbook-qa checkout main
 git -C ../offbook-qa pull --ff-only
 ```
 
-Run QA from the QA worktree. Use a branch or detached commit only when the user explicitly asks to QA that target. Do not switch the developer's active worktree.
+Run QA from the QA worktree. For **automatically triggered PR QA**, check out the exact PR head commit (detached) in a separate worktree/checkout; manually requested PR QA works the same way. For scheduled main regression, use a recorded main SHA. Do not switch or mutate the developer's active worktree. Follow the verdict marker and trusted identity rules in [agent-communication-protocol.md](dev/agent-communication-protocol.md).
 
 QA tooling requires a visible QA-mode signal. The default signal is running from a worktree whose directory name is `offbook-qa` or ends in `-qa`. If a scoped QA run must happen elsewhere, explicitly set:
 
