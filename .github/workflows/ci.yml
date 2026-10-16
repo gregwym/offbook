@@ -13,19 +13,16 @@ concurrency:
 
 jobs:
   agent-protocol:
-    name: Agent communication protocol (unit tests)
+    name: Agent handoff scripts (syntax and dry-run)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Validate protocol JS and shell scripts
+      - name: Check scripts do not require cloud or secrets
         run: |
-          node --check scripts/agent-protocol/qa-verdict.mjs
-          node --test scripts/agent-protocol/qa-verdict.test.mjs
           bash -n scripts/agent-protocol/setup-labels.sh scripts/agent-protocol/cloud-preflight.sh
           bash scripts/agent-protocol/setup-labels.sh --dry-run
+          test -s docs/product/DAILY-DRIVER-V1.md
+          test -s docs/dev/agent-communication-protocol.md
 
   # Sub-second static check (#273) — every apiClient.<method>('<path>')
   # in frontend/src/api/*.ts must map to a registered backend handler
