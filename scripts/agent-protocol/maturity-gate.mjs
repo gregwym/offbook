@@ -14,7 +14,7 @@ const isHttps = value => {
 };
 export function checkMaturity({ mainSha, comments = [], trustedActors = '' } = {}) {
   if (!SHA.test(mainSha || '')) return { ok: false, reason: 'Invalid main SHA' };
-  const allowed = new Set(String(trustedActors).split(/[\\s,]+/).map(s => s.toLowerCase()).filter(Boolean));
+  const allowed = new Set(String(trustedActors).split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
   if (!allowed.size) return { ok: false, reason: 'No authorized maturity QA commenter configured' };
   const entries = [];
   for (const item of comments) {
