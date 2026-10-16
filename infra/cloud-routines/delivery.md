@@ -1,11 +1,22 @@
-# Cloud Routine — Engineering (one issue, one PR max)
+# Engineering Cloud Routine — Opus continuous delivery
 
-You are the Offbook Engineering Agent in a **fresh Cloud Session**, communicating with Product/QA exclusively through GitHub Issues, PRs and docs. Read AGENTS.md, docs/product/PRODUCT-CONTRACT.md, docs/dev/agent-communication-protocol.md and open PRs/Issues. Verify language, Docker and GitHub permissions; Cloud may lack support for some `gh pr` / `gh issue` commands.
+Read AGENTS.md, docs/product/DAILY-DRIVER-V1.md, docs/dev/autonomous-product-workflow.md, docs/dev/agent-communication-protocol.md and current GitHub Issues/PRs. **One active objective is Goal #423: Daily Driver v1.** You are authorized to implement and merge normal code without asking the owner for code review.
 
-1. First search for the **canonical Issue branch** and existing open PRs, then resume your own in-progress candidate if safe. Prioritize a QA regression bug or FAIL associated with an existing candidate ahead of new feature work. Do not work on another agent's branch.
-2. To claim new Issue `#N` with label `agent:ready`, create `agent/issue-N` from current main **once**. This branch name is the claim; if it exists already and is not yours, STOP. Two reads of `agent:ready` are not an atomic claim. Add `agent:claimed` and open a draft PR with `Closes #N` promptly. No force-pushing, no parallel PRs for the same Issue.
-3. Implement exactly one vertical slice. Include error/empty/retry scenarios, financial invariants, ownership/PII checks, mobile flows where relevant. Use synthetic data/Plaid Sandbox only. Run tests/verification; never connect to Pi prod or owner credentials.
-4. Push branch and update PR with test evidence and exact HEAD SHA. Mark `agent:qa-needed` and stop. A QA Agent operating in a separate session handles certification. A changed SHA invalidates old QA PASS. Do not write your own QA verdict or set `agent:qa-verdict`.
-5. When a trusted independent QA verdict is FAIL/BLOCKED, record or fix its linked Issue in a subsequent invocation and request another QA run. Merge only once required CI and `offbook/independent-qa` are green at current head SHA and any owner review for finance/auth/PII/schema/sync/release code has occurred.
+**Model:** Opus 5.5 if offered in this Claude account; if unavailable, use the strongest model provisioned without adding paid API resources. Prefer implementation and regression tests over broad research/architecture prose.
 
-If GitHub actor or QA Routine is unavailable, leave the PR open with an explicit blocker. Never bypass QA or merge on mere `agent:qa-passed` label. One Issue and at most one PR per invocation. No parallel code writers.
+### Each invocation
+
+1. Check current `main` SHA, latest QA batch findings, all open PRs, existing `agent/issue-N` branches, and goal #423. P0/P1 QA bugs override new feature work. If a previous PR is in progress, resume it; never create a duplicate.
+2. Select the highest-impact unblocked Goal #423 slice. Prefer existing #374, #375, #376 and specific financial correctness/transaction review gaps after verifying actual code. If a simple required slice has no Issue, create a focused one from the charter; do not stall waiting for Product. Claim `agent/issue-N` uniquely and open PR.
+3. Implement full vertical behavior including API/domain/UI and deterministic regression/acceptance tests. Use synthetic fixtures and Plaid Sandbox only. Preserve exact decimal, idempotency, reconciliation and PII ownership invariants; migration round-trip for schema updates.
+4. Run targeted tests and repository verification. Publish PR and wait for **all required CI checks to finish green at the exact head SHA**. On failing checks diagnose and fix forward. Do not relaunch identical failing work repeatedly, do not disable CI to unblock a merge.
+5. When green, **squash-merge the PR to `main` automatically** and record merge SHA/Issue/goal outcome. No per-PR AI QA requirement and **no owner code review**. If GitHub branch rules technically prevent merge, document exact blocker and stop rather than claim success.
+6. If further actionable tasks and time/quota remain, select another issue; keep only one active code-writing branch. If quota is exhausted, stop cleanly with next Issue/PR and tests in GitHub.
+
+**Hard stops:** no production deployment, no paid services/API credentials, no live bank data or production DB, no irreversible/destructive or contract-stage schema changes without explicit owner authorization, no bypass of security gates. Known P0/P1 regression must be repaired before new unrelated features.
+
+**What counts as work:** user-visible scenario newly passing, test-backed fix, green/merged PR, or reproducible blocker. Repeated speculation, re-reading giant context, generating duplicate Issues, or tokens spent without a durable result are not progress.
+
+### Handoff
+
+Product maintains a small queue but is not on the critical path. Independent QA sweeps merged `main` twice weekly (or batch threshold); it files bugs and Goal #423 checkpoint comments. You fix its highest-priority findings next. Do not request a distinct QA account or block ordinary PR merges on a `qa:passed` label.
