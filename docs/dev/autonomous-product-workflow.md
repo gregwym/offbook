@@ -31,7 +31,7 @@ QA may run per PR and periodically against `main` on synthetic data. Discussion 
 ## Release isolation
 `main` is integration, not production. Dev/Staging may follow `main` with disposable data. The Pi has separate dev and production deployments. **Owner reports that only dev currently auto-deploys; prod is deployed manually. Preserve this arrangement.** Repository capability to install a prod timer is not proof it is enabled on the Pi; inspect actual systemd state before changing any host configuration. A merged PR does not automatically mean a production rollout.
 
-Protect the stable branch, verify restore from an off-host backup, and require owner-authorized promotion. Cloud agents get no production DB, Tailscale or live Plaid secrets. Owner handles credentials, Plaid approval and real-account linking.
+Continue manual production deployments from an explicitly chosen and verified release SHA. If a stable branch is introduced later, protect it and require owner-authorized promotion; this workflow does **not** assume one already exists. Verify restore from an off-host backup before real-data onboarding. Cloud agents get no production DB, Tailscale or live Plaid secrets. Owner handles credentials, Plaid approval and real-account linking.
 
 ## Quality metrics
 Track P0/P1 bugs, tested user journeys, unexpected financial deltas, stale/failed syncs, restored backup freshness, and observed daily-use incidents. Not number of PRs closed.
