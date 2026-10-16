@@ -9,6 +9,7 @@
 //   3) Spending by category (current period)
 //   4) Budgets + Goals at-a-glance
 //   5) Account list summary
+import { subDecimal } from '../lib/decimal'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
@@ -365,7 +366,7 @@ function KindBreakdown({ trend }: { trend: InsightsData['net_worth_trend'] }) {
         <tbody>
           {last.by_kind.map((k) => {
             const before = startOf.get(k.kind) ?? '0'
-            const delta = (num(k.value) - num(before)).toFixed(2)
+            const delta = subDecimal(k.value, before)
             return (
               <tr key={k.kind} className="border-t border-gray-100">
                 <th scope="row" className="py-1 text-left font-normal capitalize text-gray-700">
