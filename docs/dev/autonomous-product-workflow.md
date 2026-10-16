@@ -10,7 +10,7 @@ This is the active workflow for product maturation. `docs/dev/autonomous-deliver
 | Independent QA | Verify precise PR HEAD against contract and financial invariants in isolated QA stack | PASS / FAIL / BLOCKED, evidence and regression Issues |
 | Release | Confirm CI, QA and backup gates; promote approved stable candidate | Production remains distinct from main |
 
-GitHub Issues, PRs, ADRs, and committed product docs hold state. Every invocation starts fresh. Existing code, not stale planning docs, determines what's shipped.
+GitHub Issues, PRs, ADRs, and committed product docs hold state. Every invocation starts fresh. Existing code, not stale planning docs, determines what's shipped. The canonical machine-readable handoff and QA evidence format is [agent-communication-protocol.md](agent-communication-protocol.md); Agent labels are advisory, canonical implementation branch claims avoid duplicate ownership, and the independently sourced verdict status is evaluated at the exact PR head SHA.
 
 ## Provisioning
 Cloud needs repository access, GitHub PR/Issue permissions, Docker Compose, Go, Node/pnpm, Playwright and documented network access. **Test these assumptions in the actual environment.** Some cloud GitHub authentication modes do not support all `gh issue`/`gh pr` operations; use supported GitHub integrations or report BLOCKED rather than injecting a broad-scoped token.
