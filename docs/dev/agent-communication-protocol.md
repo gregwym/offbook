@@ -49,6 +49,10 @@ Merging to `main` makes the owner's Pi dev eligible for its existing auto-deploy
 
 Engineering: scheduled approximately every three hours, one active writer. Product: as-needed issue queue replenishment when fewer than three accepted Daily Driver issues remain (check daily/weekly but no-op cheaply otherwise). QA: twice-weekly scheduled integrated main audit, optionally after a sufficiently large merge batch. GitHub Issue comments/labels are persistent communication, not assumed to wake a Cloud Routine directly.
 
+## Product maturity graduation, not feature-count closure
+
+After a series of CI-green PR merges, the Product Goal #423 remains open until independent QA + Product Experience Critic replay and score all six journeys on the exact candidate SHA. The [experience maturity rubric](../product/EXPERIENCE-MATURITY-GATE.md) requires visually evidenced desktop/mobile UX, dated Monarch behavior comparisons, recovery, no P0/P1/core P2 and documented stability. `.github/workflows/goal-maturity-guard.yml` automatically reopens #423 if closed as completed without a structured `offbook-maturity:v1` certificate matching current `main`. It verifies evidence completeness, not subjective taste itself.
+
 ## Pilot
 
 Run preflight in disposable Cloud first; then exercise **one simple code PR to green CI and auto-merge into `main`**, followed by one batch QA session on that commit, creating Bug Issues if needed. Confirm the old local loop is disabled before activating the Cloud writer. Only then enable recurring schedules. No distinct QA GitHub identity, separate bot, full-time orchestration service, or routine owner code review is needed.
