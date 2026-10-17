@@ -174,7 +174,33 @@ func (s *TransactionService) Create(ctx context.Context, userID int64, in Create
 	if err := s.repo.Create(ctx, t); err != nil {
 		return nil, fmt.Errorf("create transaction: %w", err)
 	}
+	if err := s.refreshPosition(ctx, userID, t.AccountID, t.AssetID); err != nil {
+		return nil, err
+	}
 	return t, nil
+}
+
+// refreshPosition re-materializes the (account, asset) position from the
+// ledger fold (ADR-0017: positions.quantity == Σ non-deleted transactions) so
+// account balance and net worth follow manual edits instead of staying at
+// 0.00 until a statement or sync lands (#446). No-op without db wiring (unit
+// tests that don't exercise valuation).
+func (s *TransactionService) refreshPosition(ctx context.Context, userID, accountID, assetID int64) error {
+	if s.db == nil {
+		return nil
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		qty, err := repository.NewTransactionRepository(tx).FoldQuantity(ctx, userID, accountID, assetID)
+		if err != nil {
+			return fmt.Errorf("fold position: %w", err)
+		}
+		if err := repository.NewPositionRepository(tx).Upsert(ctx, &model.Position{
+			UserID: userID, AccountID: accountID, AssetID: assetID, Quantity: qty,
+		}); err != nil {
+			return fmt.Errorf("refresh position: %w", err)
+		}
+		return nil
+	})
 }
 
 func (s *TransactionService) List(ctx context.Context, userID int64, f repository.TransactionFilter) ([]model.Transaction, int64, error) {
@@ -263,6 +289,11 @@ func (s *TransactionService) Update(ctx context.Context, userID, id int64, in Up
 		}
 		return nil, fmt.Errorf("update transaction: %w", err)
 	}
+	if in.Amount != nil {
+		if err := s.refreshPosition(ctx, userID, t.AccountID, t.AssetID); err != nil {
+			return nil, err
+		}
+	}
 	return t, nil
 }
 
@@ -346,11 +377,15 @@ func (s *TransactionService) SetReviewed(ctx context.Context, userID int64, ids 
 }
 
 func (s *TransactionService) SoftDelete(ctx context.Context, userID, id int64) error {
+	t, gerr := s.repo.GetByID(ctx, userID, id)
 	if err := s.repo.SoftDelete(ctx, userID, id); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return ErrTransactionNotFound
 		}
 		return fmt.Errorf("soft delete transaction: %w", err)
+	}
+	if gerr == nil {
+		return s.refreshPosition(ctx, userID, t.AccountID, t.AssetID)
 	}
 	return nil
 }
