@@ -2,7 +2,7 @@
 // (#438). Users type positive amounts; the parent's sign is applied on save,
 // so the lines always sum exactly to the transaction. Save is blocked until
 // the remaining balance is exactly zero.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { replaceTransactionSplits } from '../api/transactions'
 import type { Category } from '../types/category'
 import type { Transaction } from '../types/transaction'
@@ -34,7 +34,14 @@ export function SplitTransactionModal({ tx, currency, categories, onClose, onSav
   const remaining = subDecimal(total, sum)
   const balanced = remaining === '0'
   const valid = balanced && lines.length >= 2 && lines.every((l) => /^\d*\.?\d+$/.test(l.amount.trim()) && absDecimal(l.amount) !== '0')
+  const incomplete = balanced && !valid
   const label = tx.description ?? tx.merchant_name ?? 'transaction'
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   const update = (i: number, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)))
@@ -110,10 +117,12 @@ export function SplitTransactionModal({ tx, currency, categories, onClose, onSav
           >
             + Add part
           </button>
-          <div role="status" className={`rounded px-3 py-2 text-sm ${balanced ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>
-            {balanced
+          <div role="status" className={`rounded px-3 py-2 text-sm ${valid ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>
+            {valid
               ? 'Fully allocated.'
-              : remaining.startsWith('-')
+              : incomplete
+                ? 'Move part of the amount into each line — every part needs a non-zero amount.'
+                : remaining.startsWith('-')
                 ? `Over-allocated by ${remaining.slice(1)}.`
                 : `${remaining} left to allocate.`}
           </div>
