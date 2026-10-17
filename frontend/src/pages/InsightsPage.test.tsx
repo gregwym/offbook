@@ -3,6 +3,7 @@ import { http, HttpResponse } from 'msw'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { server } from '../test/server'
 import { expectHealthySmoke, renderPage, resetStores } from '../test/testUtils'
+import * as fx from '../test/fixtures'
 import { InsightsPage } from './InsightsPage'
 
 describe('InsightsPage smoke', () => {
@@ -83,5 +84,32 @@ describe('InsightsPage net-worth asset-class drill-in', () => {
     const row = screen.getByRole('rowheader', { name: /equity/i }).closest('tr') as HTMLElement
     expect(row).toHaveTextContent('150.00')
     expect(screen.getByRole('rowheader', { name: /fiat/i }).closest('tr')).toHaveTextContent('500.00')
+  })
+})
+
+describe('InsightsPage spending band refunds', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('labels a net-negative category as a net refund without drawing a bar', async () => {
+    server.use(
+      http.get('*/dashboard/summary', () =>
+        HttpResponse.json({
+          data: {
+            ...fx.dashboardSummary,
+            by_category: [
+              { category_id: 1, name: 'Groceries', amount: '120.000000000000000000' },
+              { category_id: 2, name: 'Shopping', amount: '-30.000000000000000000' },
+            ],
+          },
+        }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    const row = (await screen.findByText('Shopping')).closest('li') as HTMLElement
+    expect(row).toHaveTextContent('net refund')
+    const bar = row.querySelector('.bg-indigo-400') as HTMLElement
+    expect(bar.style.width).toBe('0%')
   })
 })
