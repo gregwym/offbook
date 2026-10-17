@@ -154,6 +154,9 @@ type PlaidTransaction struct {
 	Date               string  // "YYYY-MM-DD"
 	AuthorizedDate     *string // optional "YYYY-MM-DD"
 	Pending            bool
+	// PendingTransactionID is set on a posted transaction that replaces a
+	// pending one under a new ID (Plaid sends remove+add, not modified).
+	PendingTransactionID string
 	// Personal finance category — Plaid's hierarchical taxonomy.
 	// Strings (not enums) so we never need a Go release to add a new PFC.
 	// May be "" when Plaid hasn't classified a transaction (rare).
@@ -575,6 +578,9 @@ func convertPlaidTransaction(t plaid.Transaction) PlaidTransaction {
 	}
 	if out.Currency == "" {
 		out.Currency = "USD"
+	}
+	if pid, ok := t.GetPendingTransactionIdOk(); ok && pid != nil {
+		out.PendingTransactionID = *pid
 	}
 	if mn, ok := t.GetMerchantNameOk(); ok && mn != nil && *mn != "" {
 		v := *mn
