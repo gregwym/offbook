@@ -188,7 +188,7 @@ func TestBudgetService_Spend_PeriodBoundary(t *testing.T) {
 	mkSpend(time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-100)) // out of period
 	mkSpend(time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-50))   // in period
 	mkSpend(time.Date(2026, 5, 14, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-25))  // in period
-	mkSpend(time.Date(2026, 5, 14, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(200))  // inflow — not spend
+	mkSpend(time.Date(2026, 5, 14, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(20))   // refund (#444) — nets the budget down
 	mkSpend(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-999))  // out of period
 
 	b, err := svc.Create(ctx, repository.UserOwner(userID), service.CreateBudgetInput{
@@ -203,15 +203,15 @@ func TestBudgetService_Spend_PeriodBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spend: %v", err)
 	}
-	want := decimal.NewFromInt(75) // 50 + 25
+	want := decimal.NewFromInt(55) // 50 + 25 - 20 refund
 	if !view.Spent.Equal(want) {
 		t.Errorf("Spent = %s, want %s", view.Spent, want)
 	}
 	if !view.Limit.Equal(decimal.NewFromInt(700)) {
 		t.Errorf("Limit = %s, want 700", view.Limit)
 	}
-	if !view.Remaining.Equal(decimal.NewFromInt(625)) {
-		t.Errorf("Remaining = %s, want 625", view.Remaining)
+	if !view.Remaining.Equal(decimal.NewFromInt(645)) {
+		t.Errorf("Remaining = %s, want 645", view.Remaining)
 	}
 	if view.PeriodStart != (time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Errorf("PeriodStart = %v, want 2026-05-01", view.PeriodStart)
@@ -219,9 +219,9 @@ func TestBudgetService_Spend_PeriodBoundary(t *testing.T) {
 	if view.PeriodEnd != (time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)) {
 		t.Errorf("PeriodEnd = %v, want 2026-06-01", view.PeriodEnd)
 	}
-	// 75/700 ≈ 0.107
-	if view.Pct < 0.1 || view.Pct > 0.12 {
-		t.Errorf("Pct = %v, want ≈0.107", view.Pct)
+	// 55/700 ≈ 0.079
+	if view.Pct < 0.07 || view.Pct > 0.09 {
+		t.Errorf("Pct = %v, want ≈0.079", view.Pct)
 	}
 }
 

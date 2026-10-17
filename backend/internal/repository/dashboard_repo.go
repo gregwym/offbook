@@ -164,9 +164,9 @@ func (r *dashboardRepo) Summarize(ctx context.Context, userID int64, from, to ti
 	var ie incExp
 	if err := r.db.WithContext(ctx).Raw(`
 		SELECT
-			COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0)::text  AS income,
-			COALESCE(SUM(-amount) FILTER (WHERE amount < 0), 0)::text AS spending
-		FROM transactions
+			COALESCE(SUM(amount) FILTER (WHERE amount > 0 AND NOT is_refund), 0)::text  AS income,
+			COALESCE(SUM(-amount) FILTER (WHERE amount < 0 OR is_refund), 0)::text AS spending
+		FROM spend_lines
 		WHERE deleted_at IS NULL
 		  AND user_id = ?
 		  AND is_transfer = FALSE
@@ -252,7 +252,7 @@ func (r *dashboardRepo) SpendByCategory(ctx context.Context, userID int64, from,
 		  AND t.user_id = ?
 		  AND t.is_transfer = FALSE
 		  AND t.kind = 'flow'
-		  AND t.amount < 0
+		  AND (t.amount < 0 OR t.is_refund)
 		  AND t.transaction_date >= ?
 		  AND t.transaction_date <  ?
 		GROUP BY t.category_id, c.name, c.color
@@ -306,9 +306,9 @@ func (r *dashboardRepo) CashFlowByMonth(ctx context.Context, userID int64, now t
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT
 			date_trunc('month', transaction_date)::timestamptz   AS month,
-			COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0)::text   AS inflow,
-			COALESCE(SUM(-amount) FILTER (WHERE amount < 0), 0)::text  AS outflow
-		FROM transactions
+			COALESCE(SUM(amount) FILTER (WHERE amount > 0 AND NOT is_refund), 0)::text   AS inflow,
+			COALESCE(SUM(-amount) FILTER (WHERE amount < 0 OR is_refund), 0)::text  AS outflow
+		FROM spend_lines
 		WHERE deleted_at IS NULL
 		  AND user_id = ?
 		  AND is_transfer = FALSE
@@ -450,7 +450,7 @@ func (r *dashboardRepo) CategoryTrend(ctx context.Context, userID int64, now tim
 		  AND t.user_id = ?
 		  AND t.is_transfer = FALSE
 		  AND t.kind = 'flow'
-		  AND t.amount < 0
+		  AND (t.amount < 0 OR t.is_refund)
 		  AND t.transaction_date >= ?
 		  AND t.transaction_date <  ?
 		GROUP BY t.category_id, c.name, date_trunc('month', t.transaction_date)
