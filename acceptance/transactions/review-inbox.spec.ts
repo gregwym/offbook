@@ -50,7 +50,9 @@ test.describe('transaction review inbox', () => {
     await page.getByRole('region', { name: 'Bulk review' }).getByRole('button', { name: /mark reviewed/i }).click()
     await expect(page.getByText(/all caught up/i)).toBeVisible()
     await page.reload()
-    await page.getByRole('button', { name: /needs review/i }).first().click()
+    // The filter is URL-persisted (?review=1): after reload the chip is still
+    // active, so assert that instead of clicking (which would toggle it off).
+    await expect(page.getByRole('button', { name: /needs review/i }).first()).toHaveAttribute('aria-pressed', 'true')
     await expect(page.getByText(/all caught up/i)).toBeVisible()
     await expectNoOverflow(page)
   })
