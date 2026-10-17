@@ -17,6 +17,7 @@ import {
   getDashboardSummary,
   getNetWorth,
   getRecurring,
+  getSpendByCategory,
   getTopMerchants,
 } from '../api/dashboard'
 import {
@@ -281,11 +282,14 @@ async function loadPersonal(trendMonths = 12): Promise<InsightsData> {
 
   // Spending-depth bands (#367) — own Promise.allSettled so a failure on
   // any one degrades just that band, not the whole page (#266 pattern).
-  const [trendResult, merchantsResult, cashFlowResult, recurringResult] = await Promise.allSettled([
+  const [trendResult, merchantsResult, cashFlowResult, recurringResult, spendResult] = await Promise.allSettled([
     getCategoryTrend(6),
     getTopMerchants(10),
     getCashFlow(6),
     getRecurring(),
+    // Positive spend per category (income excluded, negative = net refund);
+    // summary.by_category is the signed ledger sum and is not a spending series.
+    getSpendByCategory(),
   ])
 
   const categoryName = new Map<number, string>()
@@ -313,7 +317,7 @@ async function loadPersonal(trendMonths = 12): Promise<InsightsData> {
     net_worth_complete: summary.net_worth_complete,
     income: summary.income,
     spending: summary.spending,
-    by_category: summary.by_category,
+    by_category: spendResult.status === 'fulfilled' ? spendResult.value : [],
     net_worth_trend: trend.map((p) => ({
       date: p.date.slice(0, 10),
       value: p.total,

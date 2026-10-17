@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { http, HttpResponse } from 'msw'
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { server } from '../test/server'
 import { expectHealthySmoke, renderPage, resetStores } from '../test/testUtils'
 import * as fx from '../test/fixtures'
@@ -94,15 +94,13 @@ describe('InsightsPage spending band refunds', () => {
 
   it('labels a net-negative category as a net refund without drawing a bar', async () => {
     server.use(
-      http.get('*/dashboard/summary', () =>
+      http.get('*/dashboard/spend-by-category', () =>
         HttpResponse.json({
-          data: {
-            ...fx.dashboardSummary,
-            by_category: [
-              { category_id: 1, name: 'Groceries', amount: '120.000000000000000000' },
-              { category_id: 2, name: 'Shopping', amount: '-30.000000000000000000' },
-            ],
-          },
+          data: [
+            { category_id: 1, name: 'Groceries', amount: '120.000000000000000000' },
+            { category_id: 2, name: 'Shopping', amount: '-30.000000000000000000' },
+          ],
+          total: 2,
         }),
       ),
     )
@@ -111,5 +109,34 @@ describe('InsightsPage spending band refunds', () => {
     expect(row).toHaveTextContent('net refund')
     const bar = row.querySelector('.bg-indigo-400') as HTMLElement
     expect(bar.style.width).toBe('0%')
+  })
+
+  it('shows ordinary spending as positive with a bar, ignoring the signed summary (#456)', async () => {
+    server.use(
+      http.get('*/dashboard/summary', () =>
+        HttpResponse.json({
+          data: {
+            ...fx.dashboardSummary,
+            by_category: [
+              { category_id: 1, name: 'Groceries', amount: '-130.000000000000000000' },
+              { category_id: 3, name: 'Income', amount: '3200.000000000000000000' },
+            ],
+          },
+        }),
+      ),
+      http.get('*/dashboard/spend-by-category', () =>
+        HttpResponse.json({
+          data: [{ category_id: 1, name: 'Groceries', amount: '130.000000000000000000' }],
+          total: 1,
+        }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    const band = (await screen.findByText(/spending by category/i)).closest('section') as HTMLElement
+    const row = within(band).getAllByText('Groceries')[0].closest('li') as HTMLElement
+    expect(row).toHaveTextContent('130.00')
+    expect(row).not.toHaveTextContent('net refund')
+    expect((row.querySelector('.bg-indigo-400') as HTMLElement).style.width).toBe('100%')
+    expect(within(band).queryByText('Income')).toBeNull()
   })
 })

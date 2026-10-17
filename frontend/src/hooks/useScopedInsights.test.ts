@@ -93,7 +93,7 @@ describe('useScopedInsights (personal scope)', () => {
     expect(data.net_worth).toBe(fx.dashboardSummary.net_worth)
     expect(data.income).toBe(fx.dashboardSummary.income)
     expect(data.spending).toBe(fx.dashboardSummary.spending)
-    expect(data.by_category).toEqual(fx.dashboardSummary.by_category)
+    expect(data.by_category).toEqual(fx.spendByCategory)
     expect(data.net_worth_trend).toEqual([
       { date: fx.netWorthTrend[0].date, value: fx.netWorthTrend[0].total, complete: true },
     ])
