@@ -499,7 +499,8 @@ function SpendingBand({ data }: { data: InsightsData }) {
         <ul className="mt-3 space-y-1.5 text-sm">
           {rows.map((r) => {
             const v = num(r.amount)
-            const pct = max > 0 ? (v / max) * 100 : 0
+            const isNetRefund = v < 0
+            const pct = max > 0 && v > 0 ? (v / max) * 100 : 0
             return (
               <li key={`${r.category_id ?? 'null'}-${r.name}`} className="flex items-center gap-3">
                 <span className="w-32 shrink-0 truncate text-gray-700">{r.name}</span>
@@ -511,6 +512,9 @@ function SpendingBand({ data }: { data: InsightsData }) {
                 </div>
                 <span className="w-24 shrink-0 text-right text-gray-700">
                   <AmountDisplay amount={r.amount} />
+                  {isNetRefund && (
+                    <span className="block text-xs text-gray-400">net refund</span>
+                  )}
                 </span>
               </li>
             )

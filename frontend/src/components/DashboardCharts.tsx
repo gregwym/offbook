@@ -41,6 +41,10 @@ export function SpendByCategoryChart() {
     return () => { cancelled = true }
   }, [])
 
+  // Net-refund categories (negative total) have no pie slice; filter before
+  // both the slices and their colors so the two stay index-aligned.
+  const slices = (data ?? []).filter((d) => num(d.amount) > 0)
+
   return (
     <ChartCard title="Spending by category (this month)">
       {error && <div className="text-sm text-red-700">{error}</div>}
@@ -52,7 +56,7 @@ export function SpendByCategoryChart() {
         <ResponsiveContainer width="100%" height={260}>
           <PieChart>
             <Pie
-              data={data.map((d) => ({ name: d.name, value: num(d.amount), color: d.color })).filter((d) => d.value > 0)}
+              data={slices.map((d) => ({ name: d.name, value: num(d.amount), color: d.color }))}
               dataKey="value"
               nameKey="name"
               cx="50%"
@@ -60,7 +64,7 @@ export function SpendByCategoryChart() {
               outerRadius={90}
               label={(p: { name?: string }) => p.name ?? ''}
             >
-              {data.map((d, i) => (
+              {slices.map((d, i) => (
                 <Cell key={i} fill={d.color && d.color.length > 0 ? d.color : FALLBACK_PIE_COLORS[i % FALLBACK_PIE_COLORS.length]} />
               ))}
             </Pie>
