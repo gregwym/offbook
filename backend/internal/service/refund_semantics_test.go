@@ -28,7 +28,7 @@ func TestRefund_NetsAgainstCategoryNotIncome(t *testing.T) {
 	}
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, cat.ID) })
 
-	day := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC) // newDashboardSvc pins the clock to May 2026
+	day := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)                                               // newDashboardSvc pins the clock to May 2026
 	seedChartTxn(t, g, userID, accountID, &cat.ID, day, decimal.RequireFromString("-100.00"), false) // purchase
 	seedChartTxn(t, g, userID, accountID, &cat.ID, day, decimal.RequireFromString("30.00"), false)   // partial refund
 	seedChartTxn(t, g, userID, accountID, nil, day, decimal.RequireFromString("3200.00"), false)     // salary (uncategorized)

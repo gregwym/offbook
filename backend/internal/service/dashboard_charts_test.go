@@ -107,7 +107,7 @@ func TestDashboard_SpendByCategory_OutflowsOnlyAndTransfersExcluded(t *testing.T
 	d1 := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
 	seedChartTxn(t, g, userID, accountID, &groceries.ID, d1, decimal.NewFromInt(-50), false) // outflow → counts
 	seedChartTxn(t, g, userID, accountID, &groceries.ID, d1, decimal.NewFromInt(-25), false) // outflow → counts
-	seedChartTxn(t, g, userID, accountID, nil, d1, decimal.NewFromInt(200), false) // uncategorized inflow → excluded (categorized inflow is a refund, #444)
+	seedChartTxn(t, g, userID, accountID, nil, d1, decimal.NewFromInt(200), false)           // uncategorized inflow → excluded (categorized inflow is a refund, #444)
 	seedChartTxn(t, g, userID, accountID, &dining.ID, d1, decimal.NewFromInt(-30), false)    // outflow → counts
 	seedChartTxn(t, g, userID, accountID, &dining.ID, d1, decimal.NewFromInt(-999), true)    // transfer → excluded
 
