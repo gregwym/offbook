@@ -79,6 +79,12 @@ export function SplitTransactionModal({ tx, currency, categories, onClose, onSav
           </div>
         </div>
         <div className="space-y-3 px-5 py-4">
+          {tx.splits_need_attention && (
+            <p role="alert" className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              The bank changed this amount, so your earlier split no longer adds up. Until you re-split it,
+              reports count the full amount under the transaction&apos;s own category.
+            </p>
+          )}
           {lines.map((l, i) => (
             <div key={i} className="flex items-center gap-2">
               <select

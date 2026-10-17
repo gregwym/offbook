@@ -67,6 +67,11 @@ type Transaction struct {
 	// Splits is populated by the repository on reads (#438); never persisted
 	// through this struct. Empty = unsplit.
 	Splits []TransactionSplit `gorm:"-" json:"splits,omitempty"`
+	// SplitsNeedAttention (#445) is true when the splits no longer sum to the
+	// amount (the bank revised it, e.g. Plaid pending -> posted). The splits
+	// are kept for the user to re-save, but reporting falls back to the
+	// parent row until then. Derived on read; never persisted.
+	SplitsNeedAttention bool `gorm:"-" json:"splits_need_attention,omitempty"`
 
 	Account      *Account     `gorm:"foreignKey:AccountID" json:"-"`
 	Asset        *Asset       `gorm:"foreignKey:AssetID" json:"-"`

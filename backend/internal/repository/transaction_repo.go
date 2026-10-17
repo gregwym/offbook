@@ -272,6 +272,16 @@ func (r *transactionRepo) attachSplits(ctx context.Context, rows []model.Transac
 		i := idx[sp.TransactionID]
 		rows[i].Splits = append(rows[i].Splits, sp)
 	}
+	for i := range rows {
+		if len(rows[i].Splits) == 0 {
+			continue
+		}
+		sum := decimal.Zero
+		for _, sp := range rows[i].Splits {
+			sum = sum.Add(sp.Amount)
+		}
+		rows[i].SplitsNeedAttention = !sum.Equal(rows[i].Amount)
+	}
 	return nil
 }
 
