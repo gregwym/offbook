@@ -26,6 +26,7 @@ describe('SplitTransactionModal (#438)', () => {
     const { onSaved } = setup()
     const save = screen.getByRole('button', { name: 'Save split' })
     expect(save).toBeDisabled() // second part empty: not two valid parts yet
+    expect(screen.getByRole('status')).toHaveTextContent('every part needs a non-zero amount')
     fireEvent.change(screen.getByLabelText('Amount for part 1'), { target: { value: '60.05' } })
     expect(screen.getByRole('status')).toHaveTextContent('40.05 left to allocate.')
     fireEvent.change(screen.getByLabelText('Amount for part 2'), { target: { value: '40.06' } })
@@ -56,5 +57,11 @@ describe('SplitTransactionModal (#438)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save split' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('invalid splits: nope')
     expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('closes on Escape', () => {
+    const { onClose } = setup()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalled()
   })
 })
