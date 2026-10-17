@@ -43,6 +43,7 @@ export const handlers = [
 
   // Dashboard (personal Insights band)
   http.get(`${API}/dashboard/summary`, () => item(fx.dashboardSummary)),
+  http.get(`${API}/dashboard/spend-by-category`, () => list(fx.spendByCategory)),
   http.get(`${API}/dashboard/net-worth`, () => list(fx.netWorthTrend)),
   http.get(`${API}/dashboard/allocation`, () => list(fx.allocation)),
   http.get(`${API}/dashboard/category-trend`, () => list(fx.categoryTrend)),

@@ -191,8 +191,14 @@ export const dashboardSummary: DashboardSummary = {
   spending: '3000.000000000000000000',
   account_count: 1,
   transaction_count: 1,
-  by_category: [{ category_id: 1, name: 'Groceries', amount: '120.000000000000000000' }],
+  // Signed ledger sums, as the real endpoint returns (outflows negative).
+  by_category: [{ category_id: 1, name: 'Groceries', amount: '-120.000000000000000000' }],
 }
+
+// /dashboard/spend-by-category: positive spend, negative = net refund.
+export const spendByCategory = [
+  { category_id: 1, name: 'Groceries', amount: '120.000000000000000000' },
+]
 
 export const netWorthTrend: NetWorthPoint[] = [
   { date: '2026-06-30', total: '9000.000000000000000000', complete: true },
