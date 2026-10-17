@@ -196,6 +196,14 @@ func (s *TransactionService) ImportStatement(ctx context.Context, userID, accoun
 			return nil, fmt.Errorf("import batch: %w", err)
 		}
 		res.InsertedCount = int(inserted)
+		if inserted > 0 {
+			// Keep the cash position equal to the ledger fold so a
+			// statement without a closing balance still moves the
+			// account balance (#446).
+			if err := s.refreshPosition(ctx, userID, account.ID, account.PrimaryQuoteAssetID); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	if len(ext.Positions) > 0 || ext.ClosingBalance != nil {
