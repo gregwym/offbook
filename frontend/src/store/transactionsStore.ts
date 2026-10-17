@@ -38,6 +38,11 @@ type State = {
 
 const PAGE_SIZE = 50
 
+// Monotonic token so a slow, superseded response (e.g. the mount fetch with the
+// default filter landing after the URL-seeded ?review=1 fetch) cannot overwrite
+// the list the active filter asked for (#458).
+let fetchSeq = 0
+
 export const useTransactionsStore = create<State>((set, get) => ({
   transactions: [],
   total: 0,
@@ -49,6 +54,7 @@ export const useTransactionsStore = create<State>((set, get) => ({
 
   fetch: async () => {
     const { filter, page, pageSize } = get()
+    const seq = ++fetchSeq
     set({ loading: true, error: null })
     try {
       const { items, total } = await listTransactions({
@@ -56,8 +62,10 @@ export const useTransactionsStore = create<State>((set, get) => ({
         limit: pageSize,
         offset: page * pageSize,
       })
+      if (seq !== fetchSeq) return
       set({ transactions: items, total, loading: false })
     } catch (err) {
+      if (seq !== fetchSeq) return
       set({ loading: false, error: errMsg(err) })
     }
   },
