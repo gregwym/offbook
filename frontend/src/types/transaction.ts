@@ -45,6 +45,9 @@ export type Transaction = {
   reviewed_at?: string | null
   // splits (#438): category allocation lines summing to amount; absent = unsplit.
   splits?: TransactionSplit[]
+  // splits_need_attention (#445): the bank revised the amount so splits no
+  // longer sum to it; reporting uses the parent row until re-split.
+  splits_need_attention?: boolean
   created_at: string
   updated_at: string
 }

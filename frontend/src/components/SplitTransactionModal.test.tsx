@@ -64,4 +64,15 @@ describe('SplitTransactionModal (#438)', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(onClose).toHaveBeenCalled()
   })
+
+  it('explains a stale split after the bank changed the amount (#445)', () => {
+    const stale = { ...tx, amount: '-100.50', splits_need_attention: true, splits: [
+      { id: 1, transaction_id: tx.id, category_id: 1, amount: '-60.05' },
+      { id: 2, transaction_id: tx.id, category_id: 2, amount: '-40.05' },
+    ] }
+    render(<SplitTransactionModal tx={stale} currency="USD" categories={fx.categories} onClose={vi.fn()} onSaved={vi.fn()} />)
+    expect(screen.getByRole('alert')).toHaveTextContent('bank changed this amount')
+    expect(screen.getByRole('button', { name: 'Save split' })).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent('0.4 left to allocate.')
+  })
 })

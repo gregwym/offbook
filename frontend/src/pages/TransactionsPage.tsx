@@ -733,14 +733,17 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
   const label = tx.description ?? tx.merchant_name ?? 'transaction'
   const splitCount = tx.splits?.length ?? 0
   const splittable = onSplit != null && tx.kind === 'flow' && !tx.is_transfer
+  const stale = splitCount > 0 && tx.splits_need_attention === true
   const categorySelect = splitCount > 0 ? (
     <button
       type="button"
       onClick={onSplit}
-      aria-label={`Edit split for ${label}`}
-      className="min-h-9 rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-sm text-indigo-800 hover:bg-indigo-100"
+      aria-label={stale ? `Re-split ${label}: amount changed` : `Edit split for ${label}`}
+      className={stale
+        ? 'min-h-9 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-sm text-amber-900 hover:bg-amber-100'
+        : 'min-h-9 rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-sm text-indigo-800 hover:bg-indigo-100'}
     >
-      Split · {splitCount} categories
+      {stale ? 'Amount changed · re-split' : `Split · ${splitCount} categories`}
     </button>
   ) : (
     <select
