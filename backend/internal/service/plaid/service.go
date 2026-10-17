@@ -869,6 +869,31 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 					if err != nil {
 						return err
 					}
+					// Posted replacement of a pending row under a new ID:
+					// adopt the existing row so the user's category, notes,
+					// review state and splits survive (the pending ID is
+					// then a benign no-op in `removed`).
+					if pt.PendingTransactionID != "" && pt.PendingTransactionID != pt.PlaidTransactionID {
+						var pending model.Transaction
+						perr := tx.WithContext(ctx).
+							Where("user_id = ? AND plaid_transaction_id = ?", userID, pt.PendingTransactionID).
+							First(&pending).Error
+						if perr == nil {
+							merged, err := MergePlaidUpdate(pending, pt, ref.ID, ref.AssetID, s.catMapper, userRules)
+							if err != nil {
+								return err
+							}
+							id := pt.PlaidTransactionID
+							merged.PlaidTransactionID = &id
+							if err := txRepo.UpdateByPlaidTransactionID(ctx, userID, pt.PendingTransactionID, merged); err != nil {
+								return err
+							}
+							result.Modified++
+							return nil
+						} else if !errors.Is(perr, gorm.ErrRecordNotFound) {
+							return perr
+						}
+					}
 					row, err := MapPlaidTransaction(pt, userID, ref.ID, ref.AssetID, s.catMapper, userRules)
 					if err != nil {
 						return err
