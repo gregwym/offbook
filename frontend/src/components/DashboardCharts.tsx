@@ -52,7 +52,7 @@ export function SpendByCategoryChart() {
         <ResponsiveContainer width="100%" height={260}>
           <PieChart>
             <Pie
-              data={data.map((d) => ({ name: d.name, value: num(d.amount), color: d.color }))}
+              data={data.map((d) => ({ name: d.name, value: num(d.amount), color: d.color })).filter((d) => d.value > 0)}
               dataKey="value"
               nameKey="name"
               cx="50%"

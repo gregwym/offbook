@@ -249,9 +249,9 @@ func (r *householdAggregatorRepo) PeriodIncomeSpending(ctx context.Context, acco
 	var ie incExp
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT
-			COALESCE(SUM(amount)  FILTER (WHERE amount > 0), 0)::text  AS income,
-			COALESCE(SUM(-amount) FILTER (WHERE amount < 0), 0)::text  AS spending
-		FROM transactions
+			COALESCE(SUM(amount)  FILTER (WHERE amount > 0 AND NOT is_refund), 0)::text  AS income,
+			COALESCE(SUM(-amount) FILTER (WHERE amount < 0 OR is_refund), 0)::text  AS spending
+		FROM spend_lines
 		WHERE deleted_at IS NULL
 		  AND account_id IN ?
 		  AND kind = 'flow'
@@ -331,7 +331,7 @@ func (r *householdAggregatorRepo) SpendingByCategory(ctx context.Context, accoun
 	}
 	var s string
 	err := r.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(-amount) FILTER (WHERE amount < 0), 0)::text
+		SELECT COALESCE(SUM(-amount) FILTER (WHERE amount < 0 OR is_refund), 0)::text
 		FROM spend_lines
 		WHERE deleted_at IS NULL
 		  AND account_id IN ?
@@ -593,7 +593,7 @@ func (r *householdAggregatorRepo) CategoryTrend(ctx context.Context, accountIDs 
 		  AND t.account_id IN ?
 		  AND t.is_transfer = FALSE
 		  AND t.kind = 'flow'
-		  AND t.amount < 0
+		  AND (t.amount < 0 OR t.is_refund)
 		  AND t.transaction_date >= ?
 		  AND t.transaction_date <  ?
 		GROUP BY t.category_id, c.name, date_trunc('month', t.transaction_date)
@@ -684,9 +684,9 @@ func (r *householdAggregatorRepo) CashFlowByMonth(ctx context.Context, accountID
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT
 			date_trunc('month', transaction_date)::timestamptz         AS month,
-			COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0)::text   AS inflow,
-			COALESCE(SUM(-amount) FILTER (WHERE amount < 0), 0)::text  AS outflow
-		FROM transactions
+			COALESCE(SUM(amount) FILTER (WHERE amount > 0 AND NOT is_refund), 0)::text   AS inflow,
+			COALESCE(SUM(-amount) FILTER (WHERE amount < 0 OR is_refund), 0)::text  AS outflow
+		FROM spend_lines
 		WHERE deleted_at IS NULL
 		  AND account_id IN ?
 		  AND is_transfer = FALSE

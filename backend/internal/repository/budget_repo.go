@@ -105,7 +105,7 @@ func (r *budgetRepo) SpendByCategoryInRange(ctx context.Context, userID int64, c
 	if err := r.db.WithContext(ctx).Raw(`
 		SELECT
 			category_id                                          AS category_id,
-			COALESCE(SUM(-amount) FILTER (WHERE amount < 0), 0)::text AS spent
+			COALESCE(SUM(-amount) FILTER (WHERE amount < 0 OR is_refund), 0)::text AS spent
 		FROM spend_lines
 		WHERE deleted_at IS NULL
 		  AND user_id = ?
@@ -137,7 +137,7 @@ func (r *budgetRepo) CurrentPeriodSpend(ctx context.Context, userID, categoryID 
 	// Transfers are excluded so internal moves don't count as spend.
 	var s string
 	err := r.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(-amount) FILTER (WHERE amount < 0), 0)::text
+		SELECT COALESCE(SUM(-amount) FILTER (WHERE amount < 0 OR is_refund), 0)::text
 		FROM spend_lines
 		WHERE deleted_at IS NULL
 		  AND user_id = ?

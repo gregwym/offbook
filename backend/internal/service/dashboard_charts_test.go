@@ -107,7 +107,7 @@ func TestDashboard_SpendByCategory_OutflowsOnlyAndTransfersExcluded(t *testing.T
 	d1 := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
 	seedChartTxn(t, g, userID, accountID, &groceries.ID, d1, decimal.NewFromInt(-50), false) // outflow → counts
 	seedChartTxn(t, g, userID, accountID, &groceries.ID, d1, decimal.NewFromInt(-25), false) // outflow → counts
-	seedChartTxn(t, g, userID, accountID, &groceries.ID, d1, decimal.NewFromInt(200), false) // inflow → excluded
+	seedChartTxn(t, g, userID, accountID, nil, d1, decimal.NewFromInt(200), false) // uncategorized inflow → excluded (categorized inflow is a refund, #444)
 	seedChartTxn(t, g, userID, accountID, &dining.ID, d1, decimal.NewFromInt(-30), false)    // outflow → counts
 	seedChartTxn(t, g, userID, accountID, &dining.ID, d1, decimal.NewFromInt(-999), true)    // transfer → excluded
 
@@ -599,7 +599,7 @@ func TestDashboard_CategoryTrend_ThisMonthVsTrailingAverage(t *testing.T) {
 	seedChartTxn(t, g, userID, accountID, &groceries.ID, time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-100), false)
 	seedChartTxn(t, g, userID, accountID, &groceries.ID, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-300), false)
 	// Inflow + transfer + non-flow kind must not pollute the trend.
-	seedChartTxn(t, g, userID, accountID, &groceries.ID, time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(200), false)
+	seedChartTxn(t, g, userID, accountID, nil, time.Date(2026, 5, 11, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(200), false)
 	seedChartTxn(t, g, userID, accountID, &groceries.ID, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-9999), true)
 
 	items, err := svc.CategoryTrend(ctx, userID, 3)
