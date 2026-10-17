@@ -171,15 +171,16 @@ func TestDashboard_Summarize_ConfirmedTransferExcludedFromIncomeAndSpending(t *t
 	if err != nil {
 		t.Fatalf("Summarize (before confirm): %v", err)
 	}
-	if before.Income != "400" || before.Spending != "400" {
-		t.Fatalf("before confirm: income=%s spending=%s, want 400/400 (unmatched transfer looks like ordinary flow)", before.Income, before.Spending)
+	// #447: an unconfirmed proposed pair is already excluded.
+	if before.Income != "0" || before.Spending != "0" {
+		t.Fatalf("before confirm: income=%s spending=%s, want 0/0 (proposed transfer excluded)", before.Income, before.Spending)
 	}
 	spendBefore, err := svc.SpendByCategory(ctx, userID, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatalf("SpendByCategory (before confirm): %v", err)
 	}
-	if len(spendBefore) != 1 {
-		t.Fatalf("SpendByCategory (before confirm) = %+v, want 1 uncategorized row", spendBefore)
+	if len(spendBefore) != 0 {
+		t.Fatalf("SpendByCategory (before confirm) = %+v, want empty (proposed transfer excluded)", spendBefore)
 	}
 
 	transferSvc := service.NewTransferMatchingService(repository.NewTransactionRepository(g))
