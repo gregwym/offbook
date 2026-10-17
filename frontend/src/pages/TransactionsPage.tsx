@@ -808,15 +808,15 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
           </div>
           {categorySelect}
           <div className="flex gap-3 text-xs">
-            <button type="button" onClick={onCreateRule} className="min-h-9 text-indigo-700 underline">
+            <button type="button" onClick={onCreateRule} aria-label={`Create rule from ${label}`} className="min-h-9 text-indigo-700 underline">
               Create rule
             </button>
             {splittable && splitCount === 0 && (
-              <button type="button" onClick={onSplit} className="min-h-9 text-indigo-700 underline">
+              <button type="button" onClick={onSplit} aria-label={`Split ${label}`} className="min-h-9 text-indigo-700 underline">
                 Split
               </button>
             )}
-            <button type="button" onClick={onDelete} className="min-h-9 text-red-700 underline">
+            <button type="button" onClick={onDelete} aria-label={`Delete ${label}`} className="min-h-9 text-red-700 underline">
               Delete
             </button>
           </div>
