@@ -237,7 +237,7 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
           </Field>
 
           {/* AI consent notice — shown before the egress, until a preview exists. */}
-          {mode === 'ai' && !preview && file && (
+          {mode === 'ai' && !preview && file && !duplicateBlocked && (
             <div className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900">
               <p className="font-medium">This file will be sent to your AI provider</p>
               <p className="mt-0.5 text-indigo-800">
@@ -271,7 +271,7 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
             <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
               <p className="font-medium">You already imported this exact statement</p>
               <p className="mt-0.5">
-                Nothing was sent to your AI provider. Re-extracting would only find the same transactions as duplicates.
+                Nothing was sent to your AI provider. Extracting anyway uploads the file to your AI provider and would only find the same transactions as duplicates.
               </p>
               <button
                 type="button"
@@ -307,7 +307,7 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
                 onChange={(e) => setReviewedAck(e.target.checked)}
               />
               <span>
-                {preview.review_count} row{preview.review_count === 1 ? '' : 's'} were read with low confidence. I’ve
+                {preview.review_count} row{preview.review_count === 1 ? ' was' : 's were'} read with low confidence. I’ve
                 reviewed the flagged rows above and want to import them.
               </span>
             </label>
@@ -467,6 +467,11 @@ function describeEffect(effect: ReconcileEffect, money?: { currency?: string }):
   return `${label} ${Number(effect.adjustment) > 0 ? '+' : ''}${effect.adjustment}`
 }
 
+function effectCell(p: NonNullable<ImportResult['positions']>[number]) {
+  if (p.error) return <span className="text-red-600">{p.error} — skipped</span>
+  return p.effect ? describeEffect(p.effect) : ''
+}
+
 // StatementHoldings previews the brokerage positions and closing balance the
 // statement reported, with the reconciling rows commit would write (#375).
 function StatementHoldings({ result, currency }: { result: ImportResult; currency?: string }) {
@@ -489,8 +494,8 @@ function StatementHoldings({ result, currency }: { result: ImportResult; currenc
             <thead className="text-xs uppercase text-gray-500">
               <tr>
                 <th className="py-1 pr-3 font-medium">Holding</th>
-                <th className="py-1 pr-3 text-right font-medium">Quantity</th>
-                <th className="py-1 font-medium">Ledger effect</th>
+                <th className="hidden py-1 pr-3 text-right font-medium sm:table-cell">Quantity</th>
+                <th className="hidden py-1 font-medium sm:table-cell">Ledger effect</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -499,7 +504,7 @@ function StatementHoldings({ result, currency }: { result: ImportResult; currenc
                   <td className="py-1 pr-3 text-gray-700">
                     <span className="font-medium">{p.symbol}</span>
                     {p.asset_status === 'new' && (
-                      <span className="ml-2 rounded border border-blue-300 bg-blue-50 px-1.5 py-0.5 text-xs text-blue-800">
+                      <span className="ml-2 whitespace-nowrap rounded border border-blue-300 bg-blue-50 px-1.5 py-0.5 text-xs text-blue-800">
                         new asset
                       </span>
                     )}
@@ -508,13 +513,15 @@ function StatementHoldings({ result, currency }: { result: ImportResult; currenc
                         <AlertTriangle size={13} className="inline" />
                       </span>
                     )}
+                    <div className="mt-0.5 break-all text-xs text-gray-500 sm:hidden">
+                      {!p.error && <span className="tabular-nums text-gray-700">Qty {p.quantity} · </span>}
+                      {effectCell(p)}
+                    </div>
                   </td>
-                  <td className="whitespace-nowrap py-1 pr-3 text-right tabular-nums text-gray-700">
+                  <td className="hidden whitespace-nowrap py-1 pr-3 text-right tabular-nums text-gray-700 sm:table-cell">
                     {p.error ? '' : p.quantity}
                   </td>
-                  <td className="py-1 text-gray-500">
-                    {p.error ? <span className="text-red-600">{p.error} — skipped</span> : p.effect ? describeEffect(p.effect) : ''}
-                  </td>
+                  <td className="hidden py-1 text-gray-500 sm:table-cell">{effectCell(p)}</td>
                 </tr>
               ))}
             </tbody>
