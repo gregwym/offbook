@@ -62,10 +62,13 @@ type Transaction struct {
 	ReviewedAt *time.Time `json:"reviewed_at,omitempty"`
 	// HiddenAt (#465) marks a flow row the user excluded from spending, income,
 	// budgets and merchant reports. The ledger/balances are unaffected.
-	HiddenAt  *time.Time     `json:"hidden_at,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	HiddenAt *time.Time `json:"hidden_at,omitempty"`
+	// ImportJobID links a statement-imported row to the ingestion_jobs audit
+	// row that created it, so the import can be undone as a unit.
+	ImportJobID *int64         `json:"import_job_id,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// Splits is populated by the repository on reads (#438); never persisted
 	// through this struct. Empty = unsplit.

@@ -176,6 +176,14 @@ type TransactionRepository interface {
 	// concurrent import. Like CreateBatch, this only guards LIVE duplicates;
 	// soft-deleted rows sit outside the partial index.
 	ImportBatch(ctx context.Context, txns []model.Transaction) (int64, error)
+	// TagImportJob links the live, still-untagged rows with these external_ids
+	// (created at or after since) to the import job that inserted them.
+	TagImportJob(ctx context.Context, userID, accountID, jobID int64, externalIDs []string, since time.Time) error
+	// SoftDeleteByImportJob soft-deletes every live row created by the job and
+	// returns how many were removed. User-scoped.
+	SoftDeleteByImportJob(ctx context.Context, userID, jobID int64) (int64, error)
+	// CountLiveByImportJobs returns, per job id, the live rows it created.
+	CountLiveByImportJobs(ctx context.Context, userID int64, jobIDs []int64) (map[int64]int64, error)
 	// ListTransferCandidates is the deterministic matcher for #371: it finds
 	// live kind=flow transactions for userID that are not already a transfer,
 	// pairs each with the closest-by-date opposite-amount, same-asset
@@ -782,4 +790,45 @@ func (r *transactionRepo) SoftDelete(ctx context.Context, userID, id int64) erro
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (r *transactionRepo) TagImportJob(ctx context.Context, userID, accountID, jobID int64, externalIDs []string, since time.Time) error {
+	if len(externalIDs) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Model(&model.Transaction{}).
+		Where("user_id = ? AND account_id = ? AND external_id IN ? AND import_job_id IS NULL AND created_at >= ?",
+			userID, accountID, externalIDs, since).
+		UpdateColumn("import_job_id", jobID).Error
+}
+
+func (r *transactionRepo) SoftDeleteByImportJob(ctx context.Context, userID, jobID int64) (int64, error) {
+	res := r.db.WithContext(ctx).
+		Where("user_id = ? AND import_job_id = ?", userID, jobID).
+		Delete(&model.Transaction{})
+	return res.RowsAffected, res.Error
+}
+
+func (r *transactionRepo) CountLiveByImportJobs(ctx context.Context, userID int64, jobIDs []int64) (map[int64]int64, error) {
+	out := make(map[int64]int64, len(jobIDs))
+	if len(jobIDs) == 0 {
+		return out, nil
+	}
+	var rows []struct {
+		ImportJobID int64
+		N           int64
+	}
+	if err := r.db.WithContext(ctx).
+		Model(&model.Transaction{}).
+		Select("import_job_id, COUNT(*) AS n").
+		Where("user_id = ? AND import_job_id IN ?", userID, jobIDs).
+		Group("import_job_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out[r.ImportJobID] = r.N
+	}
+	return out, nil
 }

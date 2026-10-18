@@ -189,6 +189,11 @@ export type ImportHistoryEntry = {
   // difference is the gap to the nearest total when reconciled is false.
   reconciled: boolean | null
   difference?: string
+  // Undo (IMP-01): undone_at is set once the import's rows were removed;
+  // can_undo is false for undone or legacy imports with no linked rows.
+  undone_at?: string
+  rows_undone?: number
+  can_undo: boolean
 }
 
 // UpdateTransactionInput: sparse patch. `clear_category: true` with a null

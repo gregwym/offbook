@@ -75,6 +75,7 @@ PATCH /api/v1/savings-goals/:id
 PATCH /api/v1/transactions/:id
 PATCH /api/v1/transactions/:id/acknowledge
 POST /api/v1/accounts
+POST /api/v1/accounts/:id/imports/:job_id/undo
 POST /api/v1/accounts/:id/trades
 POST /api/v1/accounts/:id/transactions/import
 POST /api/v1/accounts/:id/transactions/import/extract
