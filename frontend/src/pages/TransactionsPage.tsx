@@ -461,7 +461,7 @@ export function TransactionsPage() {
               <th className="px-3 py-2 text-right">Amount</th>
               <th className="hidden px-3 py-2 text-left md:table-cell">Account</th>
               <th className="hidden px-3 py-2 text-left md:table-cell">Category</th>
-              <th className="px-3 py-2"><span className="sr-only">Actions</span></th>
+              <th className="hidden px-3 py-2 md:table-cell"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -831,7 +831,18 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             {[tx.merchant_name, account?.name].filter(Boolean).map((x) => ` · ${x}`).join('')}
           </div>
           {categorySelect}
-          <div className="flex gap-3 text-xs">
+          <div className="flex flex-wrap gap-x-3 text-xs">
+            {reviewable && (
+              <button
+                type="button"
+                onClick={onToggleReviewed}
+                title={unreviewed ? undefined : 'Reviewed — tap to move back to review'}
+                className={`inline-flex min-h-9 items-center gap-1 font-medium ${unreviewed ? 'text-emerald-700' : 'text-gray-500'}`}
+              >
+                <Check size={14} />
+                {unreviewed ? 'Mark as reviewed' : 'Reviewed'}
+              </button>
+            )}
             <button type="button" onClick={onCreateRule} aria-label={`Create rule from ${label}`} className="min-h-9 text-indigo-700 underline">
               Create rule
             </button>
@@ -857,7 +868,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
       </td>
       <td className="hidden px-3 py-2 align-top text-gray-700 md:table-cell">{account?.name ?? `#${tx.account_id}`}</td>
       <td className="hidden px-3 py-2 align-top md:table-cell">{categorySelect}</td>
-      <td className="whitespace-nowrap px-2 py-2 text-right align-top md:px-3">
+      <td className="hidden whitespace-nowrap px-3 py-2 text-right align-top md:table-cell">
         {reviewable && (
           <button
             type="button"
