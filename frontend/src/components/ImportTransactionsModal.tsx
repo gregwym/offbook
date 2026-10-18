@@ -9,6 +9,7 @@ import {
   extractStatement,
   importTransactions,
   listImportHistory,
+  undoImport,
 } from '../api/transactions'
 import type { Account } from '../types/account'
 import type { ColumnMapping, ImportHistoryEntry, ImportResult, ReconcileEffect } from '../types/transaction'
@@ -20,6 +21,8 @@ type Props = {
   onClose: () => void
   // Called after a successful commit so the caller can refresh its list.
   onImported: (result: ImportResult) => void
+  // Called after an import is undone so the caller can refresh its list.
+  onUndone?: () => void
 }
 
 // The required logical columns, in display order, for manual CSV mapping.
@@ -45,7 +48,7 @@ function fileMode(f: File): 'csv' | 'ai' {
 // user's AI provider: an explicit-consent "Extract with AI" call stages rows,
 // which the user reviews (with per-row confidence + reconciliation) before
 // committing. The backend dedups on re-import either way.
-export function ImportTransactionsModal({ accounts, initialAccountID, onClose, onImported }: Props) {
+export function ImportTransactionsModal({ accounts, initialAccountID, onClose, onImported, onUndone }: Props) {
   const [accountID, setAccountID] = useState<string>(
     initialAccountID ? String(initialAccountID) : accounts[0] ? String(accounts[0].id) : '',
   )
@@ -87,6 +90,15 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
       .catch(() => { if (!cancelled) setHistoryState({ accountID, entries: [], failed: true }) })
     return () => { cancelled = true }
   }, [accountID])
+  const handleUndone = (entry: ImportHistoryEntry) => {
+    setHistoryState((h) => h && {
+      ...h,
+      entries: h.entries.map((e) => (e.job_id === entry.job_id ? entry : e)),
+    })
+    // The statement is importable again, so drop any stale duplicate warning.
+    setPreview((p) => (p ? { ...p, duplicate_of: undefined } : p))
+    onUndone?.()
+  }
   const historyReady = historyState?.accountID === accountID ? historyState : null
 
   const resetDerived = () => {
@@ -296,7 +308,7 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
 
           {preview && <PreviewSummary result={preview} currency={account?.currency} />}
 
-          {accountID && <ImportHistoryList entries={historyReady?.entries ?? null} failed={historyReady?.failed ?? false} currency={account?.currency} />}
+          {accountID && <ImportHistoryList accountID={Number(accountID)} entries={historyReady?.entries ?? null} failed={historyReady?.failed ?? false} currency={account?.currency} onUndone={handleUndone} />}
 
           {preview && (preview.review_count ?? 0) > 0 && (
             <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -564,14 +576,35 @@ function ReconcileNote({ result, currency }: { result: ImportResult; currency?: 
 // was imported when, row outcomes, and whether it reconciled to the statement's
 // own total. A mismatch is called out in amber, never buried.
 function ImportHistoryList({
+  accountID,
   entries,
   failed,
   currency,
+  onUndone,
 }: {
+  accountID: number
   entries: ImportHistoryEntry[] | null
   failed: boolean
   currency?: string
+  onUndone: (entry: ImportHistoryEntry) => void
 }) {
+  // Inline two-step undo: one entry at a time is "confirming"; errors stay on
+  // the entry that failed so the user can retry.
+  const [confirming, setConfirming] = useState<number | null>(null)
+  const [undoing, setUndoing] = useState<number | null>(null)
+  const [undoError, setUndoError] = useState<{ jobID: number; message: string } | null>(null)
+  const undo = async (jobID: number) => {
+    setUndoing(jobID)
+    setUndoError(null)
+    try {
+      onUndone(await undoImport(accountID, jobID))
+      setConfirming(null)
+    } catch (err) {
+      setUndoError({ jobID, message: errMsg(err) })
+    } finally {
+      setUndoing(null)
+    }
+  }
   if (entries === null) {
     return <p className="text-xs text-gray-500">Loading import history…</p>
   }
@@ -595,6 +628,45 @@ function ImportHistoryList({
               {e.rows_imported} imported · {e.rows_duplicate} duplicate
               {e.rows_error > 0 && <span className="text-red-600"> · {e.rows_error} error</span>}
             </div>
+            {e.undone_at ? (
+              <p className="mt-0.5 text-xs text-gray-500">
+                Undone {new Date(e.undone_at).toLocaleDateString()} — {e.rows_undone ?? 0} transaction{e.rows_undone === 1 ? '' : 's'} removed.
+                You can import this statement again.
+              </p>
+            ) : e.can_undo ? (
+              confirming === e.job_id ? (
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="text-gray-700">Remove the {e.rows_imported} transactions this import added?</span>
+                  <button
+                    type="button"
+                    onClick={() => void undo(e.job_id)}
+                    disabled={undoing === e.job_id}
+                    className="rounded border border-red-300 bg-red-50 px-2 py-1 font-medium text-red-700 disabled:opacity-50"
+                  >
+                    {undoing === e.job_id ? 'Removing…' : 'Yes, undo import'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setConfirming(null); setUndoError(null) }}
+                    disabled={undoing === e.job_id}
+                    className="rounded border border-gray-300 px-2 py-1 text-gray-700"
+                  >
+                    Keep
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { setConfirming(e.job_id); setUndoError(null) }}
+                  className="mt-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+                >
+                  Undo import
+                </button>
+              )
+            ) : null}
+            {undoError?.jobID === e.job_id && (
+              <p role="alert" className="mt-1 text-xs text-red-600">Couldn’t undo: {undoError.message}</p>
+            )}
             {e.reconciled === true && <p className="mt-0.5 text-xs text-emerald-700">✓ Matched statement total</p>}
             {e.reconciled === false && (
               <p className="mt-0.5 flex items-start gap-1 text-xs font-medium text-amber-700">

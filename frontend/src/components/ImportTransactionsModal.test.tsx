@@ -45,6 +45,47 @@ describe('ImportTransactionsModal import history (#376)', () => {
     expect(screen.getByText(/9 imported · 1 duplicate/)).toBeInTheDocument()
   })
 
+  it('undoes an import after an inline confirmation and notifies the caller', async () => {
+    const entry = {
+      job_id: 3, source: 'csv', file_name: 'july.csv', imported_at: '2026-08-01T00:00:00Z',
+      rows_total: 4, rows_imported: 4, rows_duplicate: 0, rows_error: 0, reconciled: null, can_undo: true,
+    }
+    const undone = vi.fn()
+    server.use(
+      http.get(`${API}/accounts/:id/imports`, () => HttpResponse.json({ total: 1, data: [entry] })),
+      http.post(`${API}/accounts/:id/imports/3/undo`, () =>
+        HttpResponse.json({ data: { ...entry, can_undo: false, undone_at: '2026-08-02T00:00:00Z', rows_undone: 4 } }),
+      ),
+    )
+    render(
+      <ImportTransactionsModal accounts={fx.accounts} initialAccountID={fx.account1.id} onClose={vi.fn()} onImported={vi.fn()} onUndone={undone} />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo import' }))
+    expect(screen.getByText(/Remove the 4 transactions/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, undo import' }))
+    expect(await screen.findByText(/4 transactions removed/)).toBeInTheDocument()
+    expect(undone).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: 'Undo import' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the entry and shows the error when undo fails', async () => {
+    const entry = {
+      job_id: 3, source: 'csv', file_name: 'july.csv', imported_at: '2026-08-01T00:00:00Z',
+      rows_total: 4, rows_imported: 4, rows_duplicate: 0, rows_error: 0, reconciled: null, can_undo: true,
+    }
+    server.use(
+      http.get(`${API}/accounts/:id/imports`, () => HttpResponse.json({ total: 1, data: [entry] })),
+      http.post(`${API}/accounts/:id/imports/3/undo`, () =>
+        HttpResponse.json({ error: 'this import cannot be undone', code: 'IMPORT_NOT_UNDOABLE' }, { status: 409 }),
+      ),
+    )
+    renderModal()
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo import' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, undo import' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/cannot be undone/)
+    expect(screen.getByRole('button', { name: 'Yes, undo import' })).toBeEnabled()
+  })
+
   it('degrades to a quiet message when history fails to load', async () => {
     server.use(http.get(`${API}/accounts/:id/imports`, () => HttpResponse.json({ error: 'x', code: 'X' }, { status: 500 })))
     renderModal()

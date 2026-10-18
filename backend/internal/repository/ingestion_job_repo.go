@@ -20,7 +20,7 @@ type IngestionJobRepository interface {
 	Update(ctx context.Context, job *model.IngestionJob) error
 	// ListCompletedByAccount returns the user's completed imports into one
 	// account, newest first, WITHOUT the staged extraction blob (history is a
-	// read-only audit view). Empty slice for a foreign/unknown account.
+	// read-only audit view; undone imports are included). Empty slice for a foreign/unknown account.
 	ListCompletedByAccount(ctx context.Context, userID, accountID int64, limit int) ([]model.IngestionJob, error)
 	// FindCompletedByHash returns the most recent completed import of a document
 	// with this content hash into the account, or ErrNotFound.
@@ -74,7 +74,7 @@ func (r *ingestionJobRepo) FindCompletedByHash(ctx context.Context, userID, acco
 	var j model.IngestionJob
 	err := r.db.WithContext(ctx).
 		Omit("extraction").
-		Where("user_id = ? AND account_id = ? AND status = ? AND content_hash = ?", userID, accountID, "completed", hash).
+		Where("user_id = ? AND account_id = ? AND status = ? AND undone_at IS NULL AND content_hash = ?", userID, accountID, "completed", hash).
 		Order("created_at DESC, id DESC").
 		First(&j).Error
 	if err != nil {

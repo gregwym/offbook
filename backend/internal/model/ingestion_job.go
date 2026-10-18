@@ -36,6 +36,10 @@ type IngestionJob struct {
 	RowSum        *decimal.Decimal `gorm:"type:numeric(30,18)" json:"row_sum,omitempty"`
 	DocTotals     json.RawMessage  `gorm:"type:jsonb" json:"doc_totals,omitempty"`
 	Reconciled    *bool            `json:"reconciled,omitempty"`
+	// UndoneAt / RowsUndone record an undo of the import: the rows it created
+	// were soft-deleted. An undone job no longer counts as a completed import.
+	UndoneAt   *time.Time `json:"undone_at,omitempty"`
+	RowsUndone *int       `json:"rows_undone,omitempty"`
 	// Extraction holds the staged ImportResult preview (rows + totals + CSV
 	// echo) for AI jobs awaiting commit. JSONB; nil for deterministic jobs.
 	Extraction  json.RawMessage `gorm:"type:jsonb" json:"extraction,omitempty"`

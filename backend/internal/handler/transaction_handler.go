@@ -62,6 +62,8 @@ func (h *TransactionHandler) Register(g *gin.RouterGroup) {
 	g.POST("/transactions/import/jobs/:job_id/commit", h.ImportCommit)
 	// Per-account import history (#376): append-only read of ingestion_jobs.
 	g.GET("/accounts/:id/imports", h.ImportHistory)
+	// Undo a committed import: soft-deletes the rows it created.
+	g.POST("/accounts/:id/imports/:job_id/undo", h.ImportUndo)
 }
 
 // List returns a paginated, filtered slice of transactions.
@@ -435,6 +437,25 @@ func (h *TransactionHandler) ImportHistory(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": entries, "total": len(entries)})
 }
 
+// ImportUndo removes the rows a committed import created.
+func (h *TransactionHandler) ImportUndo(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	jobID, err := strconv.ParseInt(c.Param("job_id"), 10, 64)
+	if err != nil || jobID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid job id", "code": "INVALID_REQUEST"})
+		return
+	}
+	entry, err := h.svc.UndoImport(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, jobID)
+	if err != nil {
+		h.writeImportError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": entry})
+}
+
 // ImportExtract runs the AI document extractor over an uploaded statement
 // (PDF/photo, or CSV fallback) and stages the result for review. This is the
 // single egress event and requires explicit consent. Multipart fields:
@@ -543,6 +564,8 @@ func (h *TransactionHandler) writeImportError(c *gin.Context, err error) {
 		c.JSON(http.StatusNotImplemented, gin.H{"error": err.Error(), "code": "AI_IMPORT_UNAVAILABLE"})
 	case errors.Is(err, service.ErrImportJobNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error(), "code": "IMPORT_JOB_NOT_FOUND"})
+	case errors.Is(err, service.ErrImportNotUndoable):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "IMPORT_NOT_UNDOABLE"})
 	case errors.Is(err, service.ErrImportJobNotPending):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "IMPORT_JOB_NOT_PENDING"})
 	default:

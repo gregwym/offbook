@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/ingestion"
 )
@@ -132,5 +133,68 @@ func TestExtractAndStage_DuplicateBlockedBeforeEgress(t *testing.T) {
 	h, _ := svc.ListImportHistory(ctx, userID, accountID)
 	if len(h) != 1 || h[0].Reconciled == nil || *h[0].Reconciled || h[0].Difference != "95.5" {
 		t.Errorf("history = %+v, want 1 entry mismatch diff 95.5", h)
+	}
+}
+
+func TestUndoImport_RemovesOnlyThatImportsRowsAndAllowsReimport(t *testing.T) {
+	svc, userID, accountID, g := newImportSvc(t)
+	ctx := context.Background()
+	const csvA = "Date,Amount,Description\n2026-05-15,-4.50,Coffee\n2026-05-16,2000.00,Paycheck\n"
+	const csvB = "Date,Amount,Description\n2026-06-01,-10.00,Lunch\n"
+
+	if _, err := svc.ImportDocument(ctx, userID, accountID, csvDoc("a.csv", csvA), mustExtract(t, csvA), true); err != nil {
+		t.Fatalf("import A: %v", err)
+	}
+	if _, err := svc.ImportDocument(ctx, userID, accountID, csvDoc("b.csv", csvB), mustExtract(t, csvB), true); err != nil {
+		t.Fatalf("import B: %v", err)
+	}
+	h, err := svc.ListImportHistory(ctx, userID, accountID)
+	if err != nil || len(h) != 2 || !h[0].CanUndo || !h[1].CanUndo {
+		t.Fatalf("history = %+v err=%v, want 2 undoable entries", h, err)
+	}
+	jobA := h[1].JobID
+
+	entry, err := svc.UndoImport(ctx, userID, accountID, jobA)
+	if err != nil {
+		t.Fatalf("undo A: %v", err)
+	}
+	if entry.UndoneAt == nil || entry.RowsUndone != 2 || entry.CanUndo {
+		t.Errorf("undo entry = %+v, want undone with 2 rows removed", entry)
+	}
+	var live int64
+	g.Model(&model.Transaction{}).Where("account_id = ?", accountID).Count(&live)
+	if live != 1 {
+		t.Errorf("live rows after undo = %d, want 1 (import B untouched)", live)
+	}
+
+	// Second undo is refused; the duplicate-statement guard no longer sees A.
+	if _, err := svc.UndoImport(ctx, userID, accountID, jobA); !errors.Is(err, service.ErrImportNotUndoable) {
+		t.Errorf("repeat undo err = %v, want ErrImportNotUndoable", err)
+	}
+	pre, err := svc.ImportDocument(ctx, userID, accountID, csvDoc("a.csv", csvA), mustExtract(t, csvA), false)
+	if err != nil || pre.DuplicateOf != nil || pre.NewCount != 2 {
+		t.Errorf("preview after undo: dup=%v new=%d err=%v, want no duplicate and 2 new", pre.DuplicateOf, pre.NewCount, err)
+	}
+	re, err := svc.ImportDocument(ctx, userID, accountID, csvDoc("a.csv", csvA), mustExtract(t, csvA), true)
+	if err != nil || re.InsertedCount != 2 {
+		t.Fatalf("re-import inserted=%v err=%v, want 2", re, err)
+	}
+}
+
+func TestUndoImport_RejectsForeignUserAndAccount(t *testing.T) {
+	svc, userID, accountID, g := newImportSvc(t)
+	ctx := context.Background()
+	if _, err := svc.ImportDocument(ctx, userID, accountID, csvDoc("a.csv", historyCSV), mustExtract(t, historyCSV), true); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	h, _ := svc.ListImportHistory(ctx, userID, accountID)
+	other := seedTestUser(t, g)
+	if _, err := svc.UndoImport(ctx, other, accountID, h[0].JobID); !errors.Is(err, service.ErrAccountNotFound) {
+		t.Errorf("foreign user err = %v, want ErrAccountNotFound", err)
+	}
+	var live int64
+	g.Model(&model.Transaction{}).Where("account_id = ?", accountID).Count(&live)
+	if live != 2 {
+		t.Errorf("rows after rejected undo = %d, want 2", live)
 	}
 }

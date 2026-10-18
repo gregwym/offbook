@@ -630,6 +630,7 @@ export function TransactionsPage() {
           accounts={accounts}
           onClose={() => setImporting(false)}
           onImported={() => { void fetch(); refreshTransferCandidates() }}
+          onUndone={() => { void fetch(); refreshTransferCandidates() }}
         />
       )}
 

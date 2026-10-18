@@ -204,6 +204,7 @@ export function AccountsPage() {
           initialAccountID={importingInto.id}
           onClose={() => setImportingInto(null)}
           onImported={() => { void fetch() }}
+          onUndone={() => { void fetch() }}
         />
       )}
 

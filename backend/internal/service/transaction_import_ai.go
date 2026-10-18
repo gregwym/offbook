@@ -141,6 +141,7 @@ func (s *TransactionService) CommitJob(ctx context.Context, userID, jobID int64)
 		return nil, fmt.Errorf("rehydrate staged extraction: %w", err)
 	}
 
+	started := time.Now().Add(-importTagWindow)
 	res, err := s.ImportStatement(ctx, userID, *job.AccountID, &ext, true)
 	if err != nil {
 		return nil, err
@@ -156,6 +157,9 @@ func (s *TransactionService) CommitJob(ctx context.Context, userID, jobID int64)
 	job.CompletedAt = &now
 	if err := s.jobRepo.Update(ctx, job); err != nil {
 		return nil, fmt.Errorf("finalize import job: %w", err)
+	}
+	if err := s.tagImportRows(ctx, userID, *job.AccountID, jobID, res, started); err != nil {
+		return nil, err
 	}
 	res.JobID = &jobID
 	return res, nil

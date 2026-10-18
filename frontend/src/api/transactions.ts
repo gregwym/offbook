@@ -115,6 +115,13 @@ export async function listImportHistory(accountID: number): Promise<ImportHistor
   return res.data.data
 }
 
+// undoImport removes the rows a committed import created (IMP-01). The
+// returned entry carries undone_at / rows_undone.
+export async function undoImport(accountID: number, jobID: number): Promise<ImportHistoryEntry> {
+  const res = await apiClient.post<ApiItem<ImportHistoryEntry>>(`/accounts/${accountID}/imports/${jobID}/undo`)
+  return res.data.data
+}
+
 // extractStatement uploads a PDF or photo (or CSV) to the user's configured AI
 // provider for extraction. This is a real egress, so it always sends
 // consent=true — callers MUST obtain explicit user consent first. The backend

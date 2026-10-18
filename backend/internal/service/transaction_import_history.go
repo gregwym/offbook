@@ -53,6 +53,11 @@ type ImportHistoryEntry struct {
 	Reconciled  *bool      `json:"reconciled"`
 	Difference  string     `json:"difference,omitempty"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	// UndoneAt is set once the import was undone; RowsUndone is how many rows
+	// that removed. Legacy imports (no row linkage) have CanUndo false.
+	UndoneAt   *time.Time `json:"undone_at,omitempty"`
+	RowsUndone int        `json:"rows_undone,omitempty"`
+	CanUndo    bool       `json:"can_undo"`
 }
 
 // contentHash is the hex SHA-256 of the uploaded document bytes.
@@ -112,6 +117,7 @@ func (s *TransactionService) ImportDocument(
 	}
 
 	now := time.Now()
+	started := now.Add(-importTagWindow)
 	extractorKind := "deterministic"
 	source := ext.Source
 	if source == "" {
@@ -135,7 +141,80 @@ func (s *TransactionService) ImportDocument(
 		return nil, fmt.Errorf("record import job: %w", err)
 	}
 	res.JobID = &job.ID
+	if err := s.tagImportRows(ctx, userID, accountID, job.ID, res, started); err != nil {
+		return nil, err
+	}
 	return res, nil
+}
+
+// importTagWindow bounds how far back a row's created_at may be and still be
+// claimed by an import job, so a same-id row from an older import is never
+// re-tagged.
+const importTagWindow = time.Minute
+
+// tagImportRows links the rows this import inserted to its audit job.
+func (s *TransactionService) tagImportRows(ctx context.Context, userID, accountID, jobID int64, res *ImportResult, since time.Time) error {
+	if res.InsertedCount == 0 {
+		return nil
+	}
+	ids := make([]string, 0, res.InsertedCount)
+	for _, r := range res.Rows {
+		if r.Status == ImportNew && r.ExternalID != "" {
+			ids = append(ids, r.ExternalID)
+		}
+	}
+	if err := s.repo.TagImportJob(ctx, userID, accountID, jobID, ids, since); err != nil {
+		return fmt.Errorf("link import rows: %w", err)
+	}
+	return nil
+}
+
+// ErrImportNotUndoable is returned when the job is not a completed, not yet
+// undone import owned by the caller.
+var ErrImportNotUndoable = errors.New("this import cannot be undone")
+
+// UndoImport soft-deletes every transaction a committed import created and
+// marks the audit row undone, so the same statement can be imported again.
+// Statement position/balance adjustments are ledger rows of their own and are
+// kept; the position is re-folded from the remaining ledger.
+func (s *TransactionService) UndoImport(ctx context.Context, userID, accountID, jobID int64) (*ImportHistoryEntry, error) {
+	if s.jobRepo == nil {
+		return nil, ErrImportStagingUnavailable
+	}
+	account, err := s.fetchOwnedAccount(ctx, userID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	job, err := s.jobRepo.GetForUser(ctx, userID, jobID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrImportJobNotFound
+		}
+		return nil, err
+	}
+	if job.AccountID == nil || *job.AccountID != accountID {
+		return nil, ErrImportJobNotFound
+	}
+	if job.Status != "completed" || job.UndoneAt != nil {
+		return nil, ErrImportNotUndoable
+	}
+	n, err := s.repo.SoftDeleteByImportJob(ctx, userID, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("undo import: %w", err)
+	}
+	now := time.Now()
+	removed := int(n)
+	job.UndoneAt, job.RowsUndone = &now, &removed
+	if err := s.jobRepo.Update(ctx, job); err != nil {
+		return nil, fmt.Errorf("record import undo: %w", err)
+	}
+	if n > 0 {
+		if err := s.refreshPosition(ctx, userID, account.ID, account.PrimaryQuoteAssetID); err != nil {
+			return nil, err
+		}
+	}
+	e := historyEntry(*job)
+	return &e, nil
 }
 
 // applyResultToJob copies counts and reconciliation from an ImportResult onto
@@ -166,9 +245,19 @@ func (s *TransactionService) ListImportHistory(ctx context.Context, userID, acco
 	if err != nil {
 		return nil, err
 	}
+	ids := make([]int64, 0, len(jobs))
+	for _, j := range jobs {
+		ids = append(ids, j.ID)
+	}
+	live, err := s.repo.CountLiveByImportJobs(ctx, userID, ids)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]ImportHistoryEntry, 0, len(jobs))
 	for _, j := range jobs {
-		out = append(out, historyEntry(j))
+		e := historyEntry(j)
+		e.CanUndo = j.UndoneAt == nil && live[j.ID] > 0
+		out = append(out, e)
 	}
 	return out, nil
 }
@@ -177,6 +266,10 @@ func historyEntry(j model.IngestionJob) ImportHistoryEntry {
 	e := ImportHistoryEntry{
 		JobID: j.ID, Source: j.Source, ImportedAt: j.CreatedAt,
 		Reconciled: j.Reconciled, CompletedAt: j.CompletedAt,
+		UndoneAt: j.UndoneAt,
+	}
+	if j.RowsUndone != nil {
+		e.RowsUndone = *j.RowsUndone
 	}
 	if j.CompletedAt != nil {
 		e.ImportedAt = *j.CompletedAt
