@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
+	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/ingestion"
 )
 
@@ -202,4 +204,51 @@ func TestUndoImport_UnlinksTransferPartner(t *testing.T) {
 		t.Fatalf("delete: %v", err)
 	}
 	assertFree("single delete", b.ID)
+}
+
+// TestUndoImport_BlocksOlderWhileNewerStands is the #489 repro: undoing import
+// #1 while import #2 stands is refused; unwinding newest-first works.
+func TestUndoImport_BlocksOlderWhileNewerStands(t *testing.T) {
+	svc, userID, accountID, g := newImportSvc(t)
+	svc = svc.WithStatementPositions(g, repository.NewAssetRepository(g))
+	ctx := context.Background()
+	t.Cleanup(func() { g.Unscoped().Where("account_id = ?", accountID).Delete(&model.Position{}) })
+	t.Cleanup(func() { g.Unscoped().Where("account_id = ?", accountID).Delete(&model.Transaction{}) })
+	t.Cleanup(func() { g.Where("account_id = ?", accountID).Delete(&model.AccountBalanceObservation{}) })
+
+	var acct model.Account
+	if err := g.First(&acct, accountID).Error; err != nil {
+		t.Fatal(err)
+	}
+	desc := "seed"
+	if err := g.Create(&model.Transaction{
+		UserID: userID, AccountID: accountID, AssetID: acct.PrimaryQuoteAssetID, Kind: model.KindOpeningBalance,
+		Amount: decimal.NewFromInt(1000), Description: &desc, TransactionDate: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC), Source: "system",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	res1, err := svc.ImportDocument(ctx, userID, accountID, csvDoc("may.pdf", "may-bytes"), stmtExtraction("900.00"), true)
+	if err != nil {
+		t.Fatalf("import 1: %v", err)
+	}
+	bal, at, _ := ingestion.ParseClosingBalance("880.00", "2026-06-30")
+	ex2 := &ingestion.Extraction{
+		Source:           "pdf",
+		Rows:             []ingestion.ParsedRow{ingestion.NewRow(1, "2026-06-10", "-20.00", "Water", 1)},
+		ClosingBalance:   &bal,
+		ClosingBalanceAt: &at,
+	}
+	res2, err := svc.ImportDocument(ctx, userID, accountID, csvDoc("jun.pdf", "jun-bytes"), ex2, true)
+	if err != nil {
+		t.Fatalf("import 2: %v", err)
+	}
+	if _, err := svc.UndoImport(ctx, userID, accountID, *res1.JobID); !errors.Is(err, service.ErrImportNotUndoable) {
+		t.Fatalf("undo older err = %v, want ErrImportNotUndoable", err)
+	}
+	if _, err := svc.UndoImport(ctx, userID, accountID, *res2.JobID); err != nil {
+		t.Fatalf("undo newest: %v", err)
+	}
+	if _, err := svc.UndoImport(ctx, userID, accountID, *res1.JobID); err != nil {
+		t.Fatalf("undo older after newest: %v", err)
+	}
 }
