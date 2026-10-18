@@ -151,3 +151,33 @@ func TestMergePlaidUpdate_PreservesReviewedAt(t *testing.T) {
 		})
 	}
 }
+
+// #465: a Plaid resync (e.g. pending→posted amount change) must never unhide a
+// transaction the user excluded from spending, and must not hide a visible one.
+func TestMergePlaidUpdate_PreservesHiddenAt(t *testing.T) {
+	hidden := time.Date(2026, 5, 12, 9, 0, 0, 0, time.UTC)
+	incoming := plaidsvc.PlaidTransaction{
+		PlaidTransactionID: "ptx-10",
+		PlaidAccountID:     "pacct-1",
+		Amount:             decimal.NewFromFloat(12.34),
+		Currency:           "USD",
+		Name:               "COFFEE",
+		Date:               "2026-05-11",
+	}
+	for _, tc := range []struct {
+		name string
+		in   *time.Time
+	}{{"hidden", &hidden}, {"visible", nil}} {
+		t.Run(tc.name, func(t *testing.T) {
+			existing := model.Transaction{ID: 1, UserID: 7, AccountID: 11, AssetID: 1, Source: "plaid",
+				PlaidTransactionID: ptr("ptx-10"), TransactionDate: mustDate("2026-05-10"), HiddenAt: tc.in}
+			merged, err := plaidsvc.MergePlaidUpdate(existing, incoming, 11, 1, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (merged.HiddenAt == nil) != (tc.in == nil) || (tc.in != nil && !merged.HiddenAt.Equal(*tc.in)) {
+				t.Errorf("hidden_at = %v, want %v", merged.HiddenAt, tc.in)
+			}
+		})
+	}
+}
