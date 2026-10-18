@@ -45,6 +45,19 @@ describe('ImportTransactionsModal import history (#376)', () => {
     expect(screen.getByText(/9 imported · 1 duplicate/)).toBeInTheDocument()
   })
 
+  it('explains why a pre-undo import has no Undo button', async () => {
+    const entry = {
+      job_id: 1, source: 'csv', file_name: 'old.csv', imported_at: '2026-07-01T00:00:00Z',
+      rows_total: 4, rows_imported: 4, rows_duplicate: 0, rows_error: 0, reconciled: null, can_undo: false,
+    }
+    server.use(http.get(`${API}/accounts/:id/imports`, () => HttpResponse.json({ total: 1, data: [entry] })))
+    render(
+      <ImportTransactionsModal accounts={fx.accounts} initialAccountID={fx.account1.id} onClose={vi.fn()} onImported={vi.fn()} />,
+    )
+    expect(await screen.findByText(/Imported before undo was available/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Undo import' })).not.toBeInTheDocument()
+  })
+
   it('undoes an import after an inline confirmation and notifies the caller', async () => {
     const entry = {
       job_id: 3, source: 'csv', file_name: 'july.csv', imported_at: '2026-08-01T00:00:00Z',

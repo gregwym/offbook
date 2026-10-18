@@ -663,6 +663,8 @@ function ImportHistoryList({
                   Undo import
                 </button>
               )
+            ) : e.rows_imported > 0 ? (
+              <p className="mt-0.5 text-xs text-gray-500">Imported before undo was available, so it can’t be undone here.</p>
             ) : null}
             {undoError?.jobID === e.job_id && (
               <p role="alert" className="mt-1 text-xs text-red-600">Couldn’t undo: {undoError.message}</p>
