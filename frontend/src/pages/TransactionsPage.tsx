@@ -768,7 +768,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
     </select>
   )
   return (
-    <tr className={`hover:bg-gray-50 ${isReconciling ? 'bg-amber-50/60' : ''} ${unreviewed ? 'border-l-2 border-l-amber-400' : ''}`}>
+    <tr className={`hover:bg-gray-50 ${isReconciling ? 'bg-amber-50/60' : ''} ${unreviewed ? 'border-l-2 border-l-amber-400' : ''} ${hidden ? 'text-gray-500 opacity-60' : ''}`}>
       <td className="px-2 py-2 align-top md:px-3">
         {reviewable && onSelect && (
           <input
