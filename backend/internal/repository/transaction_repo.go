@@ -176,11 +176,12 @@ type TransactionRepository interface {
 	// concurrent import. Like CreateBatch, this only guards LIVE duplicates;
 	// soft-deleted rows sit outside the partial index.
 	ImportBatch(ctx context.Context, txns []model.Transaction) (int64, error)
-	// TagImportJob links the live, still-untagged rows with these external_ids
-	// (created at or after since) to the import job that inserted them.
-	TagImportJob(ctx context.Context, userID, accountID, jobID int64, externalIDs []string, since time.Time) error
-	// SoftDeleteByImportJob soft-deletes every live row created by the job and
-	// returns how many were removed. User-scoped.
+	// ImportJobAssetIDs returns the distinct assets of the live rows the job
+	// created (flow rows plus its reconciling adjustments). User-scoped.
+	ImportJobAssetIDs(ctx context.Context, userID, jobID int64) ([]int64, error)
+	// SoftDeleteByImportJob soft-deletes every live row created by the job
+	// (flow rows and reconciling adjustments) and returns how many were
+	// removed. User-scoped.
 	SoftDeleteByImportJob(ctx context.Context, userID, jobID int64) (int64, error)
 	// CountLiveByImportJobs returns, per job id, the live rows it created.
 	CountLiveByImportJobs(ctx context.Context, userID int64, jobIDs []int64) (map[int64]int64, error)
@@ -792,15 +793,14 @@ func (r *transactionRepo) SoftDelete(ctx context.Context, userID, id int64) erro
 	return nil
 }
 
-func (r *transactionRepo) TagImportJob(ctx context.Context, userID, accountID, jobID int64, externalIDs []string, since time.Time) error {
-	if len(externalIDs) == 0 {
-		return nil
-	}
-	return r.db.WithContext(ctx).
+func (r *transactionRepo) ImportJobAssetIDs(ctx context.Context, userID, jobID int64) ([]int64, error) {
+	var ids []int64
+	err := r.db.WithContext(ctx).
 		Model(&model.Transaction{}).
-		Where("user_id = ? AND account_id = ? AND external_id IN ? AND import_job_id IS NULL AND created_at >= ?",
-			userID, accountID, externalIDs, since).
-		UpdateColumn("import_job_id", jobID).Error
+		Where("user_id = ? AND import_job_id = ?", userID, jobID).
+		Distinct().
+		Pluck("asset_id", &ids).Error
+	return ids, err
 }
 
 func (r *transactionRepo) SoftDeleteByImportJob(ctx context.Context, userID, jobID int64) (int64, error) {

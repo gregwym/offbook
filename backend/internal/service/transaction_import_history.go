@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
@@ -101,82 +102,75 @@ func (s *TransactionService) ImportDocument(
 	ext *ingestion.Extraction,
 	commit bool,
 ) (*ImportResult, error) {
-	res, err := s.ImportStatement(ctx, userID, accountID, ext, commit)
-	if err != nil {
-		return nil, err
-	}
-	reconcile(res, ext)
 	hash := contentHash(doc.Data)
 	prior, err := s.findPrior(ctx, userID, accountID, hash)
 	if err != nil {
 		return nil, err
 	}
-	res.DuplicateOf = prior
 	if !commit || s.jobRepo == nil {
+		res, err := s.ImportStatement(ctx, userID, accountID, ext, commit)
+		if err != nil {
+			return nil, err
+		}
+		reconcile(res, ext)
+		res.DuplicateOf = prior
 		return res, nil
 	}
 
-	now := time.Now()
-	started := now.Add(-importTagWindow)
+	if _, err := s.fetchOwnedAccount(ctx, userID, accountID); err != nil {
+		return nil, err
+	}
 	extractorKind := "deterministic"
 	source := ext.Source
 	if source == "" {
 		source = "csv"
 	}
+	// The job exists before the rows so every row, adjustment and observation
+	// is linked to it at insert time (#483); it only becomes "completed" once
+	// the import succeeded.
 	job := &model.IngestionJob{
 		UserID:      userID,
 		Source:      source,
 		Extractor:   &extractorKind,
 		AccountID:   &accountID,
-		Status:      "completed",
-		CompletedAt: &now,
+		Status:      "processing",
 		ContentHash: &hash,
 	}
 	if doc.Filename != "" {
 		fn := doc.Filename
 		job.FileName = &fn
 	}
-	applyResultToJob(job, res)
 	if err := s.jobRepo.Create(ctx, job); err != nil {
 		return nil, fmt.Errorf("record import job: %w", err)
 	}
-	res.JobID = &job.ID
-	if err := s.tagImportRows(ctx, userID, accountID, job.ID, res, started); err != nil {
+	res, err := s.importStatement(ctx, userID, accountID, ext, true, &job.ID)
+	if err != nil {
+		job.Status = "failed"
+		_ = s.jobRepo.Update(ctx, job)
 		return nil, err
 	}
+	reconcile(res, ext)
+	res.DuplicateOf = prior
+	now := time.Now()
+	job.Status, job.CompletedAt = "completed", &now
+	applyResultToJob(job, res)
+	if err := s.jobRepo.Update(ctx, job); err != nil {
+		return nil, fmt.Errorf("record import job: %w", err)
+	}
+	res.JobID = &job.ID
 	return res, nil
-}
-
-// importTagWindow bounds how far back a row's created_at may be and still be
-// claimed by an import job, so a same-id row from an older import is never
-// re-tagged.
-const importTagWindow = time.Minute
-
-// tagImportRows links the rows this import inserted to its audit job.
-func (s *TransactionService) tagImportRows(ctx context.Context, userID, accountID, jobID int64, res *ImportResult, since time.Time) error {
-	if res.InsertedCount == 0 {
-		return nil
-	}
-	ids := make([]string, 0, res.InsertedCount)
-	for _, r := range res.Rows {
-		if r.Status == ImportNew && r.ExternalID != "" {
-			ids = append(ids, r.ExternalID)
-		}
-	}
-	if err := s.repo.TagImportJob(ctx, userID, accountID, jobID, ids, since); err != nil {
-		return fmt.Errorf("link import rows: %w", err)
-	}
-	return nil
 }
 
 // ErrImportNotUndoable is returned when the job is not a completed, not yet
 // undone import owned by the caller.
 var ErrImportNotUndoable = errors.New("this import cannot be undone")
 
-// UndoImport soft-deletes every transaction a committed import created and
-// marks the audit row undone, so the same statement can be imported again.
-// Statement position/balance adjustments are ledger rows of their own and are
-// kept; the position is re-folded from the remaining ledger.
+// UndoImport reverses a committed import exactly: it soft-deletes every ledger
+// row the job created — the flow rows AND the closing-balance / position
+// adjustments sized to absorb them — removes the balance observations it
+// recorded, re-folds every touched position, and marks the audit row undone,
+// so the account returns to its pre-import state and the same statement can be
+// imported again. All writes share one DB transaction (#483).
 func (s *TransactionService) UndoImport(ctx context.Context, userID, accountID, jobID int64) (*ImportHistoryEntry, error) {
 	if s.jobRepo == nil {
 		return nil, ErrImportStagingUnavailable
@@ -198,20 +192,55 @@ func (s *TransactionService) UndoImport(ctx context.Context, userID, accountID, 
 	if job.Status != "completed" || job.UndoneAt != nil {
 		return nil, ErrImportNotUndoable
 	}
-	n, err := s.repo.SoftDeleteByImportJob(ctx, userID, jobID)
-	if err != nil {
-		return nil, fmt.Errorf("undo import: %w", err)
+
+	undo := func(txRepo repository.TransactionRepository, obsRepo repository.BalanceObservationRepository,
+		posRepo repository.PositionRepository, jobRepo repository.IngestionJobRepository) error {
+		assetIDs, err := txRepo.ImportJobAssetIDs(ctx, userID, jobID)
+		if err != nil {
+			return fmt.Errorf("undo import: %w", err)
+		}
+		n, err := txRepo.SoftDeleteByImportJob(ctx, userID, jobID)
+		if err != nil {
+			return fmt.Errorf("undo import: %w", err)
+		}
+		if obsRepo != nil {
+			if err := obsRepo.DeleteByImportJob(ctx, userID, jobID); err != nil {
+				return fmt.Errorf("undo import observations: %w", err)
+			}
+		}
+		now := time.Now()
+		removed := int(n)
+		job.UndoneAt, job.RowsUndone = &now, &removed
+		if err := jobRepo.Update(ctx, job); err != nil {
+			return fmt.Errorf("record import undo: %w", err)
+		}
+		if posRepo == nil {
+			return nil
+		}
+		for _, assetID := range assetIDs {
+			qty, err := txRepo.FoldQuantity(ctx, userID, account.ID, assetID)
+			if err != nil {
+				return fmt.Errorf("fold position: %w", err)
+			}
+			if err := posRepo.Upsert(ctx, &model.Position{
+				UserID: userID, AccountID: account.ID, AssetID: assetID, Quantity: qty,
+			}); err != nil {
+				return fmt.Errorf("refresh position: %w", err)
+			}
+		}
+		return nil
 	}
-	now := time.Now()
-	removed := int(n)
-	job.UndoneAt, job.RowsUndone = &now, &removed
-	if err := s.jobRepo.Update(ctx, job); err != nil {
-		return nil, fmt.Errorf("record import undo: %w", err)
-	}
-	if n > 0 {
-		if err := s.refreshPosition(ctx, userID, account.ID, account.PrimaryQuoteAssetID); err != nil {
+
+	if s.db == nil {
+		// Unit-test wiring without a DB handle: no observations/positions.
+		if err := undo(s.repo, nil, nil, s.jobRepo); err != nil {
 			return nil, err
 		}
+	} else if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return undo(repository.NewTransactionRepository(tx), repository.NewBalanceObservationRepository(tx),
+			repository.NewPositionRepository(tx), repository.NewIngestionJobRepository(tx))
+	}); err != nil {
+		return nil, err
 	}
 	e := historyEntry(*job)
 	return &e, nil

@@ -95,6 +95,13 @@ type ImportResult struct {
 // the extraction; uncategorized rows are run through the user's categorization
 // rules on insert.
 func (s *TransactionService) ImportStatement(ctx context.Context, userID, accountID int64, ext *ingestion.Extraction, commit bool) (*ImportResult, error) {
+	return s.importStatement(ctx, userID, accountID, ext, commit, nil)
+}
+
+// importStatement is ImportStatement with an optional audit job: every row,
+// adjustment and observation a commit writes is linked to it at insert time so
+// the import can later be undone exactly (#483).
+func (s *TransactionService) importStatement(ctx context.Context, userID, accountID int64, ext *ingestion.Extraction, commit bool, jobID *int64) (*ImportResult, error) {
 	// fetchOwnedAccount rejects another user's account and gives us the asset.
 	account, err := s.fetchOwnedAccount(ctx, userID, accountID)
 	if err != nil {
@@ -181,7 +188,7 @@ func (s *TransactionService) ImportStatement(ctx context.Context, userID, accoun
 				res.ReviewCount++
 			}
 			if commit {
-				toInsert = append(toInsert, buildImportTxn(userID, account, source, c.row, c.eid, compiled))
+				toInsert = append(toInsert, buildImportTxn(userID, account, source, c.row, c.eid, compiled, jobID))
 			}
 		}
 		res.Rows = append(res.Rows, rr)
@@ -215,7 +222,7 @@ func (s *TransactionService) ImportStatement(ctx context.Context, userID, accoun
 		}
 		if commit {
 			// Fold already includes the rows inserted above.
-			if err := s.commitPositions(ctx, userID, account, ext, res); err != nil {
+			if err := s.commitPositions(ctx, userID, account, ext, res, jobID); err != nil {
 				return nil, fmt.Errorf("reconcile statement positions: %w", err)
 			}
 		} else if err := s.previewPositions(ctx, userID, account, ext, newSum, res); err != nil {
@@ -225,7 +232,7 @@ func (s *TransactionService) ImportStatement(ctx context.Context, userID, accoun
 	return res, nil
 }
 
-func buildImportTxn(userID int64, account *model.Account, source string, row ingestion.ParsedRow, eid string, compiled []categorization.CompiledRule) model.Transaction {
+func buildImportTxn(userID int64, account *model.Account, source string, row ingestion.ParsedRow, eid string, compiled []categorization.CompiledRule, jobID *int64) model.Transaction {
 	eidCopy := eid
 	t := model.Transaction{
 		UserID:          userID,
@@ -236,6 +243,7 @@ func buildImportTxn(userID int64, account *model.Account, source string, row ing
 		TransactionDate: row.Date,
 		Source:          source,
 		ExternalID:      &eidCopy,
+		ImportJobID:     jobID,
 	}
 	if desc := strings.TrimSpace(row.Description); desc != "" {
 		t.Description = &desc

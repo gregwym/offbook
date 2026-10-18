@@ -33,6 +33,22 @@ func ReconcilePosition(
 	asOf time.Time,
 	source string,
 ) (*model.Transaction, error) {
+	return reconcilePositionForJob(ctx, txRepo, obsRepo, userID, accountID, assetID, reported, asOf, source, nil)
+}
+
+// reconcilePositionForJob is ReconcilePosition that links the observation and
+// any adjustment it writes to a statement import job, so Undo can reverse
+// them with the rows (#483).
+func reconcilePositionForJob(
+	ctx context.Context,
+	txRepo repository.TransactionRepository,
+	obsRepo repository.BalanceObservationRepository,
+	userID, accountID, assetID int64,
+	reported decimal.Decimal,
+	asOf time.Time,
+	source string,
+	jobID *int64,
+) (*model.Transaction, error) {
 	obs := &model.AccountBalanceObservation{
 		UserID:           userID,
 		AccountID:        accountID,
@@ -40,6 +56,7 @@ func ReconcilePosition(
 		ObservedQuantity: reported,
 		AsOf:             asOf,
 		Source:           source,
+		ImportJobID:      jobID,
 	}
 	if err := obsRepo.Insert(ctx, obs); err != nil {
 		return nil, fmt.Errorf("reconcile: record observation: %w", err)
@@ -74,6 +91,7 @@ func ReconcilePosition(
 		TransactionDate:       asOf,
 		Source:                "system",
 		CausedByObservationID: &obs.ID,
+		ImportJobID:           jobID,
 	}
 	if err := txRepo.Create(ctx, recTx); err != nil {
 		return nil, fmt.Errorf("reconcile: write %s: %w", kind, err)

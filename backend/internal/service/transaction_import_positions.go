@@ -188,7 +188,7 @@ func (s *TransactionService) previewPositions(ctx context.Context, userID int64,
 // commitPositions reconciles every valid extracted position and the closing
 // balance in one DB transaction, then upserts positions.quantity so
 // positions == Σ transactions per asset. Runs after the flow rows are inserted.
-func (s *TransactionService) commitPositions(ctx context.Context, userID int64, account *model.Account, ext *ingestion.Extraction, res *ImportResult) error {
+func (s *TransactionService) commitPositions(ctx context.Context, userID int64, account *model.Account, ext *ingestion.Extraction, res *ImportResult, jobID *int64) error {
 	if s.assetRepo == nil || s.db == nil {
 		return nil
 	}
@@ -232,7 +232,7 @@ func (s *TransactionService) commitPositions(ctx context.Context, userID int64, 
 		obsRepo := repository.NewBalanceObservationRepository(tx)
 		posRepo := repository.NewPositionRepository(tx)
 		for _, t := range targets {
-			rec, err := ReconcilePosition(ctx, txRepo, obsRepo, userID, account.ID, t.assetID, t.quantity, t.asOf, "statement")
+			rec, err := reconcilePositionForJob(ctx, txRepo, obsRepo, userID, account.ID, t.assetID, t.quantity, t.asOf, "statement", jobID)
 			if err != nil {
 				return err
 			}
