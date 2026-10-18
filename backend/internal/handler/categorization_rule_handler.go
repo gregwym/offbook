@@ -28,7 +28,8 @@ func (h *CategorizationRuleHandler) Register(g *gin.RouterGroup) {
 }
 
 type applyRulesRequest struct {
-	Scope string `json:"scope"`
+	Scope  string `json:"scope"`
+	DryRun bool   `json:"dry_run"`
 }
 
 // Apply runs the bulk re-categorize endpoint. Empty body defaults to
@@ -41,7 +42,11 @@ func (h *CategorizationRuleHandler) Apply(c *gin.Context) {
 			return
 		}
 	}
-	result, err := h.svc.Apply(c.Request.Context(), auth.MustUserID(c.Request.Context()), req.Scope)
+	run := h.svc.Apply
+	if req.DryRun {
+		run = h.svc.Preview
+	}
+	result, err := run(c.Request.Context(), auth.MustUserID(c.Request.Context()), req.Scope)
 	if err != nil {
 		h.writeServiceError(c, err)
 		return

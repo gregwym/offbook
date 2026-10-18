@@ -30,6 +30,8 @@ export type ApplyResult = {
   scanned: number
   updated: number
   skipped_manual: number
+  // true when nothing was written; `updated` is then the would-change count.
+  dry_run?: boolean
 }
 
 export type ApplyScope = 'all' | 'uncategorized' | 'plaid_default'
