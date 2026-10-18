@@ -165,6 +165,10 @@ func (s *TransactionService) ImportDocument(
 // undone import owned by the caller.
 var ErrImportNotUndoable = errors.New("this import cannot be undone")
 
+// ErrImportNotLatest is returned when a newer, still-standing import exists
+// for the account; it wraps ErrImportNotUndoable so handlers map it to 409.
+var ErrImportNotLatest = fmt.Errorf("%w: undo the newer import into this account first", ErrImportNotUndoable)
+
 // UndoImport reverses a committed import exactly: it soft-deletes every ledger
 // row the job created — the flow rows AND the closing-balance / position
 // adjustments sized to absorb them — removes the balance observations it
@@ -191,6 +195,19 @@ func (s *TransactionService) UndoImport(ctx context.Context, userID, accountID, 
 	}
 	if job.Status != "completed" || job.UndoneAt != nil {
 		return nil, ErrImportNotUndoable
+	}
+	// Undoing an older statement while a newer one stands would leave the
+	// newer import's balance observation contradicting the ledger (#489), so
+	// imports unwind newest-first.
+	jobs, err := s.jobRepo.ListCompletedByAccount(ctx, userID, accountID, 200)
+	if err != nil {
+		return nil, err
+	}
+	for _, j := range jobs {
+		if j.ID != job.ID && j.UndoneAt == nil && (j.CreatedAt.After(job.CreatedAt) ||
+			(j.CreatedAt.Equal(job.CreatedAt) && j.ID > job.ID)) {
+			return nil, ErrImportNotLatest
+		}
 	}
 
 	undo := func(txRepo repository.TransactionRepository, obsRepo repository.BalanceObservationRepository,
