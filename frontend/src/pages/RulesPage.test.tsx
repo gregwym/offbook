@@ -74,4 +74,26 @@ describe('RulesPage smoke', () => {
       expect(screen.queryByText('TRADER JOES')).not.toBeInTheDocument()
     })
   })
+
+  it('previews rule impact as a dry run, then applies on confirmation', async () => {
+    const bodies: unknown[] = []
+    server.use(
+      http.post(`${API}/categorization-rules/apply`, async ({ request }) => {
+        const body = (await request.json()) as { dry_run?: boolean }
+        bodies.push(body)
+        return HttpResponse.json({
+          data: { scanned: 40, updated: 7, skipped_manual: 2, dry_run: !!body.dry_run },
+        })
+      }),
+    )
+    renderPage(<RulesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview changes' }))
+    expect(await screen.findByText(/7 of 40 transactions would be re-categorized/)).toBeTruthy()
+    expect(bodies).toEqual([{ dry_run: true }])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply now' }))
+    await waitFor(() => expect(screen.getByText(/Scanned 40, updated 7/)).toBeTruthy())
+    expect(bodies[1]).toEqual({})
+    expect(screen.queryByRole('button', { name: 'Apply now' })).toBeNull()
+  })
 })

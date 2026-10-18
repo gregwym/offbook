@@ -26,7 +26,7 @@ type State = {
   create: (input: CreateRuleInput) => Promise<CategorizationRule>
   update: (id: number, input: UpdateRuleInput) => Promise<CategorizationRule>
   remove: (id: number) => Promise<void>
-  apply: (scope?: ApplyScope) => Promise<ApplyResult>
+  apply: (scope?: ApplyScope, dryRun?: boolean) => Promise<ApplyResult>
   clearError: () => void
 }
 
@@ -81,10 +81,10 @@ export const useRulesStore = create<State>((set, get) => ({
     }
   },
 
-  apply: async (scope) => {
+  apply: async (scope, dryRun) => {
     set({ error: null, code: null })
     try {
-      const result = await apiApply(scope)
+      const result = await apiApply(scope, dryRun)
       // Re-fetch transactions is a page-level concern; rules themselves
       // didn't change, so no rules-store refresh needed.
       return result

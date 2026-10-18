@@ -27,8 +27,9 @@ export async function deleteRule(id: number): Promise<void> {
 }
 
 // Empty body defaults to scope='all' on the backend.
-export async function applyRules(scope?: ApplyScope): Promise<ApplyResult> {
-  const body = scope ? { scope } : {}
+// dryRun reports what would change without writing.
+export async function applyRules(scope?: ApplyScope, dryRun?: boolean): Promise<ApplyResult> {
+  const body = { ...(scope ? { scope } : {}), ...(dryRun ? { dry_run: true } : {}) }
   const res = await apiClient.post<ApiItem<ApplyResult>>('/categorization-rules/apply', body)
   return res.data.data
 }

@@ -180,6 +180,9 @@ type ApplyResult struct {
 	Scanned       int `json:"scanned"`
 	Updated       int `json:"updated"`
 	SkippedManual int `json:"skipped_manual"`
+	// DryRun is true when nothing was written; Updated then counts the rows
+	// that would change.
+	DryRun bool `json:"dry_run"`
 }
 
 // Apply walks the user's transactions in chunks and re-runs the categorization
@@ -190,6 +193,16 @@ type ApplyResult struct {
 // resulting decision differs from the row's current state — re-runs are
 // effectively idempotent.
 func (s *CategorizationRuleService) Apply(ctx context.Context, userID int64, scope string) (ApplyResult, error) {
+	return s.apply(ctx, userID, scope, false)
+}
+
+// Preview is Apply without writes: it reports how many rows the current rule
+// set would re-categorize so the user can see the impact before committing.
+func (s *CategorizationRuleService) Preview(ctx context.Context, userID int64, scope string) (ApplyResult, error) {
+	return s.apply(ctx, userID, scope, true)
+}
+
+func (s *CategorizationRuleService) apply(ctx context.Context, userID int64, scope string, dryRun bool) (ApplyResult, error) {
 	if scope == "" {
 		scope = repository.CategorizationScopeAll
 	}
@@ -213,7 +226,7 @@ func (s *CategorizationRuleService) Apply(ctx context.Context, userID int64, sco
 	}
 	rules := categorization.Compile(stored)
 
-	var result ApplyResult
+	result := ApplyResult{DryRun: dryRun}
 	const chunkSize = 1000
 	afterID := int64(0)
 
@@ -250,6 +263,10 @@ func (s *CategorizationRuleService) Apply(ctx context.Context, userID int64, sco
 				if row.CategoryID != nil && *row.CategoryID == d.CategoryID &&
 					row.CategorizationRuleID != nil && *row.CategorizationRuleID == d.RuleID &&
 					row.CategorizationMethod != nil && *row.CategorizationMethod == categorization.MethodRule {
+					continue
+				}
+				if dryRun {
+					result.Updated++
 					continue
 				}
 				catID := d.CategoryID

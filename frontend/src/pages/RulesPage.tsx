@@ -19,6 +19,7 @@ export function RulesPage() {
   const [editing, setEditing] = useState<CategorizationRule | null>(null)
   const [applying, setApplying] = useState(false)
   const [applyMsg, setApplyMsg] = useState<string | null>(null)
+  const [previewed, setPreviewed] = useState(false)
   const [verdicts, setVerdicts] = useState<AICategorizationVerdict[]>([])
   const [promoteSeed, setPromoteSeed] = useState<{ merchantKey: string; defaults: RuleFormDefaults } | null>(null)
   const [promotedKeys, setPromotedKeys] = useState<Set<string>>(new Set())
@@ -53,12 +54,14 @@ export function RulesPage() {
     return rules.reduce((m, r) => Math.max(m, r.priority), 0) + 10
   }, [rules])
 
-  const runApply = async () => {
+  const runApply = async (dryRun = false) => {
     setApplying(true)
     setApplyMsg(null)
+    setPreviewed(false)
     try {
-      const result = await apply()
+      const result = await apply(undefined, dryRun)
       setApplyMsg(formatApplyResult(result))
+      setPreviewed(dryRun)
     } catch {
       // store already captured the error; toast it via the error banner
     } finally {
@@ -78,7 +81,15 @@ export function RulesPage() {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={runApply}
+            onClick={() => runApply(true)}
+            disabled={applying || rules.length === 0}
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Preview changes
+          </button>
+          <button
+            type="button"
+            onClick={() => runApply(false)}
             disabled={applying || rules.length === 0}
             className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >
@@ -103,8 +114,20 @@ export function RulesPage() {
       )}
       {applyMsg && (
         <div className="mt-4 flex items-start justify-between rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          <span>{applyMsg}</span>
-          <button type="button" onClick={() => setApplyMsg(null)} className="ml-3 text-emerald-700 hover:text-emerald-900">×</button>
+          <span>
+            {applyMsg}
+            {previewed && (
+              <button
+                type="button"
+                onClick={() => runApply(false)}
+                disabled={applying}
+                className="ml-3 font-medium underline hover:text-emerald-900 disabled:opacity-50"
+              >
+                Apply now
+              </button>
+            )}
+          </span>
+          <button type="button" aria-label="Dismiss" onClick={() => { setApplyMsg(null); setPreviewed(false) }} className="ml-3 text-emerald-700 hover:text-emerald-900">×</button>
         </div>
       )}
 
@@ -250,6 +273,10 @@ export function RulesPage() {
 }
 
 function formatApplyResult(r: ApplyResult): string {
+  const manual = r.skipped_manual > 0 ? `; ${r.skipped_manual} manual picks stay as they are` : ''
+  if (r.dry_run) {
+    return `Preview: ${r.updated} of ${r.scanned} transactions would be re-categorized${manual}. Nothing has been changed.`
+  }
   const parts = [`Scanned ${r.scanned}`, `updated ${r.updated}`]
   if (r.skipped_manual > 0) {
     parts.push(`skipped ${r.skipped_manual} manual`)

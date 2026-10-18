@@ -299,3 +299,50 @@ func TestCategorizationRuleService_Apply_BadScopeRejected(t *testing.T) {
 		t.Errorf("bad scope err = %v, want ErrInvalidApplyScope", err)
 	}
 }
+
+// TestCategorizationRuleService_Preview_WritesNothing: Preview reports the
+// rows Apply would change (and skips manual picks) without touching them.
+func TestCategorizationRuleService_Preview_WritesNothing(t *testing.T) {
+	svc, userID, accountID, fixtureCat, g := newRuleApplySvc(t)
+	ctx := context.Background()
+
+	rule := &model.CategorizationRule{
+		UserID: userID, Pattern: "WHOLEFDS", MatchType: "contains",
+		CategoryID: fixtureCat, Priority: 50, IsActive: true,
+	}
+	if err := g.Create(rule).Error; err != nil {
+		t.Fatalf("seed rule: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.CategorizationRule{}, rule.ID) })
+
+	for i := 0; i < 3; i++ {
+		mkTxn(t, g, userID, accountID, withDescription("WHOLEFDS #"+fmt.Sprint(i)))
+	}
+	mkTxn(t, g, userID, accountID, withDescription("WHOLEFDS manual"), withManualCategory(fixtureCat))
+
+	preview, err := svc.Preview(ctx, userID, "all")
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	if !preview.DryRun || preview.Updated != 3 || preview.SkippedManual != 1 {
+		t.Errorf("preview = %+v, want dry_run, updated 3, skipped_manual 1", preview)
+	}
+
+	var ruled int64
+	if err := g.Model(&model.Transaction{}).
+		Where("user_id = ? AND categorization_method = ?", userID, "rule").
+		Count(&ruled).Error; err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if ruled != 0 {
+		t.Errorf("rule-categorized rows after Preview = %d, want 0", ruled)
+	}
+
+	applied, err := svc.Apply(ctx, userID, "all")
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if applied.DryRun || applied.Updated != preview.Updated {
+		t.Errorf("apply = %+v, want updated %d (matching preview)", applied, preview.Updated)
+	}
+}
