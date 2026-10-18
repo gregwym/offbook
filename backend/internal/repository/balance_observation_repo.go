@@ -26,6 +26,11 @@ type BalanceObservationRepository interface {
 	// assets, newest first — the per-account reconciliation view's (#370)
 	// observation-history half.
 	ListByAccount(ctx context.Context, userID, accountID int64) ([]model.AccountBalanceObservation, error)
+	// DeleteByImportJob removes the observations a statement import recorded.
+	// This is the one deliberate exception to append-only: undoing the import
+	// reverses the ledger rows, so the balance claim they anchored no longer
+	// holds (#483).
+	DeleteByImportJob(ctx context.Context, userID, jobID int64) error
 }
 
 type balanceObservationRepo struct {
@@ -73,4 +78,10 @@ func (r *balanceObservationRepo) LatestPerAccount(ctx context.Context, userID in
 		return nil, err
 	}
 	return out, nil
+}
+
+func (r *balanceObservationRepo) DeleteByImportJob(ctx context.Context, userID, jobID int64) error {
+	return r.db.WithContext(ctx).
+		Where("user_id = ? AND import_job_id = ?", userID, jobID).
+		Delete(&model.AccountBalanceObservation{}).Error
 }

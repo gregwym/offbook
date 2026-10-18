@@ -20,7 +20,10 @@ type AccountBalanceObservation struct {
 	ObservedQuantity decimal.Decimal `gorm:"type:numeric(30,18);not null" json:"observed_quantity"`
 	AsOf             time.Time       `gorm:"not null" json:"as_of"`
 	Source           string          `gorm:"not null" json:"source"`
-	CreatedAt        time.Time       `json:"created_at"`
+	// ImportJobID is set when a statement import produced this observation, so
+	// undoing the import removes it with the adjustment it caused (#483).
+	ImportJobID *int64    `json:"import_job_id,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 func (AccountBalanceObservation) TableName() string { return "account_balance_observations" }
