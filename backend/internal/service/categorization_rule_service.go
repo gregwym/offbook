@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gorm.io/gorm"
@@ -290,6 +292,130 @@ func (s *CategorizationRuleService) apply(ctx context.Context, userID int64, sco
 		}
 	}
 	return result, nil
+}
+
+// DraftRuleInput is an unsaved rule to evaluate. RuleID, when set, means the
+// draft replaces that stored rule (edit); otherwise it is a new rule.
+type DraftRuleInput struct {
+	RuleID     *int64
+	Pattern    string
+	MatchType  string
+	CategoryID int64
+	AssetID    *int64
+	Priority   int
+	IsActive   bool
+}
+
+// DraftPreview reports a draft rule's impact against the user's existing
+// transactions without writing anything.
+type DraftPreview struct {
+	Scanned int `json:"scanned"`
+	// Matched counts rows where the draft is the winning rule (after priority
+	// ordering against the user's other rules), manual picks excluded.
+	Matched int `json:"matched"`
+	// WouldChange is the subset of Matched whose stored category or rule differs.
+	WouldChange   int `json:"would_change"`
+	SkippedManual int `json:"skipped_manual"`
+	// Samples are up to draftSampleLimit descriptions of matched rows.
+	Samples []string `json:"samples"`
+}
+
+const draftSampleLimit = 5
+
+// PreviewDraft validates the draft like Create/Update would, merges it into
+// the user's rule set at its priority, and reports which transactions it would
+// win. Nothing is written.
+func (s *CategorizationRuleService) PreviewDraft(ctx context.Context, userID int64, in DraftRuleInput) (DraftPreview, error) {
+	if s.txRepo == nil {
+		return DraftPreview{}, ErrInvalidApplyScope
+	}
+	draft := &model.CategorizationRule{
+		UserID:     userID,
+		Pattern:    strings.TrimSpace(in.Pattern),
+		MatchType:  strings.TrimSpace(in.MatchType),
+		CategoryID: in.CategoryID,
+		AssetID:    in.AssetID,
+		Priority:   in.Priority,
+		IsActive:   in.IsActive,
+		ID:         math.MaxInt64, // new rules get the highest id, so lose priority ties
+	}
+	if in.RuleID != nil {
+		if _, err := s.repo.GetByID(ctx, userID, *in.RuleID); err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return DraftPreview{}, ErrRuleNotFound
+			}
+			return DraftPreview{}, err
+		}
+		draft.ID = *in.RuleID
+	}
+	if err := s.validate(ctx, draft); err != nil {
+		return DraftPreview{}, err
+	}
+	stored, err := s.repo.List(ctx, userID)
+	if err != nil {
+		return DraftPreview{}, fmt.Errorf("load rules: %w", err)
+	}
+	merged := make([]model.CategorizationRule, 0, len(stored)+1)
+	for _, r := range stored {
+		if in.RuleID != nil && r.ID == *in.RuleID {
+			continue
+		}
+		merged = append(merged, r)
+	}
+	merged = append(merged, *draft)
+	sort.SliceStable(merged, func(i, j int) bool {
+		if merged[i].Priority != merged[j].Priority {
+			return merged[i].Priority > merged[j].Priority
+		}
+		return merged[i].ID < merged[j].ID
+	})
+	rules := categorization.Compile(merged)
+
+	out := DraftPreview{Samples: []string{}}
+	const chunkSize = 1000
+	afterID := int64(0)
+	for {
+		batch, err := s.txRepo.ListForCategorizationScope(ctx, userID, repository.CategorizationScopeAll, afterID, chunkSize)
+		if err != nil {
+			return out, fmt.Errorf("scan transactions: %w", err)
+		}
+		for i := range batch {
+			row := &batch[i]
+			out.Scanned++
+			afterID = row.ID
+			if row.CategorizationMethod != nil && *row.CategorizationMethod == "manual" {
+				out.SkippedManual++
+				continue
+			}
+			d, ok := categorization.Categorize(rules, row.AssetID, row.DescriptionClean, row.Description, row.MerchantName)
+			if !ok || d.RuleID != draft.ID {
+				continue
+			}
+			out.Matched++
+			if len(out.Samples) < draftSampleLimit {
+				out.Samples = append(out.Samples, draftSampleText(row))
+			}
+			if row.CategoryID != nil && *row.CategoryID == d.CategoryID &&
+				row.CategorizationRuleID != nil && *row.CategorizationRuleID == d.RuleID &&
+				row.CategorizationMethod != nil && *row.CategorizationMethod == categorization.MethodRule {
+				continue
+			}
+			out.WouldChange++
+		}
+		if len(batch) < chunkSize {
+			break
+		}
+	}
+	return out, nil
+}
+
+func draftSampleText(t *model.Transaction) string {
+	for _, p := range []*string{t.MerchantName, t.DescriptionClean, t.Description} {
+		if p != nil && strings.TrimSpace(*p) != "" {
+			return strings.TrimSpace(*p)
+		}
+	}
+	return "(no description)"
 }
 
 func (s *CategorizationRuleService) validate(ctx context.Context, r *model.CategorizationRule) error {

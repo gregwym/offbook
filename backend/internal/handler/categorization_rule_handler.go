@@ -25,6 +25,7 @@ func (h *CategorizationRuleHandler) Register(g *gin.RouterGroup) {
 	g.PATCH("/categorization-rules/:id", h.Update)
 	g.DELETE("/categorization-rules/:id", h.Delete)
 	g.POST("/categorization-rules/apply", h.Apply)
+	g.POST("/categorization-rules/preview", h.PreviewDraft)
 }
 
 type applyRulesRequest struct {
@@ -47,6 +48,41 @@ func (h *CategorizationRuleHandler) Apply(c *gin.Context) {
 		run = h.svc.Preview
 	}
 	result, err := run(c.Request.Context(), auth.MustUserID(c.Request.Context()), req.Scope)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+type previewDraftRequest struct {
+	RuleID     *int64 `json:"rule_id"`
+	Pattern    string `json:"pattern"`
+	MatchType  string `json:"match_type"`
+	CategoryID int64  `json:"category_id"`
+	AssetID    *int64 `json:"asset_id"`
+	Priority   int    `json:"priority"`
+	IsActive   *bool  `json:"is_active"`
+}
+
+// PreviewDraft reports the impact of an unsaved rule (create or edit)
+// without writing anything.
+func (h *CategorizationRuleHandler) PreviewDraft(c *gin.Context) {
+	var req previewDraftRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	active := req.IsActive == nil || *req.IsActive
+	result, err := h.svc.PreviewDraft(c.Request.Context(), auth.MustUserID(c.Request.Context()), service.DraftRuleInput{
+		RuleID:     req.RuleID,
+		Pattern:    req.Pattern,
+		MatchType:  req.MatchType,
+		CategoryID: req.CategoryID,
+		AssetID:    req.AssetID,
+		Priority:   req.Priority,
+		IsActive:   active,
+	})
 	if err != nil {
 		h.writeServiceError(c, err)
 		return

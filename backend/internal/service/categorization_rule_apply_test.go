@@ -346,3 +346,76 @@ func TestCategorizationRuleService_Preview_WritesNothing(t *testing.T) {
 		t.Errorf("apply = %+v, want updated %d (matching preview)", applied, preview.Updated)
 	}
 }
+
+// TestCategorizationRuleService_PreviewDraft: an unsaved rule's impact respects
+// priority against stored rules, skips manual picks, supports edit-replace,
+// and writes nothing.
+func TestCategorizationRuleService_PreviewDraft(t *testing.T) {
+	svc, userID, accountID, fixtureCat, g := newRuleApplySvc(t)
+	ctx := context.Background()
+
+	rule := &model.CategorizationRule{
+		UserID: userID, Pattern: "WHOLEFDS", MatchType: "contains",
+		CategoryID: fixtureCat, Priority: 50, IsActive: true,
+	}
+	if err := g.Create(rule).Error; err != nil {
+		t.Fatalf("seed rule: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.CategorizationRule{}, rule.ID) })
+
+	for i := 0; i < 3; i++ {
+		mkTxn(t, g, userID, accountID, withDescription("WHOLEFDS #"+fmt.Sprint(i)))
+	}
+	mkTxn(t, g, userID, accountID, withDescription("WHOLEFDS manual"), withManualCategory(fixtureCat))
+	mkTxn(t, g, userID, accountID, withDescription("SHELL GAS"))
+
+	draft := func(mut func(*service.DraftRuleInput)) service.DraftRuleInput {
+		in := service.DraftRuleInput{Pattern: "WHOLEFDS", MatchType: "contains", CategoryID: fixtureCat, Priority: 90, IsActive: true}
+		mut(&in)
+		return in
+	}
+
+	tests := []struct {
+		name        string
+		in          service.DraftRuleInput
+		wantMatched int
+		wantChange  int
+	}{
+		{"higher priority wins", draft(func(*service.DraftRuleInput) {}), 3, 3},
+		{"lower priority loses to stored rule", draft(func(in *service.DraftRuleInput) { in.Priority = 10 }), 0, 0},
+		{"inactive draft matches nothing", draft(func(in *service.DraftRuleInput) { in.IsActive = false }), 0, 0},
+		{"edit replaces stored version", draft(func(in *service.DraftRuleInput) { in.RuleID = &rule.ID; in.Pattern = "SHELL"; in.Priority = 50 }), 1, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := svc.PreviewDraft(ctx, userID, tc.in)
+			if err != nil {
+				t.Fatalf("PreviewDraft: %v", err)
+			}
+			if got.Matched != tc.wantMatched || got.WouldChange != tc.wantChange || got.SkippedManual != 1 {
+				t.Errorf("got %+v, want matched %d, would_change %d, skipped_manual 1", got, tc.wantMatched, tc.wantChange)
+			}
+			if len(got.Samples) != tc.wantMatched {
+				t.Errorf("samples = %v, want %d", got.Samples, tc.wantMatched)
+			}
+		})
+	}
+
+	if _, err := svc.PreviewDraft(ctx, userID, draft(func(in *service.DraftRuleInput) { in.MatchType = "regex"; in.Pattern = "(" })); !errors.Is(err, service.ErrInvalidRegex) {
+		t.Errorf("invalid regex err = %v, want ErrInvalidRegex", err)
+	}
+	other := int64(1 << 40)
+	if _, err := svc.PreviewDraft(ctx, userID, draft(func(in *service.DraftRuleInput) { in.RuleID = &other })); !errors.Is(err, service.ErrRuleNotFound) {
+		t.Errorf("unknown rule err = %v, want ErrRuleNotFound", err)
+	}
+
+	var ruled int64
+	if err := g.Model(&model.Transaction{}).
+		Where("user_id = ? AND categorization_method = ?", userID, "rule").
+		Count(&ruled).Error; err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if ruled != 0 {
+		t.Errorf("rule-categorized rows after PreviewDraft = %d, want 0", ruled)
+	}
+}

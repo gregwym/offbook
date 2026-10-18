@@ -35,3 +35,12 @@ export type ApplyResult = {
 }
 
 export type ApplyScope = 'all' | 'uncategorized' | 'plaid_default'
+
+// Mirrors service.DraftPreview — POST /categorization-rules/preview.
+export type DraftPreview = {
+  scanned: number
+  matched: number
+  would_change: number
+  skipped_manual: number
+  samples: string[]
+}

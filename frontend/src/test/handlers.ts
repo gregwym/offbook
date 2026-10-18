@@ -36,6 +36,9 @@ export const handlers = [
   // Transactions / rules
   http.get(`${API}/transactions`, () => list(fx.transactions)),
   http.get(`${API}/categorization-rules`, () => list(fx.rules)),
+  http.post(`${API}/categorization-rules/preview`, () =>
+    HttpResponse.json({ data: { scanned: 0, matched: 0, would_change: 0, skipped_manual: 0, samples: [] } }),
+  ),
   http.get(`${API}/categorization-verdicts`, () => list(fx.categorizationVerdicts)),
 
   // Transfer matching (#371) — happy path has no pending proposals.
