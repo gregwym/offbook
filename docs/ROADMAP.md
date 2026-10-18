@@ -1,5 +1,7 @@
 # Offbook Roadmap
 
+> **Current objective:** [Daily Driver v1](product/DAILY-DRIVER-V1.md) (Goal #423) supersedes the M13–M17 queue below as the active delivery target. The milestone lists are kept as history and as a source of scope; their `[NEXT]` markers are not instructions for autonomous sessions.
+
 ## M0 — Repo & Autonomous Development Setup [DONE]
 
 **Goal:** Self-sustaining development environment.

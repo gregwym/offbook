@@ -17,7 +17,7 @@ Bootstrap with `bash scripts/agent-protocol/setup-labels.sh --apply` (explicitly
 
 ## Single-writer Issue claiming
 
-Issue `#N` uses canonical implementation ref `agent/issue-N`. Git branch creation is a unique initial claim, whereas labels are not atomic. Before creation, search PRs and branches for earlier work. If the branch exists with an open PR, resume **only if the writer is your own paused workflow**. A competing simultaneous run must exit. A stale branch with no PR is blocked for deliberate recovery, never force-push/reassign silently.
+Issue `#N` uses canonical implementation ref `agent/issue-N` (N is an Issue number; every PR has an Issue). Cloud sessions start on a harness `ccr-*` branch; Engineering must switch to `agent/issue-N` before pushing. Git branch creation is a unique initial claim, whereas labels are not atomic. Before creation, search PRs and branches for earlier work. If the branch exists with an open PR, resume **only if the writer is your own paused workflow**. A competing simultaneous run must exit. A stale branch with no PR is blocked for deliberate recovery, never force-push/reassign silently.
 
 Begin with a single Engineering Routine scheduler. One active PR/branch at a time; CI-green merges clear the queue. No artificial weekly PR quota. Resume interrupted PRs before opening new ones.
 
@@ -25,13 +25,13 @@ Begin with a single Engineering Routine scheduler. One active PR/branch at a tim
 
 **Every PR:** required deterministic CI on the **exact head SHA** (Go tests with Postgres, lint, migrations, schema, frontend tests/build, contract checks, Playwright baseline plus targeted new tests). Developer must write/adjust tests for the behavior being changed and cannot disable failing required checks to merge.
 
-**After batches of merges:** a separate QA Session checks integrated `main` since the previous QA checkpoint. Default twice per week, or optionally after about eight merges. Independent QA checks financial truth, sync/import idempotency, mobile flows and error states from user perspective rather than retesting every PR. It creates actionable Bug Issues and updates the QA Ledger/goal. This is **not** a required status check for each PR, and separate GitHub identities are not required: separate sessions/workspaces suffice for independent functional testing.
+**After merges:** a separate QA Session checks integrated `main` since the previous QA checkpoint, hourly at `:35` (no-op if `main` has not moved). Independent QA checks financial truth, sync/import idempotency, mobile flows and error states from user perspective rather than retesting every PR. It creates actionable Bug Issues and posts its checkpoint on QA Ledger Issue #485. This is **not** a required status check for each PR, and separate GitHub identities are not required: separate sessions/workspaces suffice for independent functional testing.
 
 **Release:** no known P0/P1, full acceptance scenarios pass, final SHA has an independent batch QA PASS and verified database restore evidence. CI-green `main` is an integration candidate, not automatically production-ready.
 
 ### Batch QA checkpoint format
 
-Publish a comment on Goal Issue #423, and when supported also update Discussion #199:
+Publish a comment on QA Ledger Issue #485 (Goal #423 is reserved for the daily Product Review rollup and the final maturity certificate; checkpoints posted on #423 before 2026-10-18 remain valid history):
 
 ```text
 <!-- offbook-batch-qa:v1 {"from_sha":"<40-hex>","to_sha":"<40-hex>","result":"PASS|FAIL|BLOCKED","run_url":"https://...","checked":["money-invariants","mobile-smoke"],"issues":[423]} -->
@@ -47,7 +47,9 @@ Merging to `main` makes the owner's Pi dev eligible for its existing auto-deploy
 
 ## Routine trigger policy
 
-Engineering: scheduled approximately every three hours, one active writer. Product: as-needed issue queue replenishment when fewer than three accepted Daily Driver issues remain (check daily/weekly but no-op cheaply otherwise). QA: twice-weekly scheduled integrated main audit, optionally after a sufficiently large merge batch. GitHub Issue comments/labels are persistent communication, not assumed to wake a Cloud Routine directly.
+Engineering: hourly at `:01`, one active writer (single-writer check first). QA: hourly at `:35`, integrated `main` delta audit. Product Review: daily experience critique + queue replenishment when fewer than three `agent:ready` Issues remain. Trigger prompts point at `infra/cloud-routines/*.md`.
+
+**Comment hygiene:** Engineering records merge evidence on the Issue it closes, not on #423. QA posts on #485. Only Product Review posts a daily rollup on #423. This keeps #423 small enough for every session to load. GitHub Issue comments/labels are persistent communication, not assumed to wake a Cloud Routine directly.
 
 ## Product maturity graduation, not feature-count closure
 
