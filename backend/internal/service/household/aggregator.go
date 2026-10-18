@@ -116,7 +116,7 @@ type BudgetPaceItem struct {
 	Carryover string `json:"carryover"`
 	Available string `json:"available"`
 	Remaining string `json:"remaining"` // Available - Spent (negative when over)
-	Pace      string `json:"pace"` // ratio 0..N (1.0 = on budget)
+	Pace      string `json:"pace"`      // ratio 0..N (1.0 = on budget)
 }
 
 // GoalProgressItem reports completion of a shared_goal.
