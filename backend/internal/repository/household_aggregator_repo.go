@@ -59,6 +59,11 @@ type HouseholdAggregatorRepository interface {
 	// positive number (spending). Used by BudgetPace.
 	SpendingByCategory(ctx context.Context, accountIDs []int64, categoryID int64, from, to time.Time) (decimal.Decimal, error)
 
+	// SpendingByCategoryMonthly is SpendingByCategory bucketed by calendar
+	// month (key = first day of the month, UTC). Months with no spend are
+	// absent. Used for shared-budget rollover.
+	SpendingByCategoryMonthly(ctx context.Context, accountIDs []int64, categoryID int64, from, to time.Time) (map[time.Time]decimal.Decimal, error)
+
 	// ListSharedBudgets returns the household-owned budgets (optionally
 	// filtered by period). Since ADR-0018 these are rows in the unified
 	// `budgets` table with household_id set; readers tolerate an empty set.
@@ -348,6 +353,43 @@ func (r *householdAggregatorRepo) SpendingByCategory(ctx context.Context, accoun
 	}
 	d, _ := decimal.NewFromString(s)
 	return d, nil
+}
+
+func (r *householdAggregatorRepo) SpendingByCategoryMonthly(ctx context.Context, accountIDs []int64, categoryID int64, from, to time.Time) (map[time.Time]decimal.Decimal, error) {
+	out := map[time.Time]decimal.Decimal{}
+	if len(accountIDs) == 0 {
+		return out, nil
+	}
+	type row struct {
+		Bucket time.Time
+		Spent  string
+	}
+	var rows []row
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT date_trunc('month', transaction_date::timestamp)::date AS bucket,
+		       COALESCE(SUM(-amount) FILTER (WHERE amount < 0 OR is_refund), 0)::text AS spent
+		FROM spend_lines
+		WHERE deleted_at IS NULL
+		  AND account_id IN ?
+		  AND category_id = ?
+		  AND kind = 'flow'
+		  AND is_transfer = FALSE
+		  AND transaction_date >= ?
+		  AND transaction_date <  ?
+		GROUP BY 1
+	`, accountIDs, categoryID, from, to).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		d, err := decimal.NewFromString(r.Spent)
+		if err != nil {
+			return nil, err
+		}
+		b := r.Bucket.UTC()
+		out[time.Date(b.Year(), b.Month(), 1, 0, 0, 0, 0, time.UTC)] = d
+	}
+	return out, nil
 }
 
 func (r *householdAggregatorRepo) ListSharedBudgets(ctx context.Context, householdID int64, period string) ([]model.Budget, error) {

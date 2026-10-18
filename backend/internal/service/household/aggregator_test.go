@@ -362,6 +362,81 @@ func TestAggregator_InGraceExcludedFromBudgetPace(t *testing.T) {
 	}
 }
 
+// TestAggregator_BudgetPace_Rollover: a rollover shared budget carries unspent
+// balance (floored at zero) from completed months into the current month,
+// while a non-rollover budget on the same category stays at its plain limit.
+func TestAggregator_BudgetPace_Rollover(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+
+	ownerID := seedUser(t, g, "ro-owner")
+	hh := seedHouseholdRow(t, g, ownerID, "RO House", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+	acct := seedAccount(t, g, ownerID, "ro-acct")
+	setShare(t, g, acct.ID, hh.ID, model.VisibilityBalanceAndTxns)
+
+	mkCat := func(name string) *model.Category {
+		c := &model.Category{Name: name, Slug: fmt.Sprintf("%s-%d", name, time.Now().UnixNano())}
+		if err := g.Create(c).Error; err != nil {
+			t.Fatalf("seed category: %v", err)
+		}
+		t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, c.ID) })
+		return c
+	}
+	cat, plainCat := mkCat("ro-dining"), mkCat("ro-plain")
+
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 12, 0, 0, 0, time.UTC)
+	hhID := hh.ID
+	mk := func(c *model.Category, rollover bool) *model.Budget {
+		b := &model.Budget{
+			HouseholdID: &hhID,
+			CategoryID:  c.ID,
+			Period:      "monthly",
+			Amount:      decimal.NewFromInt(100),
+			Rollover:    rollover,
+			IsActive:    true,
+			CreatedAt:   monthStart.AddDate(0, -2, 0),
+		}
+		if err := g.Create(b).Error; err != nil {
+			t.Fatalf("seed shared budget: %v", err)
+		}
+		t.Cleanup(func() { g.Unscoped().Delete(&model.Budget{}, b.ID) })
+		return b
+	}
+	withRoll, plain := mk(cat, true), mk(plainCat, false)
+
+	// month-2 spend 30 → carry 70; month-1 spend 120 → carry 50; current 20.
+	seedTxn(t, g, ownerID, acct.ID, "-30", &cat.ID, monthStart.AddDate(0, -2, 5))
+	seedTxn(t, g, ownerID, acct.ID, "-120", &cat.ID, monthStart.AddDate(0, -1, 5))
+	seedTxn(t, g, ownerID, acct.ID, "-20", &cat.ID, monthStart)
+	seedTxn(t, g, ownerID, acct.ID, "-20", &plainCat.ID, monthStart)
+	seedTxn(t, g, ownerID, acct.ID, "-500", &plainCat.ID, monthStart.AddDate(0, -1, 5))
+
+	items, err := agg.BudgetPace(ctx, hh.ID, household.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("BudgetPace: %v", err)
+	}
+	byID := map[int64]household.BudgetPaceItem{}
+	for _, it := range items {
+		byID[it.BudgetID] = it
+	}
+	r, ok := byID[withRoll.ID]
+	if !ok {
+		t.Fatalf("rollover budget missing from %+v", items)
+	}
+	if r.Carryover != "50" || r.Available != "150" || r.Spent != "20" {
+		t.Errorf("rollover item = carry %s available %s spent %s, want 50/150/20", r.Carryover, r.Available, r.Spent)
+	}
+	if got, _ := decimal.NewFromString(r.Pace); !got.Equal(decimal.NewFromInt(20).Div(decimal.NewFromInt(150))) {
+		t.Errorf("rollover pace = %s, want 20/150", r.Pace)
+	}
+	pl := byID[plain.ID]
+	if pl.Carryover != "0" || pl.Available != "100" || pl.Pace != "0.2" {
+		t.Errorf("plain item = carry %s available %s pace %s, want 0/100/0.2", pl.Carryover, pl.Available, pl.Pace)
+	}
+}
+
 // TestAggregator_NoRawTransactionRows covers scenario (d) — reflection walk
 // over every aggregator return type asserts no model.Transaction or
 // []model.Transaction shapes are reachable.

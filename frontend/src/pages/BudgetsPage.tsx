@@ -309,7 +309,7 @@ function BudgetFormModal({ mode, isHousehold, categories, budget, onClose, onSub
               Roll unspent balance into the next {period === 'monthly' ? 'month' : period === 'weekly' ? 'week' : 'year'}
               <span className="block text-xs text-gray-500">
                 {isHousehold
-                  ? 'Not applied to shared budgets yet — the flag is saved but pace ignores it.'
+                  ? 'Shared budgets are tracked per calendar month; unspent balance carries month to month, and an overspent month resets it to zero.'
                   : 'Starts from this budget’s creation; an overspent period resets the balance to zero.'}
               </span>
             </span>
