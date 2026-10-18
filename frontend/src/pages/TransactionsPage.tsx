@@ -734,6 +734,9 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
   const splitCount = tx.splits?.length ?? 0
   const splittable = onSplit != null && tx.kind === 'flow' && !tx.is_transfer
   const stale = splitCount > 0 && tx.splits_need_attention === true
+  // An unpaired Transfer-category row is excluded from spending/income/budgets
+  // (#461) — say so, otherwise the list and Insights look inconsistent.
+  const unpairedTransfer = tx.kind === 'flow' && !tx.is_transfer && splitCount === 0 && currentCategory?.slug === 'transfer'
   const categorySelect = splitCount > 0 ? (
     <button
       type="button"
@@ -798,6 +801,14 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
           >
             transfer
           </button>
+        )}
+        {unpairedTransfer && (
+          <span
+            title="This row is in the Transfer category but has no matching leg, so it is not counted in spending, income or budgets."
+            className="ml-1.5 inline-flex items-center rounded border border-gray-200 bg-gray-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-gray-600"
+          >
+            not in spending
+          </span>
         )}
         {/* Narrow screens drop the Merchant/Account/Category columns; show
             them stacked under the description instead of a squeezed table. */}
