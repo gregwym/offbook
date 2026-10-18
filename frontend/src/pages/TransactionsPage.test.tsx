@@ -152,3 +152,31 @@ describe('TransactionsPage review inbox (#424)', () => {
     expect(screen.getByText('MERCHANT 1')).toBeInTheDocument()
   })
 })
+
+// #463: an unpaired Transfer-category row is excluded from spending (#461) and
+// the list must say so; confirmed pairs and other categories get no such chip.
+describe('TransactionsPage unpaired transfer chip (#463)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('flags only unpaired Transfer-category flow rows as not in spending', async () => {
+    const transferCat = { ...fx.categoryGroceries, id: 9, name: 'Transfer', slug: 'transfer' }
+    const rows = [
+      { ...fx.transaction1, id: 11, description: 'CARD PAYMENT', category_id: 9, is_transfer: false },
+      { ...fx.transaction1, id: 12, description: 'PAIRED LEG', category_id: 9, is_transfer: true },
+      { ...fx.transaction1, id: 13, description: 'GROCER', category_id: 1, is_transfer: false },
+    ]
+    server.use(
+      http.get(`${API}/categories`, () => HttpResponse.json({ data: [...fx.categories, transferCat], total: 3 })),
+      http.get(`${API}/transactions`, () => HttpResponse.json({ data: rows, total: rows.length })),
+    )
+
+    renderPage(<TransactionsPage />)
+    await expectHealthySmoke()
+    await screen.findByText('CARD PAYMENT')
+
+    expect(screen.getAllByText('not in spending')).toHaveLength(1)
+    expect(screen.getByText('CARD PAYMENT').parentElement).toHaveTextContent('not in spending')
+  })
+})
