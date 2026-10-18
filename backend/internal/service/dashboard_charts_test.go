@@ -765,3 +765,63 @@ func TestDashboard_NetWorth_ByKindSumsToTotal(t *testing.T) {
 		t.Errorf("April = {%s %v}, want {1150 true}", rows[1].Total, rows[1].Complete)
 	}
 }
+
+// TestDashboard_CardPayment_NotSpendingAndNetWorthUnchanged is the TX-04
+// consistency check: paying a credit card from checking is a confirmed
+// transfer, so it must not count as spending (the card purchase already did),
+// and it must not move net worth (checking falls by what the card debt falls).
+func TestDashboard_CardPayment_NotSpendingAndNetWorthUnchanged(t *testing.T) {
+	svc, userID, checkingID, g := newDashboardSvc(t)
+	ctx := context.Background()
+	usdID := testutil.LookupUSDAssetID(t, g)
+
+	card := &model.Account{
+		UserID: userID, Name: "DashCard-" + time.Now().Format("150405.000000"),
+		InstitutionSlug: "fixture", AccountType: "credit_card", Currency: "USD",
+	}
+	if err := g.Create(card).Error; err != nil {
+		t.Fatalf("seed card: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("account_id = ?", card.ID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, card.ID)
+	})
+
+	feb := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	seedNetWorthTxn(t, g, userID, checkingID, usdID, model.KindOpeningBalance, feb, "1000")
+	seedNetWorthTxn(t, g, userID, card.ID, usdID, model.KindOpeningBalance, feb, "-300")
+	// A $50 purchase on the card in May is the only real spending.
+	seedNetWorthTxn(t, g, userID, card.ID, usdID, model.KindFlow, time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC), "-50")
+
+	payDate := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
+	out := &model.Transaction{UserID: userID, AccountID: checkingID, AssetID: usdID, Kind: model.KindFlow, Amount: decimal.NewFromInt(-300), TransactionDate: payDate, Source: "manual"}
+	in := &model.Transaction{UserID: userID, AccountID: card.ID, AssetID: usdID, Kind: model.KindFlow, Amount: decimal.NewFromInt(300), TransactionDate: payDate, Source: "manual"}
+	for _, tx := range []*model.Transaction{out, in} {
+		if err := g.Create(tx).Error; err != nil {
+			t.Fatalf("seed payment leg: %v", err)
+		}
+	}
+	transferSvc := service.NewTransferMatchingService(repository.NewTransactionRepository(g))
+	if _, _, err := transferSvc.Confirm(ctx, userID, out.ID, in.ID); err != nil {
+		t.Fatalf("Confirm card payment: %v", err)
+	}
+
+	sum, err := svc.Summarize(ctx, userID, service.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	if sum.Spending != "50" || sum.Income != "0" {
+		t.Errorf("spending=%s income=%s, want 50/0 (card payment is not spending or income)", sum.Spending, sum.Income)
+	}
+
+	rows, err := svc.NetWorth(ctx, userID, 3) // March, April, May
+	if err != nil {
+		t.Fatalf("NetWorth: %v", err)
+	}
+	want := []string{"700", "700", "650"} // 1000-300; unchanged; minus the $50 purchase only
+	for i, w := range want {
+		if rows[i].Total != w || !rows[i].Complete {
+			t.Errorf("row[%d] (%s) = {%s %v}, want {%s true}", i, rows[i].Date, rows[i].Total, rows[i].Complete, w)
+		}
+	}
+}
