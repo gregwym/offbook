@@ -4,6 +4,7 @@ import type {
   ApplyScope,
   CategorizationRule,
   CreateRuleInput,
+  DraftPreview,
   UpdateRuleInput,
 } from '../types/categorizationRule'
 
@@ -31,5 +32,19 @@ export async function deleteRule(id: number): Promise<void> {
 export async function applyRules(scope?: ApplyScope, dryRun?: boolean): Promise<ApplyResult> {
   const body = { ...(scope ? { scope } : {}), ...(dryRun ? { dry_run: true } : {}) }
   const res = await apiClient.post<ApiItem<ApplyResult>>('/categorization-rules/apply', body)
+  return res.data.data
+}
+
+// Impact of an unsaved rule (ruleId set when editing); writes nothing.
+export async function previewDraftRule(
+  input: CreateRuleInput,
+  ruleId?: number,
+  signal?: AbortSignal,
+): Promise<DraftPreview> {
+  const res = await apiClient.post<ApiItem<DraftPreview>>(
+    '/categorization-rules/preview',
+    { ...input, ...(ruleId ? { rule_id: ruleId } : {}) },
+    { signal },
+  )
   return res.data.data
 }

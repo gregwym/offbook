@@ -1,9 +1,11 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { previewDraftRule } from '../api/categorizationRules'
 import type { Category } from '../types/category'
 import {
   MATCH_TYPES,
   type CategorizationRule,
   type CreateRuleInput,
+  type DraftPreview,
   type MatchType,
   type UpdateRuleInput,
 } from '../types/categorizationRule'
@@ -48,6 +50,36 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   const [error, setError] = useState<string | null>(null)
   const [patternError, setPatternError] = useState<string | null>(null)
   const [categoryError, setCategoryError] = useState<string | null>(null)
+
+  // Live impact of the draft rule: debounced, cancels stale requests, and
+  // never blocks saving. Results are keyed by the draft they describe, so a
+  // result for an older draft reads as "loading" rather than stale.
+  const cat = Number(categoryID)
+  const draftReady = pattern.trim() !== '' && Number.isInteger(cat) && cat > 0 && priority >= 0
+  const draftKey = JSON.stringify([pattern.trim(), matchType, cat, priority, isActive, rule?.id ?? null])
+  const [impact, setImpact] = useState<{ key: string; data: DraftPreview | null } | null>(null)
+  useEffect(() => {
+    if (!draftReady) return
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => {
+      previewDraftRule(
+        { pattern: pattern.trim(), match_type: matchType, category_id: cat, priority, is_active: isActive },
+        rule?.id,
+        ctrl.signal,
+      )
+        .then((data) => setImpact({ key: draftKey, data }))
+        .catch(() => {
+          if (!ctrl.signal.aborted) setImpact({ key: draftKey, data: null })
+        })
+    }, 400)
+    return () => {
+      clearTimeout(timer)
+      ctrl.abort()
+    }
+  }, [draftKey, draftReady, pattern, matchType, cat, priority, isActive, rule?.id])
+  const current = draftReady && impact?.key === draftKey ? impact : null
+  const impactData = current?.data ?? null
+  const impactLoading = draftReady && isActive && current === null
 
   const submit = async () => {
     setError(null)
@@ -143,6 +175,34 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
             <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
             Active
           </label>
+          <div aria-live="polite" className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-700">
+            {!isActive ? (
+              'Inactive rules don\u2019t categorize anything.'
+            ) : impactLoading ? (
+              'Checking which transactions this would affect\u2026'
+            ) : impactData ? (
+              <>
+                <p>
+                  {impactData.matched === 0
+                    ? 'No existing transactions would use this rule.'
+                    : `Would categorize ${impactData.matched} of ${impactData.scanned} existing transactions (${impactData.would_change} would change).`}
+                  {impactData.skipped_manual > 0 && ` ${impactData.skipped_manual} manual picks are never overridden.`}
+                </p>
+                {impactData.samples.length > 0 && (
+                  <ul className="mt-1 list-disc pl-4 text-gray-500">
+                    {impactData.samples.map((s, i) => (
+                      <li key={i} className="truncate">{s}</li>
+                    ))}
+                  </ul>
+                )}
+                <p className="mt-1 text-gray-500">Nothing changes until you save, then apply rules.</p>
+              </>
+            ) : current ? (
+              'Couldn\u2019t check the impact right now \u2014 you can still save.'
+            ) : (
+              'Fill in pattern and category to see how many transactions this would affect.'
+            )}
+          </div>
         </div>
         <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
           <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">Cancel</button>

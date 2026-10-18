@@ -96,4 +96,30 @@ describe('RulesPage smoke', () => {
     expect(bodies[1]).toEqual({})
     expect(screen.queryByRole('button', { name: 'Apply now' })).toBeNull()
   })
+
+  it('shows the draft rule impact in the form before saving', async () => {
+    const bodies: Record<string, unknown>[] = []
+    server.use(
+      http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json({
+          data: { scanned: 40, matched: 3, would_change: 2, skipped_manual: 1, samples: ['WHOLEFDS #1', 'WHOLEFDS #2'] },
+        })
+      }),
+    )
+    renderPage(<RulesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
+    fireEvent.change(screen.getByPlaceholderText('e.g. WHOLEFDS'), { target: { value: 'WHOLEFDS' } })
+    expect(screen.getByText(/Fill in pattern and category/)).toBeTruthy()
+
+    const select = screen.getAllByRole('combobox').find((el) => el.textContent?.includes('pick one'))!
+    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[1].value) } })
+
+    expect(await screen.findByText(/Would categorize 3 of 40 existing transactions \(2 would change\)/)).toBeTruthy()
+    expect(screen.getByText(/1 manual picks are never overridden/)).toBeTruthy()
+    expect(screen.getByText('WHOLEFDS #1')).toBeTruthy()
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0]).toMatchObject({ pattern: 'WHOLEFDS', match_type: 'contains' })
+    expect(bodies[0]).not.toHaveProperty('rule_id')
+  })
 })
