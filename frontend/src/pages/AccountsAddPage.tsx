@@ -48,15 +48,19 @@ export function AccountsAddPage() {
   // can show the "Plaid was dismissed — try manually" hint above the form.
   const [plaidDismissed, setPlaidDismissed] = useState(false)
 
-  const runExchangeAndSync = useCallback(
-    async (publicToken: string) => {
-      setPlaidStep('exchanging')
+  // Once the token exchange succeeds the bank is linked server-side. A later
+  // sync failure must resume the sync for that item — re-opening Link would
+  // create a duplicate Plaid item.
+  const [linkedItemId, setLinkedItemId] = useState<string | null>(null)
+
+  const runSyncs = useCallback(
+    async (itemId: string) => {
+      setPlaidError(null)
       try {
-        const exchanged = await exchangePublicToken(publicToken)
         setPlaidStep('syncing_accounts')
-        await syncAccounts(exchanged.item_id)
+        await syncAccounts(itemId)
         setPlaidStep('syncing_transactions')
-        await syncTransactions(exchanged.item_id)
+        await syncTransactions(itemId)
         setPlaidStep('done')
         navigate('/accounts')
       } catch (e) {
@@ -65,6 +69,24 @@ export function AccountsAddPage() {
       }
     },
     [navigate],
+  )
+
+  const runExchangeAndSync = useCallback(
+    async (publicToken: string) => {
+      setPlaidError(null)
+      setPlaidStep('exchanging')
+      let itemId: string
+      try {
+        itemId = (await exchangePublicToken(publicToken)).item_id
+      } catch (e) {
+        setPlaidError(errMsg(e))
+        setPlaidStep('idle')
+        return
+      }
+      setLinkedItemId(itemId)
+      await runSyncs(itemId)
+    },
+    [runSyncs],
   )
 
   const onSuccess = useCallback(
@@ -135,7 +157,12 @@ export function AccountsAddPage() {
             busyLabel={plaidLabel(plaidStep)}
             onClick={() => void startPlaid()}
             error={plaidError}
-            onRetry={plaidError ? () => void startPlaid() : undefined}
+            linked={linkedItemId !== null}
+            onRetry={
+              plaidError
+                ? () => void (linkedItemId ? runSyncs(linkedItemId) : startPlaid())
+                : undefined
+            }
           />
           <Tile
             icon={<PenLine size={22} />}
@@ -173,6 +200,7 @@ type TileProps = {
   onClick: () => void
   error?: string | null
   onRetry?: () => void
+  linked?: boolean
 }
 
 function Tile({
@@ -185,6 +213,7 @@ function Tile({
   onClick,
   error,
   onRetry,
+  linked,
 }: TileProps) {
   const ring = primary ? 'border-indigo-300 hover:border-indigo-500' : 'border-gray-200 hover:border-gray-400'
   return (
@@ -196,17 +225,26 @@ function Tile({
           <p className="mt-1 text-sm text-gray-500">{description}</p>
           {error ? (
             <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-              <div className="font-medium">Couldn’t reach Plaid</div>
+              <div role="alert" className="font-medium">
+                {linked ? 'Bank connected, but the import didn’t finish' : 'Couldn’t reach Plaid'}
+              </div>
               <div className="mt-1 whitespace-pre-wrap">{error}</div>
-              {onRetry && (
-                <button
-                  type="button"
-                  onClick={onRetry}
-                  className="mt-2 rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700"
-                >
-                  Retry
-                </button>
-              )}
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                {onRetry && (
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700"
+                  >
+                    {linked ? 'Retry import' : 'Retry'}
+                  </button>
+                )}
+                {linked && (
+                  <Link to="/accounts" className="text-xs font-medium text-red-800 underline">
+                    Go to accounts
+                  </Link>
+                )}
+              </div>
             </div>
           ) : (
             <button
