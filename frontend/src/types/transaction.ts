@@ -43,6 +43,9 @@ export type Transaction = {
   // reviewed_at is explicit user review state (#424), independent of
   // categorization: null/absent = unreviewed (in the review inbox).
   reviewed_at?: string | null
+  // hidden_at (#465): the user excluded this flow row from spending, income,
+  // budgets and merchant reports. Still in the list; balances are unaffected.
+  hidden_at?: string | null
   // splits (#438): category allocation lines summing to amount; absent = unsplit.
   splits?: TransactionSplit[]
   // splits_need_attention (#445): the bank revised the amount so splits no
@@ -202,4 +205,6 @@ export type UpdateTransactionInput = {
   notes?: string | null
   // true marks reviewed, false undoes it; independent of category edits (#424).
   reviewed?: boolean
+  // true hides the row from spending/budget reports, false unhides it (#465).
+  hidden?: boolean
 }

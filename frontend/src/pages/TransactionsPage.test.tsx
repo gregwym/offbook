@@ -179,4 +179,25 @@ describe('TransactionsPage unpaired transfer chip (#463)', () => {
     expect(screen.getAllByText('not in spending')).toHaveLength(1)
     expect(screen.getByText('CARD PAYMENT').parentElement).toHaveTextContent('not in spending')
   })
+
+  it('hides and unhides a flow row via PATCH and shows a hidden chip', async () => {
+    const rows = [{ ...fx.transaction1, id: 21, description: 'ONE OFF', is_transfer: false, hidden_at: null }]
+    let body: unknown = null
+    server.use(
+      http.get(`${API}/transactions`, () => HttpResponse.json({ data: rows, total: 1 })),
+      http.patch(`${API}/transactions/21`, async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json({ data: { ...rows[0], hidden_at: '2026-05-05T00:00:00Z' } })
+      }),
+    )
+
+    renderPage(<TransactionsPage />)
+    await screen.findByText('ONE OFF')
+    expect(screen.queryByText('hidden')).toBeNull()
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Hide ONE OFF' })[0])
+    await screen.findByText('hidden')
+    expect(body).toEqual({ hidden: true })
+    expect(screen.getAllByRole('button', { name: 'Unhide ONE OFF' }).length).toBeGreaterThan(0)
+  })
 })

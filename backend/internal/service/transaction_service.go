@@ -69,6 +69,9 @@ type UpdateTransactionInput struct {
 	// Review is independent of category edits (#424): changing a category does
 	// not implicitly mark a row reviewed, and vice versa.
 	Reviewed *bool
+	// Hidden hides (true) or unhides (false) a flow row from spending, budgets
+	// and merchant reports (#465); nil leaves it alone. Ledger is unaffected.
+	Hidden *bool
 }
 
 // TransactionService owns business rules for transactions.
@@ -280,6 +283,16 @@ func (s *TransactionService) Update(ctx context.Context, userID, id int64, in Up
 			}
 		} else {
 			t.ReviewedAt = nil
+		}
+	}
+	if in.Hidden != nil {
+		if *in.Hidden {
+			if t.HiddenAt == nil {
+				now := time.Now().UTC()
+				t.HiddenAt = &now
+			}
+		} else {
+			t.HiddenAt = nil
 		}
 	}
 

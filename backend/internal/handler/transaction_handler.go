@@ -249,6 +249,7 @@ type updateTransactionRequest struct {
 	PostedDate      *string          `json:"posted_date"`
 	Notes           *string          `json:"notes"`
 	Reviewed        *bool            `json:"reviewed"`
+	Hidden          *bool            `json:"hidden"`
 }
 
 func (h *TransactionHandler) Update(c *gin.Context) {
@@ -269,6 +270,7 @@ func (h *TransactionHandler) Update(c *gin.Context) {
 		MerchantName:  req.MerchantName,
 		Notes:         req.Notes,
 		Reviewed:      req.Reviewed,
+		Hidden:        req.Hidden,
 	}
 	if req.TransactionDate != nil {
 		td, ok := parseFlexibleDate(c, *req.TransactionDate, "transaction_date")
