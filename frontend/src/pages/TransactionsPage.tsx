@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ArrowRightLeft, Check, CheckCheck, ChevronDown, ChevronRight, Eye, Plus, Scissors, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
+import { ArrowRightLeft, Check, CheckCheck, ChevronDown, ChevronRight, Eye, EyeOff, Plus, Scissors, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { DateDisplay } from '../components/DateDisplay'
@@ -27,7 +27,7 @@ export function TransactionsPage() {
   const {
     transactions, total, loading, error,
     filter, page, pageSize,
-    fetch, setFilter, setPage, create, setCategory, remove, markReviewed,
+    fetch, setFilter, setPage, create, setCategory, update, remove, markReviewed,
   } = useTransactionsStore()
   const { accounts, fetch: fetchAccounts } = useAccountsStore()
   const { assets, fetch: fetchAssets } = useAssetsStore()
@@ -529,6 +529,7 @@ export function TransactionsPage() {
                   onCategoryChange={(catID) => { void setCategory(t.id, catID) }}
                   onCreateRule={() => openRuleFromTxn(t)}
                   onSplit={() => setSplitting(t)}
+                  onToggleHidden={() => { update(t.id, { hidden: t.hidden_at == null }).catch(() => {}) }}
                   onDelete={async () => {
                     if (window.confirm('Delete this transaction?')) {
                       await remove(t.id)
@@ -705,6 +706,8 @@ type RowProps = {
   onCreateRule: () => void
   // Opens the split modal (#438); absent for rows that can't be split.
   onSplit?: () => void
+  // Hide/unhide from spending and budgets (#465); absent for non-flow rows.
+  onToggleHidden?: () => void
   onDelete: () => Promise<void>
   // Review state (#424). Absent for rows that don't take part in review
   // (legs of an expanded paired trade).
@@ -719,7 +722,7 @@ type RowProps = {
   indented?: boolean
 }
 
-function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onSplit, onDelete, onUnlinkTransfer, indented, selected, onSelect, onToggleReviewed }: RowProps) {
+function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onSplit, onToggleHidden, onDelete, onUnlinkTransfer, indented, selected, onSelect, onToggleReviewed }: RowProps) {
   // Per ADR-0013, the unit on a transaction is asset_id. Display currency
   // = asset.symbol when available; fall back to the parent account's
   // currency for older rows that haven't been backfilled.
@@ -732,6 +735,8 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
   const unreviewed = reviewable && tx.reviewed_at == null
   const label = tx.description ?? tx.merchant_name ?? 'transaction'
   const splitCount = tx.splits?.length ?? 0
+  const hideable = onToggleHidden != null && tx.kind === 'flow'
+  const hidden = hideable && tx.hidden_at != null
   const splittable = onSplit != null && tx.kind === 'flow' && !tx.is_transfer
   const stale = splitCount > 0 && tx.splits_need_attention === true
   // An unpaired Transfer-category row is excluded from spending/income/budgets
@@ -802,6 +807,14 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             transfer
           </button>
         )}
+        {hidden && (
+          <span
+            title="You hid this transaction. It still counts toward the account balance but not spending, income or budgets."
+            className="ml-1.5 inline-flex items-center rounded border border-gray-200 bg-gray-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-gray-600"
+          >
+            hidden
+          </span>
+        )}
         {unpairedTransfer && (
           <span
             title="This row is in the Transfer category but has no matching leg, so it is not counted in spending, income or budgets."
@@ -825,6 +838,11 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             {splittable && splitCount === 0 && (
               <button type="button" onClick={onSplit} aria-label={`Split ${label}`} className="min-h-9 text-indigo-700 underline">
                 Split
+              </button>
+            )}
+            {hideable && (
+              <button type="button" onClick={onToggleHidden} aria-label={hidden ? `Unhide ${label}` : `Hide ${label}`} className="min-h-9 text-indigo-700 underline">
+                {hidden ? 'Unhide' : 'Hide'}
               </button>
             )}
             <button type="button" onClick={onDelete} aria-label={`Delete ${label}`} className="min-h-9 text-red-700 underline">
@@ -864,6 +882,17 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             title="Split across categories"
           >
             <Scissors size={16} />
+          </button>
+        )}
+        {hideable && (
+          <button
+            type="button"
+            onClick={onToggleHidden}
+            className="mr-1 hidden min-h-9 min-w-9 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-indigo-700 md:inline-flex"
+            aria-label={hidden ? `Unhide ${label}` : `Hide ${label}`}
+            title={hidden ? 'Unhide — count in spending and budgets again' : 'Hide from spending and budgets'}
+          >
+            {hidden ? <Eye size={16} /> : <EyeOff size={16} />}
           </button>
         )}
         <button

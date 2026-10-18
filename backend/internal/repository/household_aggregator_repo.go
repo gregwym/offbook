@@ -642,6 +642,7 @@ func (r *householdAggregatorRepo) TopMerchants(ctx context.Context, accountIDs [
 		WHERE t.deleted_at IS NULL
 		  AND t.account_id IN ?
 		  AND t.is_transfer = FALSE
+		  AND t.hidden_at IS NULL
 		  AND t.kind = 'flow'
 		  AND t.amount < 0
 		  AND t.transaction_date >= ?
