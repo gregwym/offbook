@@ -110,7 +110,13 @@ type BudgetPaceItem struct {
 	Period     string `json:"period"`
 	Budget     string `json:"budget"`
 	Spent      string `json:"spent"`
-	Pace       string `json:"pace"` // ratio 0..N (1.0 = on budget)
+	// Carryover is the unspent balance rolled in from earlier months (zero
+	// unless the budget has rollover on and the window is current_month).
+	// Available = Budget + Carryover; Pace is Spent / Available.
+	Carryover string `json:"carryover"`
+	Available string `json:"available"`
+	Remaining string `json:"remaining"` // Available - Spent (negative when over)
+	Pace      string `json:"pace"` // ratio 0..N (1.0 = on budget)
 }
 
 // GoalProgressItem reports completion of a shared_goal.
@@ -355,9 +361,17 @@ func (a *Aggregator) BudgetPace(ctx context.Context, householdID int64, period s
 		if err != nil {
 			return nil, fmt.Errorf("spending for budget %d: %w", b.ID, err)
 		}
+		carry := decimal.Zero
+		if b.Rollover && period == PeriodCurrentMonth {
+			carry, err = a.monthlyCarryover(ctx, txAccounts, &b, from)
+			if err != nil {
+				return nil, err
+			}
+		}
+		available := b.Amount.Add(carry)
 		pace := decimal.Zero
-		if !b.Amount.IsZero() {
-			pace = spent.Div(b.Amount)
+		if !available.IsZero() {
+			pace = spent.Div(available)
 		}
 		out = append(out, BudgetPaceItem{
 			BudgetID:   b.ID,
@@ -365,10 +379,43 @@ func (a *Aggregator) BudgetPace(ctx context.Context, householdID int64, period s
 			Period:     b.Period,
 			Budget:     b.Amount.String(),
 			Spent:      spent.String(),
+			Carryover:  carry.String(),
+			Available:  available.String(),
+			Remaining:  available.Sub(spent).String(),
 			Pace:       pace.String(),
 		})
 	}
 	return out, nil
+}
+
+// maxRolloverMonths mirrors the personal-budget cap (BudgetService).
+const maxRolloverMonths = 36
+
+// monthlyCarryover applies the personal rollover policy to a shared budget:
+// the balance starts at zero in the month the budget was created, each
+// completed month adds (amount - spent), and the balance never drops below
+// zero. Spend is read through the same share/visibility filter as the
+// current month, so it reflects today's shares, not historical ones.
+func (a *Aggregator) monthlyCarryover(ctx context.Context, accountIDs []int64, b *model.Budget, currentFrom time.Time) (decimal.Decimal, error) {
+	created := b.CreatedAt.UTC()
+	start := time.Date(created.Year(), created.Month(), 1, 0, 0, 0, 0, time.UTC)
+	cur := time.Date(currentFrom.Year(), currentFrom.Month(), 1, 0, 0, 0, 0, time.UTC)
+	earliest := cur.AddDate(0, -maxRolloverMonths, 0)
+	if earliest.Before(start) {
+		earliest = start
+	}
+	if !earliest.Before(cur) {
+		return decimal.Zero, nil
+	}
+	spend, err := a.repo.SpendingByCategoryMonthly(ctx, accountIDs, b.CategoryID, earliest, cur)
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("rollover for budget %d: %w", b.ID, err)
+	}
+	carry := decimal.Zero
+	for m := earliest; m.Before(cur); m = m.AddDate(0, 1, 0) {
+		carry = decimal.Max(decimal.Zero, carry.Add(b.Amount).Sub(spend[m]))
+	}
+	return carry, nil
 }
 
 // GoalProgress returns each shared_goal's progress ratio. No transaction

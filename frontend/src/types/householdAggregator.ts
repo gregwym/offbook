@@ -29,6 +29,9 @@ export type BudgetPaceItem = {
   period: 'monthly' | 'weekly' | 'annual'
   budget: string
   spent: string
+  carryover: string // rolled-in balance; '0' unless rollover is on
+  available: string // budget + carryover
+  remaining: string // available - spent
   pace: string // ratio 0..N (1.0 = on budget)
 }
 
