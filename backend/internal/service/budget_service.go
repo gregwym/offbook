@@ -63,9 +63,14 @@ type BudgetSpend struct {
 	PeriodStart time.Time       `json:"period_start"`
 	PeriodEnd   time.Time       `json:"period_end"` // exclusive
 	Limit       decimal.Decimal `json:"limit"`
-	Spent       decimal.Decimal `json:"spent"`
-	Remaining   decimal.Decimal `json:"remaining"`
-	Pct         float64         `json:"pct"` // 0.0 — 1.0+ (uncapped; can exceed 1 when over budget)
+	// Carryover is the unspent balance rolled in from earlier periods (always
+	// >= 0; zero unless the budget has rollover on). Available = Limit +
+	// Carryover; Remaining and Pct are measured against Available.
+	Carryover decimal.Decimal `json:"carryover"`
+	Available decimal.Decimal `json:"available"`
+	Spent     decimal.Decimal `json:"spent"`
+	Remaining decimal.Decimal `json:"remaining"`
+	Pct       float64         `json:"pct"` // 0.0 — 1.0+ (uncapped; can exceed 1 when over budget)
 }
 
 // BudgetService owns budget validation, CRUD, and current-period spend
@@ -207,10 +212,15 @@ func (s *BudgetService) Spend(ctx context.Context, userID, id int64) (*BudgetSpe
 	if err != nil {
 		return nil, fmt.Errorf("compute spend: %w", err)
 	}
-	remaining := b.Amount.Sub(spent)
+	carry, err := s.carryover(ctx, userID, b, from)
+	if err != nil {
+		return nil, err
+	}
+	available := b.Amount.Add(carry)
+	remaining := available.Sub(spent)
 	pct := 0.0
-	if b.Amount.IsPositive() {
-		p, _ := spent.Div(b.Amount).Float64()
+	if available.IsPositive() {
+		p, _ := spent.Div(available).Float64()
 		pct = p
 	}
 	return &BudgetSpend{
@@ -220,10 +230,72 @@ func (s *BudgetService) Spend(ctx context.Context, userID, id int64) (*BudgetSpe
 		PeriodStart: from,
 		PeriodEnd:   to,
 		Limit:       b.Amount,
+		Carryover:   carry,
+		Available:   available,
 		Spent:       spent,
 		Remaining:   remaining,
 		Pct:         pct,
 	}, nil
+}
+
+// maxRolloverPeriods bounds how far back rollover looks, so one query stays
+// cheap and a long-lived weekly budget doesn't accumulate unbounded history.
+const maxRolloverPeriods = 36
+
+// carryover returns the balance rolled into the period starting at
+// currentFrom. Zero unless b.Rollover. Policy: the balance starts at zero in
+// the period containing the budget's creation; each completed period adds
+// (limit - spent) and the running balance never goes below zero, so an
+// overspent period does not penalize later ones. The current limit is applied
+// to every past period (limit history is not stored).
+func (s *BudgetService) carryover(ctx context.Context, userID int64, b *model.Budget, currentFrom time.Time) (decimal.Decimal, error) {
+	if !b.Rollover {
+		return decimal.Zero, nil
+	}
+	start, _ := budgetPeriodWindow(b.Period, b.CreatedAt)
+	// Walk back at most maxRolloverPeriods from the current period.
+	earliest := currentFrom
+	for i := 0; i < maxRolloverPeriods && earliest.After(start); i++ {
+		earliest = prevPeriodStart(b.Period, earliest)
+	}
+	if !earliest.Before(currentFrom) {
+		return decimal.Zero, nil
+	}
+	unit := map[string]string{BudgetPeriodWeekly: "week", BudgetPeriodAnnual: "year"}[b.Period]
+	if unit == "" {
+		unit = "month"
+	}
+	spend, err := s.repo.SpendByPeriod(ctx, userID, b.CategoryID, unit, earliest, currentFrom)
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("compute rollover: %w", err)
+	}
+	carry := decimal.Zero
+	for p := earliest; p.Before(currentFrom); p = nextPeriodStart(b.Period, p) {
+		carry = decimal.Max(decimal.Zero, carry.Add(b.Amount).Sub(spend[p]))
+	}
+	return carry, nil
+}
+
+func prevPeriodStart(period string, from time.Time) time.Time {
+	switch period {
+	case BudgetPeriodWeekly:
+		return from.AddDate(0, 0, -7)
+	case BudgetPeriodAnnual:
+		return from.AddDate(-1, 0, 0)
+	default:
+		return from.AddDate(0, -1, 0)
+	}
+}
+
+func nextPeriodStart(period string, from time.Time) time.Time {
+	switch period {
+	case BudgetPeriodWeekly:
+		return from.AddDate(0, 0, 7)
+	case BudgetPeriodAnnual:
+		return from.AddDate(1, 0, 0)
+	default:
+		return from.AddDate(0, 1, 0)
+	}
 }
 
 // BudgetAlertSeverity classifies a budget over its threshold. "warning"
@@ -327,9 +399,17 @@ func (s *BudgetService) Alerts(ctx context.Context, userID int64) ([]BudgetAlert
 			if !ok {
 				spent = decimal.Zero
 			}
+			available := b.Amount
+			if b.Rollover {
+				carry, err := s.carryover(ctx, userID, &b, from)
+				if err != nil {
+					return nil, err
+				}
+				available = available.Add(carry)
+			}
 			pct := 0.0
-			if b.Amount.IsPositive() {
-				p, _ := spent.Div(b.Amount).Float64()
+			if available.IsPositive() {
+				p, _ := spent.Div(available).Float64()
 				pct = p
 			}
 			if pct < 0.8 {
@@ -345,7 +425,7 @@ func (s *BudgetService) Alerts(ctx context.Context, userID int64) ([]BudgetAlert
 				CategoryName: catNames[b.CategoryID],
 				Period:       b.Period,
 				Spent:        spent,
-				Limit:        b.Amount,
+				Limit:        available,
 				Pct:          pct,
 				Severity:     sev,
 			})

@@ -190,8 +190,13 @@ function BudgetCard({ row, category, canMutate, onEdit, onDelete }: CardProps) {
       </div>
       <div className="mt-3 flex items-baseline justify-between text-sm">
         {row.spent != null ? <AmountDisplay amount={row.spent} currency="USD" /> : <span className="text-gray-400">—</span>}
-        <span className="text-xs text-gray-500">of <AmountDisplay amount={row.amount} currency="USD" /></span>
+        <span className="text-xs text-gray-500">of <AmountDisplay amount={row.available ?? row.amount} currency="USD" /></span>
       </div>
+      {row.rollover && row.carryover != null && Number(row.carryover) > 0 && (
+        <p className="mt-1 text-xs text-emerald-700">
+          Includes <AmountDisplay amount={row.carryover} currency="USD" /> rolled over from earlier periods
+        </p>
+      )}
       <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100">
         <div className={['h-full', barClass].join(' ')} style={{ width: `${pct}%` }} />
       </div>
@@ -298,9 +303,16 @@ function BudgetFormModal({ mode, isHousehold, categories, budget, onClose, onSub
               <input className={inputClass} value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
             </Field>
           </div>
-          <label className="flex items-center gap-2 text-sm text-gray-700">
-            <input type="checkbox" checked={rollover} onChange={(e) => setRollover(e.target.checked)} />
-            Rollover unused balance (UI flag — calc lands later)
+          <label className="flex items-start gap-2 text-sm text-gray-700">
+            <input type="checkbox" className="mt-1" checked={rollover} onChange={(e) => setRollover(e.target.checked)} />
+            <span>
+              Roll unspent balance into the next {period === 'monthly' ? 'month' : period === 'weekly' ? 'week' : 'year'}
+              <span className="block text-xs text-gray-500">
+                {isHousehold
+                  ? 'Not applied to shared budgets yet — the flag is saved but pace ignores it.'
+                  : 'Starts from this budget’s creation; an overspent period resets the balance to zero.'}
+              </span>
+            </span>
           </label>
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />

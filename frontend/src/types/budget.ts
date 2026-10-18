@@ -24,6 +24,9 @@ export type BudgetSpend = {
   period_start: string
   period_end: string
   limit: string
+  // Unspent balance rolled in from earlier periods ("0" unless rollover is on).
+  carryover: string
+  available: string
   spent: string
   remaining: string
   pct: number

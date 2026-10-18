@@ -44,6 +44,8 @@ export type ScopedBudgetRow = {
   amount: string
   rollover: boolean
   is_active: boolean
+  carryover: string | null
+  available: string | null
   spent: string | null
   remaining: string | null
   pct: number | null
@@ -216,6 +218,8 @@ async function loadPersonal(): Promise<ScopedBudgetRow[]> {
       amount: b.amount,
       rollover: b.rollover,
       is_active: b.is_active,
+      carryover: s?.carryover ?? null,
+      available: s?.available ?? null,
       spent: s?.spent ?? null,
       remaining: s?.remaining ?? null,
       pct: s ? s.pct : null,
@@ -240,6 +244,8 @@ async function loadHousehold(householdId: number): Promise<ScopedBudgetRow[]> {
       amount: b.amount,
       rollover: b.rollover,
       is_active: b.is_active,
+      carryover: null,
+      available: null,
       spent: p?.spent ?? null,
       remaining: null,
       pct: p ? Number.parseFloat(p.pace) || 0 : null,

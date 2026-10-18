@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -32,6 +33,11 @@ type BudgetRepository interface {
 	// alerts across many budgets. Categories with no matching transactions
 	// are simply absent from the result map.
 	SpendByCategoryInRange(ctx context.Context, userID int64, categoryIDs []int64, from, to time.Time) (map[int64]decimal.Decimal, error)
+	// SpendByPeriod returns one category's spend (same predicate as
+	// CurrentPeriodSpend) bucketed by calendar period ("month", "week" or
+	// "year", Monday-start weeks) over [from, to). Keys are the UTC bucket
+	// start dates; periods with no spend are absent. Used for rollover.
+	SpendByPeriod(ctx context.Context, userID, categoryID int64, unit string, from, to time.Time) (map[time.Time]decimal.Decimal, error)
 }
 
 type budgetRepo struct {
@@ -155,4 +161,44 @@ func (r *budgetRepo) CurrentPeriodSpend(ctx context.Context, userID, categoryID 
 		return decimal.Zero, err
 	}
 	return d, nil
+}
+
+func (r *budgetRepo) SpendByPeriod(ctx context.Context, userID, categoryID int64, unit string, from, to time.Time) (map[time.Time]decimal.Decimal, error) {
+	switch unit {
+	case "month", "week", "year":
+	default:
+		return nil, fmt.Errorf("budget spend: invalid bucket unit %q", unit)
+	}
+	type row struct {
+		Bucket time.Time
+		Spent  string
+	}
+	var rows []row
+	// unit is whitelisted above, so interpolating it is safe.
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			date_trunc('`+unit+`', transaction_date::timestamp)::date AS bucket,
+			COALESCE(SUM(-amount) FILTER (WHERE amount < 0 OR is_refund), 0)::text AS spent
+		FROM spend_lines
+		WHERE deleted_at IS NULL
+		  AND user_id = ?
+		  AND category_id = ?
+		  AND is_transfer = FALSE
+		  AND kind = 'flow'
+		  AND transaction_date >= ?
+		  AND transaction_date <  ?
+		GROUP BY 1
+	`, userID, categoryID, from, to).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[time.Time]decimal.Decimal, len(rows))
+	for _, r := range rows {
+		d, err := decimal.NewFromString(r.Spent)
+		if err != nil {
+			return nil, err
+		}
+		b := r.Bucket.UTC()
+		out[time.Date(b.Year(), b.Month(), b.Day(), 0, 0, 0, 0, time.UTC)] = d
+	}
+	return out, nil
 }
