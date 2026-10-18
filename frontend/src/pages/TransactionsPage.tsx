@@ -56,6 +56,14 @@ export function TransactionsPage() {
   const search = useDebounce(searchInput, 300)
   const [adding, setAdding] = useState(false)
   const [importing, setImporting] = useState(false)
+  const filtersActive = Boolean(accountID || categoryID || from || to || searchInput)
+  const clearFilters = () => {
+    setAccountID('')
+    setCategoryID('')
+    setFrom('')
+    setTo('')
+    setSearchInput('')
+  }
   // "Needs review" filter chip + banner (#424). needsReview drives the store
   // filter (reviewed=false) — explicit review state, independent of how a row
   // was categorized. reviewCount is a separate query so the chip/banner can
@@ -486,7 +494,35 @@ export function TransactionsPage() {
               </tr>
             )}
             {!loading && transactions.length === 0 && !needsReview && (
-              <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">No transactions match these filters.</td></tr>
+              <tr>
+                <td colSpan={8} className="px-4 py-8 text-center">
+                  {filtersActive ? (
+                    <>
+                      <div className="text-gray-700">No transactions match these filters.</div>
+                      <button
+                        type="button"
+                        onClick={clearFilters}
+                        className="mt-3 min-h-9 rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        Clear filters
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-gray-700">No transactions yet.</div>
+                      <div className="mt-1 text-sm text-gray-500">
+                        Import a statement CSV, add one by hand, or connect a bank to get started.
+                      </div>
+                      <Link
+                        to="/accounts/add"
+                        className="mt-3 inline-flex min-h-9 items-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                      >
+                        {accounts.length === 0 ? 'Add your first account' : 'Add or import more'}
+                      </Link>
+                    </>
+                  )}
+                </td>
+              </tr>
             )}
             {transactions.map((t) => {
               if (partnerSkip.has(t.id)) return null

@@ -87,7 +87,18 @@ export function AccountsPage() {
               <tr><td colSpan={householdId != null ? 9 : 8} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>
             )}
             {!loading && accounts.length === 0 && (
-              <tr><td colSpan={householdId != null ? 9 : 8} className="px-4 py-6 text-center text-gray-400">No accounts yet.</td></tr>
+              <tr><td colSpan={householdId != null ? 9 : 8} className="px-4 py-8 text-center">
+                <div className="text-gray-700">No accounts yet.</div>
+                <div className="mt-1 text-sm text-gray-500">
+                  Connect a bank or add one manually — transactions and balances appear here once an account exists.
+                </div>
+                <Link
+                  to="/accounts/add"
+                  className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                >
+                  <Plus size={16} /> Add your first account
+                </Link>
+              </td></tr>
             )}
             {accounts.map((a) => (
               <tr key={a.id} className="hover:bg-gray-50">

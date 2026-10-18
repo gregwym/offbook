@@ -200,4 +200,21 @@ describe('TransactionsPage unpaired transfer chip (#463)', () => {
     expect(body).toEqual({ hidden: true })
     expect(screen.getAllByRole('button', { name: 'Unhide ONE OFF' }).length).toBeGreaterThan(0)
   })
+
+  // ONB-01: an empty ledger with no filters is a first-run state with a next
+  // step; with filters it offers a one-click way back to the full list.
+  it('distinguishes an empty ledger from filters hiding everything', async () => {
+    server.use(http.get(`${API}/transactions`, () => HttpResponse.json({ data: [], total: 0 })))
+    renderPage(<TransactionsPage />)
+    expect(await screen.findByText('No transactions yet.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /add or import more|add your first account/i })).toHaveAttribute(
+      'href',
+      '/accounts/add',
+    )
+
+    fireEvent.change(screen.getByPlaceholderText(/description or merchant/i), { target: { value: 'zzz' } })
+    expect(await screen.findByText('No transactions match these filters.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /clear filters/i }))
+    expect(await screen.findByText('No transactions yet.')).toBeInTheDocument()
+  })
 })
