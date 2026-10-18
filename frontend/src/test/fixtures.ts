@@ -108,6 +108,8 @@ export const budgetSpend1: BudgetSpend = {
   period_start: '2026-07-01',
   period_end: '2026-07-31',
   limit: '500.000000000000000000',
+  carryover: '0',
+  available: '500.000000000000000000',
   spent: '120.000000000000000000',
   remaining: '380.000000000000000000',
   pct: 0.24,

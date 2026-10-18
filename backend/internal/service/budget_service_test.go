@@ -373,3 +373,91 @@ func TestBudgetService_Spend_WeeklyMondayStart(t *testing.T) {
 		t.Errorf("Spent = %s, want 50 (20 + 30 within Mon-Sun window)", view.Spent)
 	}
 }
+
+// TestBudgetService_Spend_Rollover: unspent balance carries forward, an
+// overspent period floors the balance at zero, and a non-rollover budget is
+// unaffected. Clock = 2026-05-15, budget created in March.
+func TestBudgetService_Spend_Rollover(t *testing.T) {
+	svc, userID, categoryID, g := newBudgetSvc(t)
+	ctx := context.Background()
+
+	suffix := time.Now().Format("150405.000000")
+	acc := &model.Account{
+		UserID: userID, Name: "BudgetRollover-" + suffix, InstitutionSlug: "fixture",
+		AccountType: "checking", Currency: "USD",
+	}
+	if err := g.Create(acc).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("account_id = ?", acc.ID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, acc.ID)
+	})
+	mkSpend := func(date time.Time, amt int64) {
+		cat := categoryID
+		tx := &model.Transaction{
+			UserID: userID, AccountID: acc.ID, CategoryID: &cat,
+			Amount: decimal.NewFromInt(-amt), TransactionDate: date, Source: "manual",
+		}
+		if err := g.Create(tx).Error; err != nil {
+			t.Fatalf("seed txn: %v", err)
+		}
+	}
+	mkSpend(time.Date(2026, 2, 20, 0, 0, 0, 0, time.UTC), 500) // before creation: ignored
+	mkSpend(time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC), 40)  // Mar: +60 → 60
+	mkSpend(time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC), 250) // Apr: 60+100-250 <0 → 0
+	mkSpend(time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC), 30)   // May (current)
+
+	owner := repository.UserOwner(userID)
+	roll := true
+	b, err := svc.Create(ctx, owner, service.CreateBudgetInput{
+		CategoryID: categoryID, Period: "monthly", Amount: decimal.NewFromInt(100), Rollover: &roll,
+	})
+	if err != nil {
+		t.Fatalf("create budget: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, owner, b.ID) })
+	if err := g.Model(&model.Budget{}).Where("id = ?", b.ID).
+		Update("created_at", time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)).Error; err != nil {
+		t.Fatalf("backdate budget: %v", err)
+	}
+
+	view, err := svc.Spend(ctx, userID, b.ID)
+	if err != nil {
+		t.Fatalf("spend: %v", err)
+	}
+	// Mar: 0+100-40=60; Apr: 60+100-250=-90 → 0; May carry = 0.
+	if !view.Carryover.IsZero() {
+		t.Errorf("Carryover = %s, want 0 (April overspend floors the balance)", view.Carryover)
+	}
+	if !view.Remaining.Equal(decimal.NewFromInt(70)) {
+		t.Errorf("Remaining = %s, want 70", view.Remaining)
+	}
+
+	// Lighter April: Mar 60, Apr 60+100-20=140 → May carry 140.
+	g.Unscoped().Where("account_id = ? AND transaction_date = ?", acc.ID, time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC)).Delete(&model.Transaction{})
+	mkSpend(time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC), 20)
+	view, err = svc.Spend(ctx, userID, b.ID)
+	if err != nil {
+		t.Fatalf("spend: %v", err)
+	}
+	if !view.Carryover.Equal(decimal.NewFromInt(140)) {
+		t.Errorf("Carryover = %s, want 140", view.Carryover)
+	}
+	if !view.Available.Equal(decimal.NewFromInt(240)) || !view.Remaining.Equal(decimal.NewFromInt(210)) {
+		t.Errorf("Available/Remaining = %s/%s, want 240/210", view.Available, view.Remaining)
+	}
+	if view.Pct < 0.12 || view.Pct > 0.13 { // 30/240
+		t.Errorf("Pct = %v, want 0.125", view.Pct)
+	}
+
+	// Rollover off → no carryover.
+	off := false
+	if _, err := svc.Update(ctx, owner, b.ID, service.UpdateBudgetInput{Rollover: &off}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	view, _ = svc.Spend(ctx, userID, b.ID)
+	if !view.Carryover.IsZero() || !view.Remaining.Equal(decimal.NewFromInt(70)) {
+		t.Errorf("rollover off: carry=%s remaining=%s, want 0/70", view.Carryover, view.Remaining)
+	}
+}
