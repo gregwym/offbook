@@ -141,3 +141,65 @@ func TestUndoImport_RevertsStatementPositions(t *testing.T) {
 		t.Errorf("live rows after undo = %d, want 0", live)
 	}
 }
+
+// TestUndoImport_UnlinksTransferPartner is the #488 repro: undoing an import
+// whose row was matched as a transfer must release the surviving partner so
+// it counts as ordinary spending/income again. Single delete behaves alike (#484).
+func TestUndoImport_UnlinksTransferPartner(t *testing.T) {
+	svc, userID, accountID, g := newImportSvc(t)
+	ctx := context.Background()
+	t.Cleanup(func() { g.Unscoped().Where("account_id = ?", accountID).Delete(&model.Transaction{}) })
+
+	var acct model.Account
+	if err := g.First(&acct, accountID).Error; err != nil {
+		t.Fatal(err)
+	}
+	mkPartner := func(desc string) *model.Transaction {
+		p := &model.Transaction{
+			UserID: userID, AccountID: accountID, AssetID: acct.PrimaryQuoteAssetID, Kind: model.KindFlow,
+			Amount: decimal.NewFromInt(100), Description: &desc,
+			TransactionDate: time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC), Source: "manual",
+		}
+		if err := g.Create(p).Error; err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	assertFree := func(label string, id int64) {
+		var p model.Transaction
+		if err := g.First(&p, id).Error; err != nil {
+			t.Fatal(err)
+		}
+		if p.IsTransfer || p.TransferPairID != nil {
+			t.Errorf("%s: partner is_transfer=%v pair=%v, want unlinked", label, p.IsTransfer, p.TransferPairID)
+		}
+	}
+
+	res, err := svc.ImportDocument(ctx, userID, accountID, csvDoc("t.pdf", "transfer-bytes"), stmtExtraction("900.00"), true)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	var rent model.Transaction
+	if err := g.Where("import_job_id = ? AND amount = ?", *res.JobID, decimal.NewFromInt(-100)).First(&rent).Error; err != nil {
+		t.Fatal(err)
+	}
+	partner := mkPartner("partner-undo")
+	txRepo := repository.NewTransactionRepository(g)
+	if _, _, err := txRepo.LinkTransferPair(ctx, userID, rent.ID, partner.ID); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	if _, err := svc.UndoImport(ctx, userID, accountID, *res.JobID); err != nil {
+		t.Fatalf("undo: %v", err)
+	}
+	assertFree("import undo", partner.ID)
+
+	// Single delete of one leg releases the other.
+	a, b := mkPartner("leg-a"), mkPartner("leg-b")
+	if _, _, err := txRepo.LinkTransferPair(ctx, userID, a.ID, b.ID); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	if err := svc.SoftDelete(ctx, userID, a.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	assertFree("single delete", b.ID)
+}

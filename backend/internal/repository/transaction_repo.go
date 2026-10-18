@@ -488,17 +488,33 @@ func (r *transactionRepo) UpdateByPlaidTransactionID(ctx context.Context, userID
 	return nil
 }
 
+// unlinkPartnersOf clears is_transfer+transfer_pair_id on every live
+// transfer partner of the live rows matching cond, so soft-deleting those
+// rows never strands a partner flagged as a transfer to nothing. Trade legs
+// (is_transfer = FALSE) are untouched. Call inside the delete's transaction.
+func unlinkPartnersOf(tx *gorm.DB, userID int64, cond string, args ...any) error {
+	sub := tx.Session(&gorm.Session{NewDB: true}).Model(&model.Transaction{}).
+		Select("id").Where("user_id = ?", userID).Where(cond, args...)
+	return tx.Session(&gorm.Session{NewDB: true}).Model(&model.Transaction{}).
+		Where("user_id = ? AND is_transfer = TRUE AND transfer_pair_id IN (?)", userID, sub).
+		Updates(map[string]any{"is_transfer": false, "transfer_pair_id": nil}).Error
+}
+
 func (r *transactionRepo) SoftDeleteByPlaidTransactionID(ctx context.Context, userID int64, plaidTxnID string) error {
-	res := r.db.WithContext(ctx).
-		Where("user_id = ? AND plaid_transaction_id = ?", userID, plaidTxnID).
-		Delete(&model.Transaction{})
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := unlinkPartnersOf(tx, userID, "plaid_transaction_id = ?", plaidTxnID); err != nil {
+			return err
+		}
+		res := tx.Where("user_id = ? AND plaid_transaction_id = ?", userID, plaidTxnID).
+			Delete(&model.Transaction{})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 func (r *transactionRepo) FindSoftDeletedByPlaidTransactionIDs(ctx context.Context, userID int64, plaidTxnIDs []string) ([]model.Transaction, error) {
@@ -781,16 +797,19 @@ func (r *transactionRepo) SetReviewed(ctx context.Context, userID int64, ids []i
 }
 
 func (r *transactionRepo) SoftDelete(ctx context.Context, userID, id int64) error {
-	res := r.db.WithContext(ctx).
-		Where("user_id = ?", userID).
-		Delete(&model.Transaction{}, id)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := unlinkPartnersOf(tx, userID, "id = ?", id); err != nil {
+			return err
+		}
+		res := tx.Where("user_id = ?", userID).Delete(&model.Transaction{}, id)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 func (r *transactionRepo) ImportJobAssetIDs(ctx context.Context, userID, jobID int64) ([]int64, error) {
@@ -804,10 +823,17 @@ func (r *transactionRepo) ImportJobAssetIDs(ctx context.Context, userID, jobID i
 }
 
 func (r *transactionRepo) SoftDeleteByImportJob(ctx context.Context, userID, jobID int64) (int64, error) {
-	res := r.db.WithContext(ctx).
-		Where("user_id = ? AND import_job_id = ?", userID, jobID).
-		Delete(&model.Transaction{})
-	return res.RowsAffected, res.Error
+	var n int64
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := unlinkPartnersOf(tx, userID, "import_job_id = ?", jobID); err != nil {
+			return err
+		}
+		res := tx.Where("user_id = ? AND import_job_id = ?", userID, jobID).
+			Delete(&model.Transaction{})
+		n = res.RowsAffected
+		return res.Error
+	})
+	return n, err
 }
 
 func (r *transactionRepo) CountLiveByImportJobs(ctx context.Context, userID int64, jobIDs []int64) (map[int64]int64, error) {
