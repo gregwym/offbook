@@ -501,6 +501,7 @@ func (r *dashboardRepo) TopMerchants(ctx context.Context, userID int64, from, to
 		  AND t.user_id = ?
 		  AND t.is_transfer = FALSE
 		  AND NOT txn_is_proposed_transfer(t)
+		  AND NOT txn_in_transfer_category(t.category_id)
 		  AND t.kind = 'flow'
 		  AND t.amount < 0
 		  AND t.transaction_date >= ?
@@ -540,6 +541,7 @@ func (r *dashboardRepo) RecurringCandidates(ctx context.Context, userID int64) (
 		  AND t.user_id = ?
 		  AND t.is_transfer = FALSE
 		  AND NOT txn_is_proposed_transfer(t)
+		  AND NOT txn_in_transfer_category(t.category_id)
 		  AND t.kind = 'flow'
 		  AND t.amount < 0
 		ORDER BY merchant, t.transaction_date
