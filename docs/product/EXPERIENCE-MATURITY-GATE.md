@@ -70,7 +70,7 @@ For each relevant dimension assign `0=missing`, `1=broken`, `2=usable but rough`
 
 **Fast engineering loop:** every PR has required CI and behavior-specific tests. When touching UI, Engineering must perform a real browser walkthrough of changed user actions, inspect desktop/mobile and empty/loading/error states, and fix obvious interaction defects before merge. A component rendering is not enough. Ordinary PRs may auto-merge into **integration `main`** on CI green; merge ≠ mature.
 
-**Batch independent QA + UX critic loop (twice weekly / roughly eight merges):** pin a single `main` SHA, replay high-risk journeys, independently inspect rendered UI and compare relevant official/observed Monarch behavior. Publish one quality scorecard with evidence, exact SHA, known gaps and linked Issues. Prioritize **P0/P1, then P2 core UX** before creating more features. Add repeatable browser tests/screenshots for defects found. The independent session is not the same one that wrote the code.
+**Independent UX critic loop (daily Product Review; hourly QA covers financial regression):** pin a single `main` SHA, replay high-risk journeys, independently inspect rendered UI and compare relevant official/observed Monarch behavior. Publish one quality scorecard with evidence, exact SHA, known gaps and linked Issues. Prioritize **P0/P1, then P2 core UX** before creating more features. Add repeatable browser tests/screenshots for defects found. The independent session is not the same one that wrote the code.
 
 ## Milestone graduation: only QA may propose MATURE
 

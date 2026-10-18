@@ -51,7 +51,7 @@ Do not spend successive sessions generating architecture commentary without veri
 ## Quality and release separation
 
 - Every PR: required CI with unit/integration/contract/migration/targeted baseline smoke and appropriate regression tests. **No per-PR AI QA requirement.**
-- Batch QA + Product Experience Critic: review merged commits twice weekly or ~8 merges, independently walk full user journeys on desktop/mobile and score experience with real screenshots/traces. Compare source-backed Monarch behavior (mark unverified visual claims); create P0/P1 and core P2 UX Issues, report gaps.
+- QA (hourly, merged delta) + Product Experience Critic (daily Product Review): independently walk full user journeys on desktop/mobile and score experience with real screenshots/traces. Compare source-backed Monarch behavior (mark unverified visual claims); create P0/P1 and core P2 UX Issues, report gaps.
 - Auto-merge to **main** is delegated for normal code including financial logic and compatible additive migrations **only with mandatory deterministic checks and safe staged migration rules**. No bypass for red/missing CI or known P0/P1. Irreversible/destructive steps, external purchases/credentials, or production deployment are NOT delegated.
 - Production Pi remains manual, isolated from integration main; final **MATURE** scorecard, repeated stability checks and verified backups/restore gate a real-data release. Release-ready is not a claim of proven sustained-use reliability.
 

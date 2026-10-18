@@ -6,11 +6,21 @@ This is the **current operating model** for [Daily Driver v1](../product/DAILY-D
 
 Owner has delegated engineering implementation and integration merges; **do not ask for human code review**. Opus 5.5 is the preferred coding model if available. Use subscription capacity to complete valuable functionality, not to run three parallel thinking agents all day. Exhausted quota is normal; exhausted quota without a reproducible change, test, merged PR or blocker explanation is not.
 
-**Default cadence after preflight:** Engineering Cloud Routine every ~3 hours (or the most frequent schedule actually supported), one active writer, continuous delivery while accepted work exists. One PR at a time, but no weekly PR count cap; an invocation may proceed to another issue after a completed merge if remaining time/quota permit. Pause rather than overlap another run on the same branch. No VPS, Mac mini orchestration or 24/7 owner MBP requirement.
+**Cadence (current schedules):**
 
-Product research is **demand-driven**: replenish the issue queue when fewer than three ready, independent Daily Driver issues remain, or an edge-case decision blocks engineering. Avoid paid/routine Monarch research merely to create backlog volume.
+| Routine | Schedule | Prompt | Writes to |
+|---|---|---|---|
+| Engineering | hourly at `:01` | [delivery.md](../../infra/cloud-routines/delivery.md) | code PRs; one comment per Issue on merge |
+| QA | hourly at `:35` | [qa.md](../../infra/cloud-routines/qa.md) | bug Issues; `offbook-batch-qa:v1` on QA Ledger #485 |
+| Product Review | daily | [product-review.md](../../infra/cloud-routines/product-review.md) | `agent:ready` Issues; one daily rollup on #423 |
 
-Independent QA **and independent Product Experience Critic** are batched, not on each push or PR: twice weekly or ~8 merges against a pinned `main` SHA range. QA must follow [Experience Maturity Gate](../product/EXPERIENCE-MATURITY-GATE.md), evaluating full journeys, UI polish, error recovery, mobile, and source-backed Monarch behaviors with actual browser evidence. QA may perform targeted high-risk review earlier for known P0/P1 suspicion, but is **not a routine merge prerequisite**.
+Scheduled trigger prompts should be a thin pointer ("read and follow `infra/cloud-routines/<file>`"), so the repo file is the single source of truth and prompt drift is reviewable in git.
+
+One active Engineering writer, one PR at a time, no PR count cap. Fresh hourly sessions can overlap when a run lasts more than an hour, so every Engineering run starts with the single-writer check in `delivery.md` (exit if an `agent/` PR had activity in the last 60 minutes). No VPS, Mac mini orchestration or 24/7 owner MBP requirement.
+
+Product Review is **daily**: it critiques the experience of the journeys touched by the last 24h of merges, and replenishes the issue queue only when fewer than three ready, independent Daily Driver issues remain. Avoid paid/routine Monarch research merely to create backlog volume.
+
+Independent QA runs hourly against a pinned `main` SHA range (no-op when `main` has not moved). It covers financial correctness, code-level invariant review and regression of the merged delta with real browser evidence. The cross-journey Product Experience Critic runs in the daily Product Review per the [Experience Maturity Gate](../product/EXPERIENCE-MATURITY-GATE.md). Neither is **a per-PR merge prerequisite**.
 
 ## Autonomous cycle
 

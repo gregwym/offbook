@@ -10,7 +10,7 @@ Until a deliberate redesign ships, existing household privacy, account ownership
 
 ## Batched Independent QA
 
-**Independent Product Experience / UX Critic assessment is part of periodic QA and mandatory before milestone graduation.** Use [Experience Maturity Gate](product/EXPERIENCE-MATURITY-GATE.md) and [source-backed Monarch behavior matrix](product/MONARCH-BEHAVIOR-MATRIX.md). Developer-run targeted tests and **required GitHub CI** protect every PR. **Independent AI QA runs in batches**, not on each push or PR, to maximize Opus development throughput. The default sweep is twice weekly or after roughly eight merges when scheduling permits, plus a final independent QA of the exact release candidate.
+**Independent Product Experience / UX Critic assessment is part of periodic QA and mandatory before milestone graduation.** Use [Experience Maturity Gate](product/EXPERIENCE-MATURITY-GATE.md) and [source-backed Monarch behavior matrix](product/MONARCH-BEHAVIOR-MATRIX.md). Developer-run targeted tests and **required GitHub CI** protect every PR. **Independent AI QA runs on a schedule**, not as a per-PR gate: hourly against the merged `main` delta (checkpoints on #485), a daily Product Review experience critique, plus a final independent QA of the exact release candidate.
 
 For each sweep:
 
