@@ -78,6 +78,10 @@ func TestAccountService_UpdateBalance(t *testing.T) {
 		if len(obs) != 1 || obs[0].Source != "manual" || !obs[0].ObservedQuantity.Equal(d("959.75")) {
 			t.Fatalf("observations = %+v, want one manual 959.75", obs)
 		}
+		// Today's balance is observed now, not at midnight ("23h ago").
+		if age := time.Since(obs[0].AsOf); age < 0 || age > time.Minute {
+			t.Errorf("as_of = %s, want about now", obs[0].AsOf)
+		}
 	})
 
 	t.Run("later update writes adjustment linked to its observation", func(t *testing.T) {

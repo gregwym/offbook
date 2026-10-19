@@ -42,7 +42,8 @@ export function UpdateBalanceModal({ account, onClose, onUpdated }: Props) {
     }
     setSubmitting(true)
     try {
-      const res = await updateAccountBalance(account.id, { balance: value, as_of: asOf })
+      // Leave as_of off for today so the backend stamps the observation "now".
+      const res = await updateAccountBalance(account.id, asOf === todayISO() ? { balance: value } : { balance: value, as_of: asOf })
       setResult(res)
       onUpdated?.(res)
     } catch (err) {

@@ -23,7 +23,7 @@ var (
 
 // UpdateBalanceInput is a user-reported balance for a manual account. Balance
 // is signed the same way the account's balance is shown (liabilities
-// negative). AsOf is a calendar date; nil means today.
+// negative). AsOf is a calendar date; nil or today means now.
 type UpdateBalanceInput struct {
 	Balance decimal.Decimal
 	AsOf    *time.Time
@@ -56,13 +56,19 @@ func (s *AccountService) UpdateBalance(ctx context.Context, userID, accountID in
 	if a.PlaidAccountID != nil || a.PlaidItemID != nil {
 		return nil, ErrAccountPlaidManaged
 	}
-	today := time.Now().UTC().Truncate(24 * time.Hour)
-	asOf := today
+	// A balance "as of today" is observed now, so it reads "just now" rather
+	// than as of midnight; an earlier date is pinned to that calendar day.
+	now := time.Now().UTC()
+	today := now.Truncate(24 * time.Hour)
+	asOf := now
 	if in.AsOf != nil {
-		asOf = time.Date(in.AsOf.Year(), in.AsOf.Month(), in.AsOf.Day(), 0, 0, 0, 0, time.UTC)
+		day := time.Date(in.AsOf.Year(), in.AsOf.Month(), in.AsOf.Day(), 0, 0, 0, 0, time.UTC)
 		// One day of slack: the user's local "today" can be ahead of UTC.
-		if asOf.After(today.AddDate(0, 0, 1)) {
+		if day.After(today.AddDate(0, 0, 1)) {
 			return nil, ErrBalanceAsOfInFuture
+		}
+		if day.Before(today) {
+			asOf = day
 		}
 	}
 

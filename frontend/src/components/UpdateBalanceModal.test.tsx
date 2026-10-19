@@ -40,7 +40,7 @@ describe('Update balance (#504)', () => {
     expect(status).toHaveTextContent('1,300.00')
     expect(status).toHaveTextContent('an adjustment of')
     expect(status).toHaveTextContent('65.44')
-    expect(posted).toMatchObject({ balance: '1300.00' })
+    expect(posted).toEqual({ balance: '1300.00' })
     expect(screen.getByRole('link', { name: 'View reconciliation' })).toHaveAttribute('href', '/accounts/1/reconciliation')
   })
 

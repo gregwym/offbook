@@ -46,7 +46,8 @@ test.describe('update manual account balance', () => {
     await expect(dialog.getByRole('status')).toContainText('1,400.00')
     await dialog.getByRole('button', { name: 'Done' }).click()
     await expect(row).toContainText('2,500.00')
-    await expect(row).toContainText('via manual')
+    // Observed now, not as of midnight UTC (which read "23h ago").
+    await expect(row).toContainText(/Observed (just now|\dm ago) via manual/)
     await expect(row.getByText('needs attention')).toHaveCount(0)
 
     // Second update: a 150.00 shortfall is an adjustment (10% > threshold).
