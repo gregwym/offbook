@@ -31,6 +31,17 @@ describe('BudgetsPage smoke', () => {
     expect(await screen.findByText(/rolled over/i)).toBeTruthy()
   })
 
+  it('words an overspent budget as "over budget" instead of a negative remainder', async () => {
+    server.use(
+      http.get('*/budgets/:id/spend', () =>
+        HttpResponse.json({ data: { ...fx.budgetSpend1, remaining: '-10.00', pct: 1.2 } }),
+      ),
+    )
+    renderPage(<BudgetsPage />)
+    expect(await screen.findByText(/over budget/i)).toBeTruthy()
+    expect(screen.queryByText(/-10\.00/)).toBeNull()
+  })
+
   it('shows the rolled-over balance on a shared (household) budget', async () => {
     setHouseholdScope(10)
     server.use(
