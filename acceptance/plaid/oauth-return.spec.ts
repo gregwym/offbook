@@ -64,7 +64,11 @@ test.describe('Plaid OAuth return', () => {
     await page.goto('/plaid/oauth-return?oauth_state_id=cancel-state')
     await expect(page.getByRole('alert')).toHaveText('Bank sign-in didn’t finish')
     const returnInits = await page.evaluate(() => (window as unknown as { __plaidInits: Array<{ token: string; receivedRedirectUri: string }> }).__plaidInits)
-    expect(returnInits.at(-1)).toEqual({ token: 'link-stub-new', receivedRedirectUri: expect.stringContaining('oauth_state_id=cancel-state') })
+    // Later inits carry token: null once the page leaves the opening state.
+    expect(returnInits.find((i) => i.token === 'link-stub-new')).toEqual({
+      token: 'link-stub-new',
+      receivedRedirectUri: expect.stringContaining('oauth_state_id=cancel-state'),
+    })
     await expectNoOverflow(page)
     await shot(page, testInfo, 'return-cancelled')
     await page.getByRole('link', { name: 'Back to Add account' }).click()
