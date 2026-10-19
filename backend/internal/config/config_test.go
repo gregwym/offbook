@@ -227,3 +227,54 @@ func TestLoad_PlaidProductionEnvRequiresTokenKey(t *testing.T) {
 		t.Fatalf("Load error = %v, want PLAID_TOKEN_KEY error", err)
 	}
 }
+
+// TestPlaidRedirectURI pins the #502 rule: production derives the OAuth
+// redirect from FRONTEND_URL; sandbox/development leave it unset unless
+// PLAID_REDIRECT_URI is set explicitly (Plaid rejects unregistered URIs, and
+// dev/QA/CI never register one).
+func TestPlaidRedirectURI(t *testing.T) {
+	cases := []struct {
+		name     string
+		env      string
+		frontend string
+		override string
+		want     string
+	}{
+		{"production derives from FRONTEND_URL", "production", "https://offbook.tail1234.ts.net", "", "https://offbook.tail1234.ts.net/plaid/oauth-return"},
+		{"production trims trailing slash", "production", "https://offbook.tail1234.ts.net/", "", "https://offbook.tail1234.ts.net/plaid/oauth-return"},
+		{"sandbox unset by default", "sandbox", "http://localhost:5173", "", ""},
+		{"development unset by default", "development", "http://localhost:5173", "", ""},
+		{"sandbox explicit override", "sandbox", "http://localhost:5173", "https://dev.example.ts.net/plaid/oauth-return", "https://dev.example.ts.net/plaid/oauth-return"},
+		{"production explicit override wins", "production", "https://offbook.tail1234.ts.net", "https://other.ts.net/plaid/oauth-return", "https://other.ts.net/plaid/oauth-return"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Config{PlaidEnv: tc.env, FrontendURL: tc.frontend, PlaidRedirectURIOverride: tc.override}
+			if got := cfg.PlaidRedirectURI(); got != tc.want {
+				t.Errorf("PlaidRedirectURI() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestLoad_PlaidRedirectURIFromEnv covers the Load() wiring end to end for
+// the production path: FRONTEND_URL → redirect URI, no extra env var needed.
+func TestLoad_PlaidRedirectURIFromEnv(t *testing.T) {
+	t.Setenv("APP_ENV", AppEnvProd)
+	t.Setenv("DATABASE_URL", "postgres://prod:prod@db.internal/offbook?sslmode=require")
+	t.Setenv("SESSION_SECRET", "a-real-generated-secret")
+	t.Setenv("FRONTEND_URL", "https://offbook.tail1234.ts.net")
+	t.Setenv("PLAID_CLIENT_ID", "prod-client-id")
+	t.Setenv("PLAID_SECRET", "prod-secret")
+	t.Setenv("PLAID_ENV", "production")
+	t.Setenv("PLAID_TOKEN_KEY", strings.Repeat("ab", 32))
+	t.Setenv("PLAID_REDIRECT_URI", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, want := cfg.PlaidRedirectURI(), "https://offbook.tail1234.ts.net/plaid/oauth-return"; got != want {
+		t.Errorf("PlaidRedirectURI() = %q, want %q", got, want)
+	}
+}

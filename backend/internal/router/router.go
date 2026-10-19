@@ -252,9 +252,10 @@ func newPlaidService(
 		return plaidsvc.NewService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	}
 	client, err := plaidsvc.NewSDKClient(plaidsvc.Config{
-		ClientID: cfg.PlaidClientID,
-		Secret:   cfg.PlaidSecret,
-		Env:      cfg.PlaidEnv,
+		ClientID:    cfg.PlaidClientID,
+		Secret:      cfg.PlaidSecret,
+		Env:         cfg.PlaidEnv,
+		RedirectURI: cfg.PlaidRedirectURI(),
 	})
 	if err != nil {
 		panic("plaid: " + err.Error())

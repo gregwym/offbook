@@ -207,6 +207,7 @@ type SDKClient struct {
 	countryCode []plaid.CountryCode
 	clientName  string
 	language    string
+	redirectURI string
 }
 
 // Config is the minimum input needed to construct an SDKClient.
@@ -216,6 +217,11 @@ type Config struct {
 	// Env is one of "sandbox", "development", "production". Anything else is
 	// treated as a literal URL override (useful for httptest in unit tests).
 	Env string
+	// RedirectURI is the OAuth redirect_uri set on every link token (new and
+	// update mode). Empty leaves it off — required in production for OAuth
+	// institutions, and must exactly match a URI registered in the Plaid
+	// dashboard (#502). See config.Config.PlaidRedirectURI.
+	RedirectURI string
 }
 
 // NewSDKClient builds an SDKClient with the conventional defaults
@@ -242,6 +248,7 @@ func NewSDKClient(cfg Config) (*SDKClient, error) {
 		countryCode: []plaid.CountryCode{plaid.COUNTRYCODE_US},
 		clientName:  "Offbook",
 		language:    "en",
+		redirectURI: cfg.RedirectURI,
 	}, nil
 }
 
@@ -263,6 +270,9 @@ func (c *SDKClient) CreateLinkToken(ctx context.Context, userID int64) (LinkToke
 	req := plaid.NewLinkTokenCreateRequest(c.clientName, c.language, c.countryCode)
 	req.SetUser(*plaid.NewLinkTokenCreateRequestUser(fmt.Sprintf("user-%d", userID)))
 	req.SetProducts(c.products)
+	if c.redirectURI != "" {
+		req.SetRedirectUri(c.redirectURI)
+	}
 
 	resp, _, err := c.api.PlaidApi.LinkTokenCreate(ctx).LinkTokenCreateRequest(*req).Execute()
 	if err != nil {
@@ -279,6 +289,10 @@ func (c *SDKClient) CreateUpdateLinkToken(ctx context.Context, userID int64, acc
 	req.SetUser(*plaid.NewLinkTokenCreateRequestUser(fmt.Sprintf("user-%d", userID)))
 	req.SetAccessToken(accessToken)
 	// Update mode omits `products` per Plaid's Link update-mode contract.
+	// OAuth institutions still need the redirect to resume re-auth.
+	if c.redirectURI != "" {
+		req.SetRedirectUri(c.redirectURI)
+	}
 
 	resp, _, err := c.api.PlaidApi.LinkTokenCreate(ctx).LinkTokenCreateRequest(*req).Execute()
 	if err != nil {

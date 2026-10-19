@@ -34,7 +34,11 @@ type Config struct {
 	PlaidClientID string
 	PlaidSecret   string
 	PlaidEnv      string // sandbox | development | production
-	PlaidTokenKey []byte // 32 raw bytes (decoded from PLAID_TOKEN_KEY hex)
+	// PlaidRedirectURIOverride is PLAID_REDIRECT_URI. Usually empty — use
+	// PlaidRedirectURI(), which derives the OAuth redirect from FrontendURL
+	// in production (#502).
+	PlaidRedirectURIOverride string
+	PlaidTokenKey            []byte // 32 raw bytes (decoded from PLAID_TOKEN_KEY hex)
 
 	// AI providers (M7+). Both optional — when absent, the corresponding
 	// provider is unavailable in the settings UI rather than fatal at boot.
@@ -74,6 +78,26 @@ type Config struct {
 	// currency amount), so it applies uniformly across fiat/crypto/equity —
 	// see docs/ADR/0017-event-sourced-quantity.md addendum.
 	ReconciliationFlagPercentThreshold float64 // RECONCILIATION_FLAG_PERCENT_THRESHOLD — default 0.01 (1%)
+}
+
+// PlaidOAuthReturnPath is the SPA route Plaid sends the browser back to
+// after an OAuth institution's sign-in (#502). Must match the frontend
+// route in App.tsx and the URI registered in the Plaid dashboard.
+const PlaidOAuthReturnPath = "/plaid/oauth-return"
+
+// PlaidRedirectURI is the redirect_uri to put on Plaid link tokens, or ""
+// for none. An explicit PLAID_REDIRECT_URI always wins. Otherwise production
+// derives it from FrontendURL (the instance's MagicDNS URL); sandbox and
+// development leave it unset, because Plaid rejects a redirect_uri that
+// isn't registered in the dashboard and dev/QA/CI never register one.
+func (c Config) PlaidRedirectURI() string {
+	if c.PlaidRedirectURIOverride != "" {
+		return c.PlaidRedirectURIOverride
+	}
+	if c.PlaidEnv == "production" {
+		return strings.TrimRight(c.FrontendURL, "/") + PlaidOAuthReturnPath
+	}
+	return ""
 }
 
 // PlaidConfigured reports whether the Plaid surface is enabled.
@@ -158,17 +182,18 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		AppEnv:         appEnv,
-		Port:           getenv("PORT", "8000"),
-		DatabaseURL:    dbURL,
-		FrontendURL:    getenv("FRONTEND_URL", "http://localhost:5173"),
-		MigrationsPath: getenv("MIGRATIONS_PATH", "migrations"),
-		SessionSecret:  os.Getenv("SESSION_SECRET"),
-		PlaidClientID:  os.Getenv("PLAID_CLIENT_ID"),
-		PlaidSecret:    os.Getenv("PLAID_SECRET"),
-		PlaidEnv:       getenv("PLAID_ENV", "sandbox"),
-		ClaudeAPIKey:   os.Getenv("CLAUDE_API_KEY"),
-		OllamaBaseURL:  getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+		AppEnv:                   appEnv,
+		Port:                     getenv("PORT", "8000"),
+		DatabaseURL:              dbURL,
+		FrontendURL:              getenv("FRONTEND_URL", "http://localhost:5173"),
+		MigrationsPath:           getenv("MIGRATIONS_PATH", "migrations"),
+		SessionSecret:            os.Getenv("SESSION_SECRET"),
+		PlaidClientID:            os.Getenv("PLAID_CLIENT_ID"),
+		PlaidSecret:              os.Getenv("PLAID_SECRET"),
+		PlaidEnv:                 getenv("PLAID_ENV", "sandbox"),
+		PlaidRedirectURIOverride: os.Getenv("PLAID_REDIRECT_URI"),
+		ClaudeAPIKey:             os.Getenv("CLAUDE_API_KEY"),
+		OllamaBaseURL:            getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
 
 		AlphaVantageAPIKey: os.Getenv("ALPHA_VANTAGE_API_KEY"),
 
