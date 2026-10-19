@@ -26,8 +26,8 @@ test.describe('duplicate statement upload', () => {
     await openImport(page)
     await chooseStatement(page, 'march.csv', march)
     await page.getByRole('button', { name: 'Preview' }).click()
-    await expect(page.getByText('2 new')).toBeVisible()
-    await expect(page.getByText('0 duplicate')).toBeVisible()
+    await expect(page.getByText('2 new', { exact: true })).toBeVisible()
+    await expect(page.getByText('0 duplicate', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Import 2 new' }).click()
     await expect(page.getByText('Import transactions', { exact: true })).toBeHidden()
 
@@ -35,16 +35,16 @@ test.describe('duplicate statement upload', () => {
     await openImport(page)
     await chooseStatement(page, 'march.csv', march)
     await page.getByRole('button', { name: 'Preview' }).click()
-    await expect(page.getByText('0 new')).toBeVisible()
-    await expect(page.getByText('2 duplicate')).toBeVisible()
+    await expect(page.getByText('0 new', { exact: true })).toBeVisible()
+    await expect(page.getByText('2 duplicate', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: /^Import/ })).toBeDisabled()
     await expectNoOverflow(page)
 
     // Overlapping statement: only the new row lands.
     await chooseStatement(page, 'overlap.csv', overlap)
     await page.getByRole('button', { name: 'Preview' }).click()
-    await expect(page.getByText('1 new')).toBeVisible()
-    await expect(page.getByText('2 duplicate')).toBeVisible()
+    await expect(page.getByText('1 new', { exact: true })).toBeVisible()
+    await expect(page.getByText('2 duplicate', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Import 1 new' }).click()
 
     await page.goto('/transactions')
