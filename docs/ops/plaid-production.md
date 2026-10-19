@@ -37,25 +37,60 @@ public ingress (which the "no webhooks" decision in the M14 sync ADR rules out
 for the same reason).
 
 Concretely: `redirect_uri` = `${FRONTEND_URL}/plaid/oauth-return` (a fixed SPA
-route). This route does not exist yet — wiring `receivedRedirectUri` into
-`usePlaidLink` and adding the `/plaid/oauth-return` route is Link-integration
-work that belongs with the Link-token changes in **#364** (Plaid re-auth /
-update-mode flow), not this tracking issue, since both touch the same
-`CreateLinkToken` call path. This doc records the decision so #364 doesn't have
-to re-derive it: reuse `FRONTEND_URL` (already required config, already
-correct per-instance), don't introduce a second env var.
+route). Implemented in #502:
 
-Constraints this implies, worth re-checking when #364 lands:
+- **Backend rule** (`config.Config.PlaidRedirectURI`): an explicit
+  `PLAID_REDIRECT_URI` always wins. Otherwise `PLAID_ENV=production` derives
+  `${FRONTEND_URL}/plaid/oauth-return` (trailing slash trimmed); `sandbox` and
+  `development` leave it **unset**, because Plaid rejects a `redirect_uri`
+  that isn't registered in the dashboard and dev/QA/CI never register one.
+  The URI goes on every link token — new links *and* update-mode re-auth
+  (#364), since an OAuth bank needs the redirect for both.
+- **Frontend**: before opening Link, Add account and the Settings
+  "Reconnect" button stash the link token (plus mode, expiration and, for
+  re-auth, the item id) in `sessionStorage` (`src/lib/plaidOAuth.ts`). The
+  bank's sign-in redirects the whole tab back to `/plaid/oauth-return`, which
+  re-initializes Link with that token and
+  `receivedRedirectUri = window.location.href`, then finishes the same chain
+  as the originating page: exchange → sync-accounts → sync-transactions (new
+  link, lands on Accounts) or just the syncs (re-auth, lands on Settings).
+  It is a full-page redirect, not a popup, so it works on mobile Safari and
+  Chrome. The stored token is dropped as soon as Link succeeds, and the
+  linked item id is kept until the import finishes, so reloading the return
+  page resumes the syncs instead of reopening Link or exchanging twice.
+- **Failure states** on the return page — no stored session (different tab,
+  storage cleared), expired token (locally, or Plaid's `INVALID_LINK_TOKEN`),
+  user cancelled, exchange/sync failed — each show a message and a way back
+  (Add account or Settings; "Retry import" when the bank already linked).
 
-- `FRONTEND_URL` must be the tailnet MagicDNS URL, not `localhost` — already
-  the case in `.env.prod.example`.
-- The redirect URI must be registered **per institution** that requires OAuth
-  in the Plaid dashboard once production access is granted — an owner action
-  at that time, not a one-time setup step now.
+Constraints this implies:
+
+- `FRONTEND_URL` must be the tailnet MagicDNS URL (`https://…ts.net`), not
+  `localhost` — already the case in `.env.prod.example`. Plaid requires
+  HTTPS for production redirect URIs.
+- The sign-in session cookie is `SameSite=Lax`, so it survives the
+  top-level redirect back from the bank.
 - Self-hosters running their own instance register their **own** MagicDNS
   hostname as their own redirect URI under their own Plaid production
   application (see below) — there's nothing shared or hardcoded to Offbook's
   upstream repo.
+
+### Owner steps to enable OAuth banks
+
+1. In the Plaid dashboard → **Developers → API → Allowed redirect URIs**, add
+   exactly `https://<hostname>.<tailnet>.ts.net/plaid/oauth-return` (the
+   value of `FRONTEND_URL` in `.env.prod` plus `/plaid/oauth-return`; no
+   trailing slash, exact match).
+2. Make sure `.env.prod` has `PLAID_CLIENT_ID`, `PLAID_SECRET`,
+   `PLAID_ENV=production`, `PLAID_TOKEN_KEY` and `FRONTEND_URL` set as below.
+   `PLAID_REDIRECT_URI` is not needed unless the URI differs from the
+   derived one.
+3. Complete any per-institution OAuth registration the Plaid dashboard
+   lists for your account (some banks, e.g. Chase, require it before they
+   appear in production Link).
+4. Redeploy (`command make deploy FLAVOR=prod`), then Add account → Connect
+   a bank → pick the OAuth bank. After the bank sign-in you should land on
+   `/plaid/oauth-return` briefly, then on Accounts with the new accounts.
 
 ## Bringing your own Plaid production keys (self-hosters)
 
@@ -80,9 +115,11 @@ uses its own Plaid account, same as Tailscale requires its own auth key
    PLAID_TOKEN_KEY=<output of openssl rand -hex 32>
    ```
 5. Register your instance's redirect URI (`https://<your-hostname>.<your-tailnet>.ts.net/plaid/oauth-return`)
-   with Plaid for any OAuth institution you need, per the strategy above.
+   in the Plaid dashboard, per "Owner steps to enable OAuth banks" above.
 6. `command make deploy FLAVOR=prod` picks these up automatically — no code
-   changes required. Dev, QA, and CI are unaffected; they never read
+   changes required. (`docker-compose.prod.yml` binds each `PLAID_*` key
+   explicitly, because the prod overlay drops the base `env_file`; before
+   #502 the keys never reached the backend and Plaid stayed disabled in prod.) Dev, QA, and CI are unaffected; they never read
    `.env.prod`.
 
 Sandbox development keys (`PLAID_ENV=sandbox`) remain free and require no

@@ -19,6 +19,7 @@ import {
   syncAccounts,
   syncTransactions,
 } from '../api/plaid'
+import { clearPendingLink, savePendingLink } from '../lib/plaidOAuth'
 import { ACCOUNT_TYPES, type AccountType, type CreateAccountInput } from '../types/account'
 
 type Mode = 'picker' | 'manual'
@@ -73,6 +74,9 @@ export function AccountsAddPage() {
 
   const runExchangeAndSync = useCallback(
     async (publicToken: string) => {
+      // Link finished in-page (no OAuth redirect): the stashed resume
+      // state for /plaid/oauth-return is no longer needed.
+      clearPendingLink()
       setPlaidError(null)
       setPlaidStep('exchanging')
       let itemId: string
@@ -97,6 +101,7 @@ export function AccountsAddPage() {
   )
 
   const onExit = useCallback(() => {
+    clearPendingLink()
     setPlaidStep((s) => (s === 'opening_link' ? 'idle' : s))
     // Plaid was dismissed without finishing → drop into manual fallback
     // per v6 §03 step 3 ("Plaid dismissed → manual fallback"). Only
@@ -120,6 +125,9 @@ export function AccountsAddPage() {
     setPlaidStep('fetching_token')
     try {
       const t = await createLinkToken()
+      // OAuth banks leave the app and come back to /plaid/oauth-return as a
+      // full-page redirect (#502); stash the token so that page can resume.
+      savePendingLink({ mode: 'new', linkToken: t.link_token, expiration: t.expiration })
       setLinkToken(t.link_token)
       setPlaidStep('opening_link')
     } catch (e) {

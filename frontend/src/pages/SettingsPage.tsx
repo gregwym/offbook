@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { usePlaidLink } from 'react-plaid-link'
+import { clearPendingLink, savePendingLink } from '../lib/plaidOAuth'
 import { AlertTriangle, Bot, Check, Info, Landmark, Plug, RefreshCw, Trash2, X } from 'lucide-react'
 import { TimeAgo } from '../components/TimeAgo'
 import {
@@ -497,6 +498,7 @@ function LinkedInstitutionsSection() {
     // access_token is unchanged. Resuming a sync is what actually clears
     // reauth_required once the credentials verify.
     const itemID = reconnectItemID
+    clearPendingLink()
     setReconnectItemID(null)
     setReconnectToken(null)
     if (!itemID) return
@@ -509,6 +511,7 @@ function LinkedInstitutionsSection() {
   }, [reconnectItemID, refresh])
 
   const onReconnectExit = useCallback(() => {
+    clearPendingLink()
     setReconnectItemID(null)
     setReconnectToken(null)
   }, [])
@@ -530,6 +533,14 @@ function LinkedInstitutionsSection() {
     setReconnectItemID(item.plaid_item_id)
     try {
       const t = await createLinkToken(item.plaid_item_id)
+      // OAuth banks resume on /plaid/oauth-return after a full-page
+      // redirect (#502) — stash what that page needs to finish re-auth.
+      savePendingLink({
+        mode: 'update',
+        linkToken: t.link_token,
+        expiration: t.expiration,
+        itemId: item.plaid_item_id,
+      })
       setReconnectToken(t.link_token)
     } catch (e) {
       setReconnectError(errMsg(e))

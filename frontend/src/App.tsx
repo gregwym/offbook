@@ -20,6 +20,7 @@ import { SignupPage } from './pages/SignupPage'
 const InsightsPage = lazy(() => import('./pages/InsightsPage').then((m) => ({ default: m.InsightsPage })))
 const AccountsPage = lazy(() => import('./pages/AccountsPage').then((m) => ({ default: m.AccountsPage })))
 const AccountsAddPage = lazy(() => import('./pages/AccountsAddPage').then((m) => ({ default: m.AccountsAddPage })))
+const PlaidOAuthReturnPage = lazy(() => import('./pages/PlaidOAuthReturnPage').then((m) => ({ default: m.PlaidOAuthReturnPage })))
 const ReconciliationPage = lazy(() => import('./pages/ReconciliationPage').then((m) => ({ default: m.ReconciliationPage })))
 const TransactionsPage = lazy(() => import('./pages/TransactionsPage').then((m) => ({ default: m.TransactionsPage })))
 const RulesPage = lazy(() => import('./pages/RulesPage').then((m) => ({ default: m.RulesPage })))
@@ -63,6 +64,10 @@ export default function App() {
           <Route path="/dashboard" element={<Navigate to="/insights" replace />} />
           <Route path="/accounts" element={<LazyRoute><AccountsPage /></LazyRoute>} />
           <Route path="/accounts/add" element={<LazyRoute><AccountsAddPage /></LazyRoute>} />
+          {/* Plaid OAuth institutions redirect the whole tab back here
+              (#502). Must match config.PlaidOAuthReturnPath on the backend
+              and the redirect URI registered in the Plaid dashboard. */}
+          <Route path="/plaid/oauth-return" element={<LazyRoute><PlaidOAuthReturnPage /></LazyRoute>} />
           <Route path="/accounts/:id/reconciliation" element={<LazyRoute><ReconciliationPage /></LazyRoute>} />
           {/* /connect and /import are absorbed by /accounts/add (v6 §03 + §07).
               Keep the old paths around as redirects so bookmarks still land

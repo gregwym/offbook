@@ -52,9 +52,10 @@ func main() {
 	}
 
 	client, err := plaidsvc.NewSDKClient(plaidsvc.Config{
-		ClientID: cfg.PlaidClientID,
-		Secret:   cfg.PlaidSecret,
-		Env:      cfg.PlaidEnv,
+		ClientID:    cfg.PlaidClientID,
+		Secret:      cfg.PlaidSecret,
+		Env:         cfg.PlaidEnv,
+		RedirectURI: cfg.PlaidRedirectURI(),
 	})
 	if err != nil {
 		log.Fatalf("plaid client: %v", err)
