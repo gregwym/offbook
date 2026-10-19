@@ -46,6 +46,7 @@ test.describe('duplicate statement upload', () => {
     await expect(page.getByText('1 new', { exact: true })).toBeVisible()
     await expect(page.getByText('2 duplicate', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Import 1 new' }).click()
+    await expect(page.getByText('Import transactions', { exact: true })).toBeHidden()
 
     await page.goto('/transactions')
     for (const d of ['Dup Coffee', 'Dup Grocer', 'Dup Payroll']) await expect(page.getByText(d)).toHaveCount(1)
