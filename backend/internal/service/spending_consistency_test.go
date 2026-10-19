@@ -173,3 +173,112 @@ func TestSpending_SurfacesAgreeOnSyntheticMonth(t *testing.T) {
 		}
 	})
 }
+
+// TestSpending_SurfacesAgreeOnRefundsAndHiddenRows extends the gate-5 check to
+// the rest of the acceptance fixture: a refund must net against its category's
+// spend (and not count as income), a hidden row and a credit-card payment pair
+// must not count at all, and every surface must report the same exact figure.
+func TestSpending_SurfacesAgreeOnRefundsAndHiddenRows(t *testing.T) {
+	dash, userID, accountID, g := newDashboardSvc(t)
+	ctx := context.Background()
+
+	suffix := time.Now().Format("150405.000000")
+	groceries := &model.Category{Name: "RefundG-" + suffix, Slug: "refund-g-" + suffix}
+	dining := &model.Category{Name: "RefundD-" + suffix, Slug: "refund-d-" + suffix}
+	for _, c := range []*model.Category{groceries, dining} {
+		if err := g.Create(c).Error; err != nil {
+			t.Fatalf("seed cat: %v", err)
+		}
+		c := c
+		t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, c.ID) })
+	}
+	day := func(d int) time.Time { return time.Date(2026, 5, d, 0, 0, 0, 0, time.UTC) }
+	dec := decimal.RequireFromString
+
+	seedChartTxn(t, g, userID, accountID, &groceries.ID, day(3), dec("-120.35"), false)
+	seedChartTxn(t, g, userID, accountID, &groceries.ID, day(9), dec("-44.65"), false)
+	seedChartTxn(t, g, userID, accountID, &groceries.ID, day(12), dec("25.10"), false) // refund
+	seedChartTxn(t, g, userID, accountID, &dining.ID, day(5), dec("-60.00"), false)
+	seedChartTxn(t, g, userID, accountID, nil, day(1), dec("2000.00"), false) // salary
+	// Credit-card payment: transfer pair, never spending.
+	seedChartTxn(t, g, userID, accountID, nil, day(20), dec("-900.00"), true)
+	seedChartTxn(t, g, userID, accountID, nil, day(20), dec("900.00"), true)
+	// Hidden row: kept in the ledger, excluded from spending.
+	hiddenAt := day(21)
+	hidden := &model.Transaction{
+		UserID: userID, AccountID: accountID, CategoryID: &dining.ID, Amount: dec("-77.00"),
+		TransactionDate: day(21), Source: "manual", HiddenAt: &hiddenAt,
+	}
+	if err := g.Create(hidden).Error; err != nil {
+		t.Fatalf("seed hidden: %v", err)
+	}
+
+	wantG := dec("139.90") // 120.35 + 44.65 - 25.10
+	wantD := dec("60.00")
+	wantTotal := wantG.Add(wantD)
+	salary := dec("2000.00")
+
+	eq := func(t *testing.T, what, got string, exp decimal.Decimal) {
+		t.Helper()
+		v, err := decimal.NewFromString(got)
+		if err != nil || !v.Equal(exp) {
+			t.Errorf("%s = %q, want %s", what, got, exp)
+		}
+	}
+
+	t.Run("headline totals", func(t *testing.T) {
+		sum, err := dash.Summarize(ctx, userID, service.PeriodCurrentMonth)
+		if err != nil {
+			t.Fatal(err)
+		}
+		eq(t, "spending", sum.Spending, wantTotal)
+		eq(t, "income", sum.Income, salary)
+	})
+	t.Run("category breakdown", func(t *testing.T) {
+		items, err := dash.SpendByCategory(ctx, userID, day(1), time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, it := range items {
+			if it.CategoryID == nil {
+				continue
+			}
+			switch *it.CategoryID {
+			case groceries.ID:
+				eq(t, "groceries", it.Amount, wantG)
+			case dining.ID:
+				eq(t, "dining", it.Amount, wantD)
+			}
+		}
+	})
+	t.Run("cash flow", func(t *testing.T) {
+		months, err := dash.CashFlow(ctx, userID, 1)
+		if err != nil || len(months) != 1 {
+			t.Fatalf("months=%v err=%v", months, err)
+		}
+		eq(t, "outflow", months[0].Outflow, wantTotal)
+		eq(t, "inflow", months[0].Inflow, salary)
+	})
+	t.Run("budget actual", func(t *testing.T) {
+		budgets := service.NewBudgetService(
+			repository.NewBudgetRepository(g),
+			repository.NewCategoryRepository(g),
+		).WithNow(func() time.Time { return time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) })
+		t.Cleanup(func() { g.Unscoped().Where("user_id = ?", userID).Delete(&model.Budget{}) })
+		for c, w := range map[*model.Category]decimal.Decimal{groceries: wantG, dining: wantD} {
+			b, err := budgets.Create(ctx, repository.UserOwner(userID), service.CreateBudgetInput{
+				CategoryID: c.ID, Period: "monthly", Amount: decimal.NewFromInt(1000),
+			})
+			if err != nil {
+				t.Fatalf("create budget: %v", err)
+			}
+			sp, err := budgets.Spend(ctx, userID, b.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !sp.Spent.Equal(w) {
+				t.Errorf("budget spent for %s = %s, want %s", c.Name, sp.Spent, w)
+			}
+		}
+	})
+}
