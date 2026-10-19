@@ -45,7 +45,7 @@ test.describe('split and hide journey', () => {
     // A fresh split auto-fills the last part: one number is enough (#506).
     await page.getByRole('button', { name: 'Split QASPLIT Superstore' }).click()
     await dlg.getByLabel('Amount for part 1').fill('70.00')
-    await expect(dlg.getByLabel('Amount for part 2')).toHaveValue('30')
+    await expect(dlg.getByLabel('Amount for part 2')).toHaveValue('30.00')
     await dlg.getByLabel('Category for part 2').selectOption({ label: gas.name })
     await expect(dlg.getByRole('status')).toHaveText('Fully allocated.')
     await expect(dlg.getByRole('button', { name: 'Save split' })).toBeEnabled()

@@ -64,6 +64,8 @@ describe('SplitTransactionModal (#438)', () => {
     const part2 = screen.getByLabelText('Amount for part 2') as HTMLInputElement
     fireEvent.change(screen.getByLabelText('Amount for part 1'), { target: { value: '70.05' } })
     expect(part2.value).toBe('30.05')
+    fireEvent.change(screen.getByLabelText('Amount for part 1'), { target: { value: '70' } })
+    expect(part2.value).toBe('30.10')
     expect(screen.getByRole('status')).toHaveTextContent('Fully allocated.')
     expect(screen.getByRole('button', { name: 'Save split' })).toBeEnabled()
     fireEvent.change(screen.getByLabelText('Amount for part 1'), { target: { value: '120' } })

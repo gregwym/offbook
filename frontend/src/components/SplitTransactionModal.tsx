@@ -13,6 +13,13 @@ import { AmountDisplay } from './AmountDisplay'
 
 type Line = { category: string; amount: string }
 
+// asInput pads a computed decimal to at least two places so prefilled parts
+// read like typed money ("30.00", not "30"); longer fractions stay exact.
+function asInput(d: string): string {
+  const [i, f = ''] = d.split('.')
+  return f.length >= 2 ? d : `${i}.${f.padEnd(2, '0')}`
+}
+
 type Props = {
   tx: Transaction
   currency: string
@@ -27,7 +34,7 @@ export function SplitTransactionModal({ tx, currency, categories, onClose, onSav
   const [lines, setLines] = useState<Line[]>(() =>
     tx.splits && tx.splits.length >= 2
       ? tx.splits.map((s) => ({ category: s.category_id ? String(s.category_id) : '', amount: absDecimal(s.amount) }))
-      : [{ category: tx.category_id ? String(tx.category_id) : '', amount: total }, { category: '', amount: '' }],
+      : [{ category: tx.category_id ? String(tx.category_id) : '', amount: asInput(total) }, { category: '', amount: '' }],
   )
   // Auto-fill the last part only for a fresh split; stops once the user edits
   // the last amount or changes the number of parts.
@@ -56,7 +63,7 @@ export function SplitTransactionModal({ tx, currency, categories, onClose, onSav
       if (!autoLast || i === last || patch.amount === undefined) return next
       const others = next.slice(0, last).reduce((acc, l) => addDecimal(acc, l.amount.trim() || '0'), '0')
       const rest = subDecimal(total, others)
-      return next.map((l, j) => (j === last ? { ...l, amount: rest.startsWith('-') || rest === '0' ? '' : rest } : l))
+      return next.map((l, j) => (j === last ? { ...l, amount: rest.startsWith('-') || rest === '0' ? '' : asInput(rest) } : l))
     })
   }
 
@@ -131,7 +138,7 @@ export function SplitTransactionModal({ tx, currency, categories, onClose, onSav
           ))}
           <button
             type="button"
-            onClick={() => { setAutoLast(false); setLines((ls) => [...ls, { category: '', amount: remaining.startsWith('-') ? '' : remaining === '0' ? '' : remaining }]) }}
+            onClick={() => { setAutoLast(false); setLines((ls) => [...ls, { category: '', amount: remaining.startsWith('-') ? '' : remaining === '0' ? '' : asInput(remaining) }]) }}
             disabled={lines.length >= 20}
             className="min-h-9 text-sm text-indigo-700 underline"
           >
