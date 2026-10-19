@@ -37,7 +37,7 @@ test.describe('duplicate statement upload', () => {
     await page.getByRole('button', { name: 'Preview' }).click()
     await expect(page.getByText('0 new', { exact: true })).toBeVisible()
     await expect(page.getByText('2 duplicate', { exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Import', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Import 0 new', exact: true })).toBeDisabled()
     await expectNoOverflow(page)
 
     // Overlapping statement: only the new row lands.
