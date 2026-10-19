@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -28,6 +29,7 @@ func (h *AccountHandler) Register(g *gin.RouterGroup) {
 	g.GET("/accounts/:id", h.Get)
 	g.PATCH("/accounts/:id", h.Update)
 	g.DELETE("/accounts/:id", h.Delete)
+	g.POST("/accounts/:id/balance", h.UpdateBalance)
 }
 
 // JSON request shape for POST /accounts. The wire field `balance` becomes
@@ -171,6 +173,45 @@ func (h *AccountHandler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// updateBalanceRequest is a user-reported balance for a manual account
+// (#504). Balance is signed like the account's displayed balance; as_of is
+// "YYYY-MM-DD" and defaults to today.
+type updateBalanceRequest struct {
+	Balance *decimal.Decimal `json:"balance"`
+	AsOf    *string          `json:"as_of"`
+}
+
+func (h *AccountHandler) UpdateBalance(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	var req updateBalanceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	if req.Balance == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "balance is required", "code": "INVALID_REQUEST"})
+		return
+	}
+	in := service.UpdateBalanceInput{Balance: *req.Balance}
+	if req.AsOf != nil && *req.AsOf != "" {
+		d, err := time.Parse("2006-01-02", *req.AsOf)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "as_of must be YYYY-MM-DD", "code": "INVALID_REQUEST"})
+			return
+		}
+		in.AsOf = &d
+	}
+	res, err := h.svc.UpdateBalance(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, in)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": res})
+}
+
 func (h *AccountHandler) writeServiceError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, service.ErrAccountNotFound):
@@ -182,6 +223,10 @@ func (h *AccountHandler) writeServiceError(c *gin.Context, err error) {
 		errors.Is(err, service.ErrInvalidLastFour),
 		errors.Is(err, service.ErrInvalidAccount):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_ACCOUNT"})
+	case errors.Is(err, service.ErrBalanceAsOfInFuture):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+	case errors.Is(err, service.ErrAccountPlaidManaged):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "PLAID_MANAGED"})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
 	}

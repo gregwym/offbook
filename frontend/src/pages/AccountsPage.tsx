@@ -10,6 +10,7 @@ import { SetPriceModal } from '../components/SetPriceModal'
 import { SyncStatusPill } from '../components/SyncStatusPill'
 import { TimeAgo } from '../components/TimeAgo'
 import { TradeFormModal } from '../components/TradeFormModal'
+import { UpdateBalanceModal } from '../components/UpdateBalanceModal'
 import { useAccountsStore } from '../store/accountsStore'
 import { useScopeStore } from '../store/scopeStore'
 import {
@@ -37,6 +38,8 @@ export function AccountsPage() {
   // Tier-1 manual price entry (#373) — asset-agnostic, so a single modal
   // instance serves every row's "partial" badge.
   const [settingPrice, setSettingPrice] = useState(false)
+  // Manual "what does the bank say?" balance (#504) — non-Plaid cash accounts.
+  const [balancing, setBalancing] = useState<Account | null>(null)
 
   useEffect(() => {
     void fetch()
@@ -136,6 +139,16 @@ export function AccountsPage() {
                       Observed <TimeAgo when={a.last_observed_at} /> via {a.last_observed_source}
                     </div>
                   )}
+                  {canUpdateBalance(a) && (
+                    <button
+                      type="button"
+                      onClick={() => setBalancing(a)}
+                      aria-label={`Update balance for ${a.name}`}
+                      className="mt-0.5 block w-full text-right text-[11px] font-medium text-indigo-600 hover:text-indigo-800"
+                    >
+                      Update balance
+                    </button>
+                  )}
                 </td>
                 <td className="px-4 py-2 text-center">
                   <span className={a.is_active ? 'text-emerald-700' : 'text-gray-400'}>
@@ -232,6 +245,14 @@ export function AccountsPage() {
         />
       )}
 
+      {balancing && (
+        <UpdateBalanceModal
+          account={balancing}
+          onClose={() => setBalancing(null)}
+          onUpdated={() => { void fetch() }}
+        />
+      )}
+
       {settingPrice && (
         <SetPriceModal
           onClose={() => setSettingPrice(false)}
@@ -248,6 +269,13 @@ export function AccountsPage() {
 // account shapes accept trades.
 function isBrokerage(a: Account): boolean {
   return a.account_type === 'investment' || a.account_type === 'crypto'
+}
+
+// canUpdateBalance: manual cash-style accounts only. Plaid accounts get their
+// balance from sync (the backend refuses them), and a brokerage balance is
+// positions × prices, not one number the user can type.
+function canUpdateBalance(a: Account): boolean {
+  return !a.plaid_item_id && !a.plaid_account_id && !isBrokerage(a)
 }
 
 type FormProps = {

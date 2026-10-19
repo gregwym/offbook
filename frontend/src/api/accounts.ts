@@ -4,6 +4,8 @@ import type {
   AccountPII,
   CreateAccountInput,
   UpdateAccountInput,
+  UpdateBalanceInput,
+  UpdateBalanceResult,
 } from '../types/account'
 
 export type AccountListFilter = {
@@ -37,6 +39,13 @@ export async function createAccount(input: CreateAccountInput): Promise<Account>
 
 export async function updateAccount(id: number, input: UpdateAccountInput): Promise<Account> {
   const res = await apiClient.patch<ApiItem<Account>>(`/accounts/${id}`, input)
+  return res.data.data
+}
+
+// Record what the bank says the balance is; the backend reconciles the ledger
+// to it with an opening_balance/adjustment row (#504). Manual accounts only.
+export async function updateAccountBalance(id: number, input: UpdateBalanceInput): Promise<UpdateBalanceResult> {
+  const res = await apiClient.post<ApiItem<UpdateBalanceResult>>(`/accounts/${id}/balance`, input)
   return res.data.data
 }
 

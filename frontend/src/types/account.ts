@@ -85,3 +85,17 @@ export type UpdateAccountInput = Partial<Omit<CreateAccountInput, 'balance'>>
 export const PII_FIELDS = ['holder_name', 'account_number', 'routing_number', 'address'] as const
 export type AccountPIIField = (typeof PII_FIELDS)[number]
 export type AccountPII = Partial<Record<AccountPIIField, string>>
+
+// POST /accounts/:id/balance (#504): a user-reported balance for a manual
+// account. balance is signed like Account.balance; as_of is YYYY-MM-DD.
+export type UpdateBalanceInput = {
+  balance: string
+  as_of?: string
+}
+
+// recorded is the ledger row the update wrote (opening_balance on the first
+// reconcile, adjustment after); null when the ledger already matched.
+export type UpdateBalanceResult = {
+  account: Account
+  recorded: { id: number; kind: 'opening_balance' | 'adjustment'; amount: string } | null
+}
