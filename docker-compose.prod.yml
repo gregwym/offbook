@@ -15,7 +15,7 @@
 #     up -d
 #
 # Secrets (in .env.prod): SESSION_SECRET (auto-generated on first boot),
-# FRONTEND_URL. Tailscale identity (TS_AUTHKEY, TS_HOSTNAME) is passed once on
+# FRONTEND_URL, and optionally the PLAID_* keys. Tailscale identity (TS_AUTHKEY, TS_HOSTNAME) is passed once on
 # the command line, not stored. See .env.prod.example and ADR-0016.
 services:
   postgres:
@@ -41,6 +41,14 @@ services:
       # an overlay env_file unless we re-state it here.
       FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL required (set in .env.prod, then pass --env-file .env.prod)}
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET required (set in .env.prod, then pass --env-file .env.prod)}
+      # Plaid production (#502, docs/ops/plaid-production.md). Optional —
+      # all empty leaves Plaid disabled. Bound explicitly for the same
+      # reason as above: env_file is overridden away for prod.
+      PLAID_CLIENT_ID: ${PLAID_CLIENT_ID:-}
+      PLAID_SECRET: ${PLAID_SECRET:-}
+      PLAID_ENV: ${PLAID_ENV:-}
+      PLAID_TOKEN_KEY: ${PLAID_TOKEN_KEY:-}
+      PLAID_REDIRECT_URI: ${PLAID_REDIRECT_URI:-}
     env_file: !override []
 
   frontend:

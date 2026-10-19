@@ -117,7 +117,9 @@ uses its own Plaid account, same as Tailscale requires its own auth key
 5. Register your instance's redirect URI (`https://<your-hostname>.<your-tailnet>.ts.net/plaid/oauth-return`)
    in the Plaid dashboard, per "Owner steps to enable OAuth banks" above.
 6. `command make deploy FLAVOR=prod` picks these up automatically — no code
-   changes required. Dev, QA, and CI are unaffected; they never read
+   changes required. (`docker-compose.prod.yml` binds each `PLAID_*` key
+   explicitly, because the prod overlay drops the base `env_file`; before
+   #502 the keys never reached the backend and Plaid stayed disabled in prod.) Dev, QA, and CI are unaffected; they never read
    `.env.prod`.
 
 Sandbox development keys (`PLAID_ENV=sandbox`) remain free and require no
