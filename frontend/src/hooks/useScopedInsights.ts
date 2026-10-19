@@ -211,7 +211,7 @@ export function useScopedInsights(): Result & { reload: () => void } & TrendCont
       const fetchTrend =
         active === SCOPE_HOUSEHOLD && householdId != null
           ? getHouseholdNetWorthTrend(months).then((t) =>
-              t.map((p) => ({ date: p.date.slice(0, 10), value: p.value, complete: p.complete })),
+              t.map((p) => ({ date: p.date.slice(0, 10), value: p.value, complete: p.complete, by_kind: p.by_kind })),
             )
           : getNetWorth(months).then((t) =>
               t.map((p) => ({ date: p.date.slice(0, 10), value: p.total, complete: p.complete, by_kind: p.by_kind })),
@@ -397,6 +397,7 @@ async function loadHousehold(trendMonths = 12): Promise<InsightsData> {
       date: p.date.slice(0, 10),
       value: p.value,
       complete: p.complete,
+      by_kind: p.by_kind,
     })),
     allocation: allocation.map((a) => ({ kind: a.kind, value: a.value, complete: a.complete })),
     budgets: budgetRows,

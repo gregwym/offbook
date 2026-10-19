@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { server } from '../test/server'
-import { expectHealthySmoke, renderPage, resetStores } from '../test/testUtils'
+import { expectHealthySmoke, renderPage, resetStores, setHouseholdScope } from '../test/testUtils'
 import * as fx from '../test/fixtures'
 import { InsightsPage } from './InsightsPage'
 
@@ -84,6 +84,38 @@ describe('InsightsPage net-worth asset-class drill-in', () => {
     const row = screen.getByRole('rowheader', { name: /equity/i }).closest('tr') as HTMLElement
     expect(row).toHaveTextContent('150.00')
     expect(screen.getByRole('rowheader', { name: /fiat/i }).closest('tr')).toHaveTextContent('500.00')
+  })
+})
+
+describe('InsightsPage household asset-class drill-in', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('shows the by-asset-class breakdown in household scope from the aggregator', async () => {
+    setHouseholdScope(1)
+    server.use(
+      http.get('*/h/insights/net-worth', () =>
+        HttpResponse.json({
+          data: [
+            { date: '2026-03-31T00:00:00Z', value: '1000', complete: true, by_kind: [{ kind: 'fiat', value: '1000', complete: true }] },
+            {
+              date: '2026-05-31T00:00:00Z',
+              value: '1650',
+              complete: true,
+              by_kind: [
+                { kind: 'equity', value: '150', complete: true },
+                { kind: 'fiat', value: '1500', complete: true },
+              ],
+            },
+          ],
+          total: 2,
+        }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    fireEvent.click(await screen.findByText('By asset class'))
+    expect(screen.getByRole('rowheader', { name: /equity/i }).closest('tr')).toHaveTextContent('150.00')
   })
 })
 

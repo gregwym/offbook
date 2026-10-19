@@ -386,6 +386,53 @@ func TestAggregator_NetWorthTrend_PrivateExcluded(t *testing.T) {
 	}
 }
 
+// TestAggregator_NetWorthTrend_ByKind: each point splits by asset kind (#374
+// drill-in), the slices sum to Value, an unpriced kind is flagged incomplete
+// without hiding the priced kind, and a private account's kind never appears.
+func TestAggregator_NetWorthTrend_ByKind(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	usd := testutil.LookupUSDAssetID(t, g)
+	eur := testutil.LookupAssetID(t, g, "EUR", "fiat")
+	eq := seedAsset(t, g, "BYK-"+fmt.Sprintf("%d", time.Now().UnixNano()), model.AssetKindEquity, usd)
+	ownerID := seedUser(t, g, "nwt-kind-owner")
+	hh := seedHouseholdRow(t, g, ownerID, "NWTKind", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+
+	shared := seedAccount(t, g, ownerID, "shared")
+	private := seedAccount(t, g, ownerID, "private")
+	jan := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedHoldingTxn(t, g, ownerID, shared.ID, usd, model.KindOpeningBalance, jan, "100")
+	seedHoldingTxn(t, g, ownerID, shared.ID, eur, model.KindOpeningBalance, jan, "50")
+	seedHoldingTxn(t, g, ownerID, private.ID, eq, model.KindOpeningBalance, jan, "7")
+	setShare(t, g, shared.ID, hh.ID, model.VisibilityBalanceAndTxns)
+	insertPrice(t, g, eur, usd, "2.0", time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC))
+
+	agg.SetClock(func() time.Time { return time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) })
+	out, err := agg.NetWorthTrend(ctx, hh.ID, 3) // Mar, Apr, May
+	if err != nil {
+		t.Fatalf("NetWorthTrend: %v", err)
+	}
+	for i, p := range out {
+		sum := decimal.Zero
+		for _, k := range p.ByKind {
+			if k.Kind == model.AssetKindEquity {
+				t.Errorf("point[%d] exposes equity kind from a private account", i)
+			}
+			sum = sum.Add(decimal.RequireFromString(k.Value))
+		}
+		if !sum.Equal(decimal.RequireFromString(p.Value)) {
+			t.Errorf("point[%d] by_kind sums to %s, value %s", i, sum, p.Value)
+		}
+	}
+	if out[0].Complete || out[0].Value != "100" {
+		t.Errorf("March = {%s %v}, want {100 false} (EUR unpriced)", out[0].Value, out[0].Complete)
+	}
+	if !out[1].Complete || out[1].Value != "200" || len(out[1].ByKind) != 1 || out[1].ByKind[0].Kind != "fiat" {
+		t.Errorf("April = %+v, want 200 complete, single fiat kind", out[1])
+	}
+}
+
 // TestAggregator_AccountSummaries_FlagsStalePricing: an account holding an
 // asset whose only price is older than the valuation stale window reports
 // Complete=false; fresh-priced and primary-currency-only accounts report

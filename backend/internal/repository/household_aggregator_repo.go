@@ -98,6 +98,11 @@ type HouseholdAggregatorRepository interface {
 	// values each asset in a single household quote currency.
 	FoldByAccountSetAsOf(ctx context.Context, accountIDs []int64, asOf time.Time) ([]model.Position, error)
 
+	// AssetKinds maps asset id → asset kind (fiat/crypto/equity/…) for the
+	// per-class drill-in of the net-worth trend. Assets are a global catalog
+	// (no user data), so this is not a cross-user read of private rows.
+	AssetKinds(ctx context.Context, assetIDs []int64) (map[int64]string, error)
+
 	// HouseholdQuoteAssetID returns the asset_id the household's aggregates are
 	// denominated in: the owning member's primary_currency_asset_id. A single
 	// quote per household keeps the net-worth trend from summing across
@@ -508,6 +513,25 @@ func (r *householdAggregatorRepo) FoldByAccountSetAsOf(ctx context.Context, acco
 			return nil, err
 		}
 		out = append(out, model.Position{AssetID: row.AssetID, Quantity: q})
+	}
+	return out, nil
+}
+
+func (r *householdAggregatorRepo) AssetKinds(ctx context.Context, assetIDs []int64) (map[int64]string, error) {
+	out := make(map[int64]string, len(assetIDs))
+	if len(assetIDs) == 0 {
+		return out, nil
+	}
+	type row struct {
+		ID   int64
+		Kind string
+	}
+	var rows []row
+	if err := r.db.WithContext(ctx).Raw(`SELECT id, kind FROM assets WHERE id IN ?`, assetIDs).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out[r.ID] = r.Kind
 	}
 	return out, nil
 }

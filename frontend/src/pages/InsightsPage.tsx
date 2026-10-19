@@ -342,7 +342,7 @@ function NetWorthBand({
 
 // Asset-class drill-in (#374): first vs latest month-end value per kind, so
 // "what drove the change" is answerable without leaving Insights. Personal
-// scope only — household points carry no by_kind.
+// both scopes (household by_kind comes from the aggregator, shared accounts only).
 function KindBreakdown({ trend }: { trend: InsightsData['net_worth_trend'] }) {
   const first = trend[0]
   const last = trend[trend.length - 1]

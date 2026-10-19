@@ -78,6 +78,7 @@ export type HouseholdNetWorthPoint = {
   date: string
   value: string
   complete: boolean
+  by_kind?: { kind: string; value: string; complete: boolean }[]
 }
 
 // AccountSummary mirrors service/household.AccountSummary — lightweight,
