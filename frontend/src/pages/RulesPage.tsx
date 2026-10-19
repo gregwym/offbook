@@ -71,14 +71,14 @@ export function RulesPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Categorization rules</h1>
           <p className="mt-1 text-sm text-gray-500">
             Auto-categorize transactions on import. Rules apply in priority order; manual picks always win.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => runApply(true)}
@@ -175,11 +175,11 @@ export function RulesPage() {
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wider text-gray-500">
             <tr>
-              <th className="px-4 py-2 text-left">Priority</th>
+              <th className="hidden px-4 py-2 text-left sm:table-cell">Priority</th>
               <th className="px-4 py-2 text-left">Pattern</th>
-              <th className="px-4 py-2 text-left">Match</th>
+              <th className="hidden px-4 py-2 text-left sm:table-cell">Match</th>
               <th className="px-4 py-2 text-left">Category</th>
-              <th className="px-4 py-2 text-center">Active</th>
+              <th className="hidden px-4 py-2 text-center sm:table-cell">Active</th>
               <th className="px-4 py-2"></th>
             </tr>
           </thead>
@@ -192,11 +192,14 @@ export function RulesPage() {
             )}
             {rules.map((r) => (
               <tr key={r.id} className="hover:bg-gray-50">
-                <td className="px-4 py-2 font-mono text-gray-700">{r.priority}</td>
-                <td className="px-4 py-2 font-mono text-gray-900">{r.pattern}</td>
-                <td className="px-4 py-2 text-gray-700">{r.match_type}</td>
+                <td className="hidden px-4 py-2 font-mono text-gray-700 sm:table-cell">{r.priority}</td>
+                <td className="px-4 py-2 font-mono text-gray-900">
+                  {r.pattern}
+                  {!r.is_active && <span className="ml-2 text-xs text-gray-400 sm:hidden">(inactive)</span>}
+                </td>
+                <td className="hidden px-4 py-2 text-gray-700 sm:table-cell">{r.match_type}</td>
                 <td className="px-4 py-2 text-gray-700">{categoriesById.get(r.category_id)?.name ?? `#${r.category_id}`}</td>
-                <td className="px-4 py-2 text-center">
+                <td className="hidden px-4 py-2 text-center sm:table-cell">
                   <span className={r.is_active ? 'text-emerald-700' : 'text-gray-400'}>
                     {r.is_active ? 'yes' : 'no'}
                   </span>
