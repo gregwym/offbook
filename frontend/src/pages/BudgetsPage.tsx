@@ -74,7 +74,7 @@ export function BudgetsPage() {
           <button
             type="button"
             onClick={() => setAdding(true)}
-            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+            className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
           >
             <Plus size={16} /> {isHousehold ? 'New shared budget' : 'New budget'}
           </button>
@@ -206,7 +206,11 @@ function BudgetCard({ row, category, canMutate, onEdit, onDelete }: CardProps) {
           {over ? ' over' : ''}
         </span>
         <span className="text-gray-500">
-          {row.remaining != null ? <><AmountDisplay amount={row.remaining} currency="USD" /> remaining</> : ''}
+          {row.remaining == null
+            ? ''
+            : Number(row.remaining) < 0
+              ? <><AmountDisplay amount={row.remaining.replace(/^-/, '')} currency="USD" /> over budget</>
+              : <><AmountDisplay amount={row.remaining} currency="USD" /> remaining</>}
         </span>
       </div>
       {row.period_start && row.period_end && (
