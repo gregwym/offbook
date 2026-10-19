@@ -173,6 +173,9 @@ type NetWorthPoint struct {
 	Date     time.Time `json:"date"`
 	Value    string    `json:"value"`
 	Complete bool      `json:"complete"`
+	// ByKind splits Value by asset kind (#374 drill-in), sorted by kind. The
+	// slices sum to Value; a kind with an unpriced position is Complete=false.
+	ByKind []AssetClassAllocation `json:"by_kind,omitempty"`
 }
 
 // AccountSummary is one row of the household account breakdown. Aggregator
@@ -617,9 +620,47 @@ func (a *Aggregator) NetWorthTrend(ctx context.Context, householdID int64, month
 	// across the shared set up to each month-end — historical quantity from
 	// the ledger, not today's positions.
 	asOfs := valuation.MonthEndGrid(a.now(), months)
-	series, err := a.val.WithStaleWindow(0).Series(ctx, asOfs, quoteAssetID,
+	val := a.val.WithStaleWindow(0)
+	kindOf := map[int64]string{}
+	byKind := map[time.Time][]AssetClassAllocation{}
+	series, err := val.Series(ctx, asOfs, quoteAssetID,
 		func(ctx context.Context, asOf time.Time) ([]model.Position, error) {
-			return a.repo.FoldByAccountSetAsOf(ctx, accountIDs, asOf)
+			positions, err := a.repo.FoldByAccountSetAsOf(ctx, accountIDs, asOf)
+			if err != nil {
+				return nil, err
+			}
+			var missing []int64
+			for _, p := range positions {
+				if _, ok := kindOf[p.AssetID]; !ok {
+					missing = append(missing, p.AssetID)
+				}
+			}
+			if len(missing) > 0 {
+				kinds, err := a.repo.AssetKinds(ctx, missing)
+				if err != nil {
+					return nil, fmt.Errorf("asset kinds: %w", err)
+				}
+				for id, k := range kinds {
+					kindOf[id] = k
+				}
+			}
+			groups := map[string][]model.Position{}
+			for _, p := range positions {
+				groups[kindOf[p.AssetID]] = append(groups[kindOf[p.AssetID]], p)
+			}
+			kinds := make([]string, 0, len(groups))
+			for k := range groups {
+				kinds = append(kinds, k)
+			}
+			sort.Strings(kinds)
+			for _, k := range kinds {
+				v, err := val.ValuePositions(ctx, groups[k], asOf, quoteAssetID)
+				if err != nil {
+					return nil, fmt.Errorf("value kind %s: %w", k, err)
+				}
+				byKind[asOf] = append(byKind[asOf], AssetClassAllocation{Kind: k, Value: v.Value.String(), Complete: v.Complete()})
+			}
+			return positions, nil
 		})
 	if err != nil {
 		return nil, fmt.Errorf("net worth series: %w", err)
@@ -630,6 +671,7 @@ func (a *Aggregator) NetWorthTrend(ctx context.Context, householdID int64, month
 			Date:     p.AsOf,
 			Value:    p.Value.String(),
 			Complete: p.Complete(),
+			ByKind:   byKind[p.AsOf],
 		})
 	}
 	return out, nil
