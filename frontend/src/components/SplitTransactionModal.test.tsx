@@ -27,11 +27,11 @@ describe('SplitTransactionModal (#438)', () => {
     const save = screen.getByRole('button', { name: 'Save split' })
     expect(save).toBeDisabled() // second part empty: not two valid parts yet
     expect(screen.getByRole('status')).toHaveTextContent('every part needs a non-zero amount')
-    fireEvent.change(screen.getByLabelText('Amount for part 1'), { target: { value: '60.05' } })
-    expect(screen.getByRole('status')).toHaveTextContent('40.05 left to allocate.')
     fireEvent.change(screen.getByLabelText('Amount for part 2'), { target: { value: '40.06' } })
-    expect(screen.getByRole('status')).toHaveTextContent('Over-allocated by 0.01.')
+    expect(screen.getByRole('status')).toHaveTextContent('Over-allocated by 40.06 USD.')
     expect(save).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('Amount for part 1'), { target: { value: '60.05' } })
+    expect(screen.getByRole('status')).toHaveTextContent('Over-allocated by 0.01 USD.')
     fireEvent.change(screen.getByLabelText('Amount for part 2'), { target: { value: '40.05' } })
     expect(screen.getByRole('status')).toHaveTextContent('Fully allocated.')
     expect(save).toBeEnabled()
@@ -59,6 +59,33 @@ describe('SplitTransactionModal (#438)', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('fills the last part with the remainder until the user edits it (#506)', () => {
+    setup()
+    const part2 = screen.getByLabelText('Amount for part 2') as HTMLInputElement
+    fireEvent.change(screen.getByLabelText('Amount for part 1'), { target: { value: '70.05' } })
+    expect(part2.value).toBe('30.05')
+    expect(screen.getByRole('status')).toHaveTextContent('Fully allocated.')
+    expect(screen.getByRole('button', { name: 'Save split' })).toBeEnabled()
+    fireEvent.change(screen.getByLabelText('Amount for part 1'), { target: { value: '120' } })
+    expect(part2.value).toBe('') // over the total: nothing left to fill
+    expect(screen.getByRole('status')).toHaveTextContent('Over-allocated by 19.90 USD.')
+    fireEvent.change(part2, { target: { value: '5' } })
+    fireEvent.change(screen.getByLabelText('Amount for part 1'), { target: { value: '60' } })
+    expect(part2.value).toBe('5') // user's own value is kept
+    expect(screen.getByRole('status')).toHaveTextContent('35.10 USD left to allocate.')
+  })
+
+  it('does not rewrite a saved split on open or edit (#506)', () => {
+    const saved = { ...tx, splits: [
+      { id: 1, transaction_id: tx.id, category_id: 1, amount: '-60.05' },
+      { id: 2, transaction_id: tx.id, category_id: 2, amount: '-40.05' },
+    ] }
+    render(<SplitTransactionModal tx={saved} currency="USD" categories={fx.categories} onClose={vi.fn()} onSaved={vi.fn()} />)
+    fireEvent.change(screen.getByLabelText('Amount for part 1'), { target: { value: '50' } })
+    expect((screen.getByLabelText('Amount for part 2') as HTMLInputElement).value).toBe('40.05')
+    expect(screen.getByRole('status')).toHaveTextContent('10.05 USD left to allocate.')
+  })
+
   it('closes on Escape', () => {
     const { onClose } = setup()
     fireEvent.keyDown(window, { key: 'Escape' })
@@ -73,6 +100,6 @@ describe('SplitTransactionModal (#438)', () => {
     render(<SplitTransactionModal tx={stale} currency="USD" categories={fx.categories} onClose={vi.fn()} onSaved={vi.fn()} />)
     expect(screen.getByRole('alert')).toHaveTextContent('bank changed this amount')
     expect(screen.getByRole('button', { name: 'Save split' })).toBeDisabled()
-    expect(screen.getByRole('status')).toHaveTextContent('0.4 left to allocate.')
+    expect(screen.getByRole('status')).toHaveTextContent('0.40 USD left to allocate.')
   })
 })

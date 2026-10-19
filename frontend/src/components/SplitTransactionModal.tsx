@@ -1,7 +1,9 @@
 // SplitTransactionModal allocates one flow transaction across categories
 // (#438). Users type positive amounts; the parent's sign is applied on save,
 // so the lines always sum exactly to the transaction. Save is blocked until
-// the remaining balance is exactly zero.
+// the remaining balance is exactly zero. In a new split the last part tracks
+// the remainder (#506) until the user types into it, so a two-way split needs
+// one number; saved splits are never rewritten on open.
 import { useEffect, useState } from 'react'
 import { replaceTransactionSplits } from '../api/transactions'
 import type { Category } from '../types/category'
@@ -27,6 +29,9 @@ export function SplitTransactionModal({ tx, currency, categories, onClose, onSav
       ? tx.splits.map((s) => ({ category: s.category_id ? String(s.category_id) : '', amount: absDecimal(s.amount) }))
       : [{ category: tx.category_id ? String(tx.category_id) : '', amount: total }, { category: '', amount: '' }],
   )
+  // Auto-fill the last part only for a fresh split; stops once the user edits
+  // the last amount or changes the number of parts.
+  const [autoLast, setAutoLast] = useState(!(tx.splits && tx.splits.length >= 2))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -43,8 +48,17 @@ export function SplitTransactionModal({ tx, currency, categories, onClose, onSav
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const update = (i: number, patch: Partial<Line>) =>
-    setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)))
+  const update = (i: number, patch: Partial<Line>) => {
+    const last = lines.length - 1
+    if (i === last && patch.amount !== undefined) setAutoLast(false)
+    setLines((ls) => {
+      const next = ls.map((l, j) => (j === i ? { ...l, ...patch } : l))
+      if (!autoLast || i === last || patch.amount === undefined) return next
+      const others = next.slice(0, last).reduce((acc, l) => addDecimal(acc, l.amount.trim() || '0'), '0')
+      const rest = subDecimal(total, others)
+      return next.map((l, j) => (j === last ? { ...l, amount: rest.startsWith('-') || rest === '0' ? '' : rest } : l))
+    })
+  }
 
   const save = async (clear: boolean) => {
     setError(null)
@@ -108,7 +122,7 @@ export function SplitTransactionModal({ tx, currency, categories, onClose, onSav
                 type="button"
                 aria-label={`Remove part ${i + 1}`}
                 disabled={lines.length <= 2}
-                onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}
+                onClick={() => { setAutoLast(false); setLines((ls) => ls.filter((_, j) => j !== i)) }}
                 className="min-h-10 min-w-10 rounded text-gray-500 hover:bg-gray-100 disabled:opacity-30"
               >
                 ×
@@ -117,20 +131,22 @@ export function SplitTransactionModal({ tx, currency, categories, onClose, onSav
           ))}
           <button
             type="button"
-            onClick={() => setLines((ls) => [...ls, { category: '', amount: remaining.startsWith('-') ? '' : remaining === '0' ? '' : remaining }])}
+            onClick={() => { setAutoLast(false); setLines((ls) => [...ls, { category: '', amount: remaining.startsWith('-') ? '' : remaining === '0' ? '' : remaining }]) }}
             disabled={lines.length >= 20}
             className="min-h-9 text-sm text-indigo-700 underline"
           >
             + Add part
           </button>
           <div role="status" className={`rounded px-3 py-2 text-sm ${valid ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>
-            {valid
-              ? 'Fully allocated.'
-              : incomplete
-                ? 'Move part of the amount into each line — every part needs a non-zero amount.'
-                : remaining.startsWith('-')
-                ? `Over-allocated by ${remaining.slice(1)}.`
-                : `${remaining} left to allocate.`}
+            {valid ? (
+              'Fully allocated.'
+            ) : incomplete ? (
+              'Move part of the amount into each line — every part needs a non-zero amount.'
+            ) : remaining.startsWith('-') ? (
+              <>Over-allocated by <AmountDisplay amount={remaining.slice(1)} currency={currency} />.</>
+            ) : (
+              <><AmountDisplay amount={remaining} currency={currency} /> left to allocate.</>
+            )}
           </div>
           {error && <div role="alert" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
         </div>
