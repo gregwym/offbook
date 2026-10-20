@@ -25,6 +25,15 @@ export async function confirmTransferMatch(
   return res.data.data
 }
 
+// dismissTransferMatch records that a proposed pair is "not a transfer"
+// (#510): it stops being proposed and both rows count in income/spending.
+export async function dismissTransferMatch(transactionIDA: number, transactionIDB: number): Promise<void> {
+  await apiClient.post('/transfers/dismiss', {
+    transaction_id_a: transactionIDA,
+    transaction_id_b: transactionIDB,
+  })
+}
+
 export async function unlinkTransfer(transactionID: number): Promise<void> {
   await apiClient.post(`/transactions/${transactionID}/unlink-transfer`)
 }

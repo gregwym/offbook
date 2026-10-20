@@ -119,6 +119,7 @@ POST /api/v1/transactions/:id/unlink-transfer
 POST /api/v1/transactions/import/jobs/:job_id/commit
 POST /api/v1/transactions/review
 POST /api/v1/transfers/confirm
+POST /api/v1/transfers/dismiss
 PUT /api/v1/accounts/:id/pii
 PUT /api/v1/accounts/:id/shares/:householdID
 PUT /api/v1/transactions/:id/splits

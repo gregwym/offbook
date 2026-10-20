@@ -35,7 +35,8 @@ describe('TransactionsPage smoke', () => {
     renderPage(<TransactionsPage />)
     await expectHealthySmoke()
 
-    fireEvent.click(await screen.findByRole('button', { name: /review matches/i }))
+    expect(await screen.findByText(/counted in income or spending until you/i)).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: /review it/i }))
 
     expect(await screen.findByRole('button', { name: /confirm match/i })).toBeInTheDocument()
 
@@ -54,7 +55,54 @@ describe('TransactionsPage smoke', () => {
     await waitFor(() => {
       expect(confirmedBody).toEqual({ transaction_id_a: fx.transaction1.id, transaction_id_b: leg2.id })
     })
-    expect(await screen.findByRole('button', { name: /matched/i })).toBeInTheDocument()
+    expect(await screen.findByText(/matched as a transfer/i)).toBeInTheDocument()
+  })
+
+  // #510: a wrong proposal can be rejected. The dismiss endpoint gets both
+  // ids, a failed save shows an error and can be retried, and once the
+  // server stops proposing the pair the banner goes away.
+  it('dismisses a wrong transfer proposal with error and retry', async () => {
+    const leg2 = { ...fx.transaction1, id: 2, amount: '50.000000000000000000' }
+    let proposed = true
+    let attempts = 0
+    let dismissedBody: unknown = null
+    server.use(
+      http.get(`${API}/transfers/candidates`, () =>
+        HttpResponse.json({
+          data: proposed ? [{ transaction_a: fx.transaction1, transaction_b: leg2 }] : [],
+          total: proposed ? 1 : 0,
+        }),
+      ),
+      http.post(`${API}/transfers/dismiss`, async ({ request }) => {
+        attempts += 1
+        if (attempts === 1) {
+          return HttpResponse.json({ error: 'database unavailable', code: 'INTERNAL' }, { status: 500 })
+        }
+        dismissedBody = await request.json()
+        proposed = false
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+
+    renderPage(<TransactionsPage />)
+    await expectHealthySmoke()
+    fireEvent.click(await screen.findByRole('button', { name: /review it/i }))
+
+    fireEvent.click(await screen.findByRole('button', { name: /not a transfer/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't save that decision: database unavailable\. try again/i)
+    expect(proposed).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: /not a transfer/i }))
+    await waitFor(() => {
+      expect(dismissedBody).toEqual({ transaction_id_a: fx.transaction1.id, transaction_id_b: leg2.id })
+    })
+    expect(await screen.findByText(/both transactions now count in income and spending/i)).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /done/i }))
+    await waitFor(() => {
+      expect(screen.queryByText(/possible transfer found/i)).not.toBeInTheDocument()
+    })
   })
 })
 

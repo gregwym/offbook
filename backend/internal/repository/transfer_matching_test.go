@@ -245,3 +245,46 @@ func TestLinkTransferPair_CrossTenantRejected(t *testing.T) {
 		t.Fatalf("cross-tenant LinkTransferPair: got %v, want ErrNotFound", err)
 	}
 }
+
+// TestListTransferCandidates_SkipsDismissedPair is #510: once the user says a
+// pair is "not a transfer", the matcher never proposes it again, but the rows
+// stay eligible to pair with a different, still-plausible partner.
+func TestListTransferCandidates_SkipsDismissedPair(t *testing.T) {
+	g := openTestDB(t)
+	ctx := context.Background()
+	repo := repository.NewTransactionRepository(g)
+	userID, accA, accB := seedTransferFixtureAccounts(t, g)
+	usdID := lookupUSDAssetID(t, g)
+
+	out := seedFlowTxn(t, g, userID, accA, usdID, "-500", "2026-06-01")
+	wrong := seedFlowTxn(t, g, userID, accB, usdID, "500", "2026-06-01")
+	right := seedFlowTxn(t, g, userID, accB, usdID, "500", "2026-06-03")
+
+	candidates, err := repo.ListTransferCandidates(ctx, userID, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].B.ID != wrong.ID {
+		t.Fatalf("before dismissal: candidates = %+v, want the same-day pair", candidates)
+	}
+
+	otherUser := seedTestUser(t, g)
+	if err := repo.DismissTransferPair(ctx, otherUser, out.ID, wrong.ID); err != repository.ErrNotFound {
+		t.Fatalf("cross-tenant dismiss err = %v, want ErrNotFound", err)
+	}
+	if err := repo.DismissTransferPair(ctx, userID, wrong.ID, out.ID); err != nil {
+		t.Fatalf("DismissTransferPair: %v", err)
+	}
+
+	candidates, err = repo.ListTransferCandidates(ctx, userID, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("after dismissal: got %d candidates, want 1", len(candidates))
+	}
+	got := map[int64]bool{candidates[0].A.ID: true, candidates[0].B.ID: true}
+	if !got[out.ID] || !got[right.ID] {
+		t.Fatalf("after dismissal: pair = (%d, %d), want (%d, %d)", candidates[0].A.ID, candidates[0].B.ID, out.ID, right.ID)
+	}
+}
