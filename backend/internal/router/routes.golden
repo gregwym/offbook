@@ -92,6 +92,7 @@ POST /api/v1/budgets
 POST /api/v1/categorization-rules
 POST /api/v1/categorization-rules/apply
 POST /api/v1/categorization-rules/preview
+POST /api/v1/categorization-rules/reorder
 POST /api/v1/h/ai/threads
 POST /api/v1/h/ai/threads/:id/messages
 POST /api/v1/households

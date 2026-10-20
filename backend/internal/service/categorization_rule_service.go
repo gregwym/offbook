@@ -22,6 +22,7 @@ var (
 	ErrInvalidMatchType  = errors.New("match_type must be one of: contains, regex, exact")
 	ErrInvalidRegex      = errors.New("pattern is not a valid regular expression")
 	ErrInvalidPriority   = errors.New("priority must be >= 0")
+	ErrInvalidRuleOrder  = errors.New("rule order must list each of your rules exactly once")
 	ErrUnknownCategory   = errors.New("category does not exist")
 	ErrInvalidApplyScope = errors.New("scope must be one of: all, uncategorized, plaid_default")
 	ErrRenameTooLong     = errors.New("rename_merchant must be at most 200 characters")
@@ -219,6 +220,54 @@ func (s *CategorizationRuleService) SoftDelete(ctx context.Context, userID, id i
 		return fmt.Errorf("soft delete rule: %w", err)
 	}
 	return nil
+}
+
+// rulePriorityStep spaces reordered priorities so a rule created later
+// (max + 10, see RulesPage) still lands on top without renumbering.
+const rulePriorityStep = 10
+
+// Reorder sets the run order of all the user's rules: ids[0] runs first.
+// ids must list every live rule of the user exactly once; otherwise
+// ErrInvalidRuleOrder and nothing changes. Priorities are rewritten in one
+// DB transaction so List returns exactly this order afterwards (#540).
+func (s *CategorizationRuleService) Reorder(ctx context.Context, userID int64, ids []int64) ([]model.CategorizationRule, error) {
+	if s.db == nil {
+		return nil, errors.New("reorder: db not wired")
+	}
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repo := repository.NewCategorizationRuleRepository(tx)
+		current, err := repo.List(ctx, userID)
+		if err != nil {
+			return err
+		}
+		if len(ids) != len(current) {
+			return ErrInvalidRuleOrder
+		}
+		owned := make(map[int64]bool, len(current))
+		for _, r := range current {
+			owned[r.ID] = true
+		}
+		seen := make(map[int64]bool, len(ids))
+		for _, id := range ids {
+			if !owned[id] || seen[id] {
+				return ErrInvalidRuleOrder
+			}
+			seen[id] = true
+		}
+		for i, id := range ids {
+			if err := repo.SetPriority(ctx, userID, id, (len(ids)-i)*rulePriorityStep); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, ErrInvalidRuleOrder) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("reorder rules: %w", err)
+	}
+	return s.repo.List(ctx, userID)
 }
 
 // ApplyResult summarizes a bulk-apply run.

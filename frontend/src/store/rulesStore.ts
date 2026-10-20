@@ -4,6 +4,7 @@ import {
   createRule as apiCreate,
   deleteRule as apiDelete,
   listRules,
+  reorderRules,
   updateRule as apiUpdate,
 } from '../api/categorizationRules'
 import type {
@@ -26,6 +27,7 @@ type State = {
   create: (input: CreateRuleInput) => Promise<CategorizationRule>
   update: (id: number, input: UpdateRuleInput) => Promise<CategorizationRule>
   remove: (id: number) => Promise<void>
+  move: (id: number, offset: -1 | 1) => Promise<void>
   apply: (scope?: ApplyScope, dryRun?: boolean) => Promise<ApplyResult>
   clearError: () => void
 }
@@ -78,6 +80,25 @@ export const useRulesStore = create<State>((set, get) => ({
     } catch (err) {
       set(errInfo(err))
       throw err
+    }
+  },
+
+  // move shifts a rule one place up (-1) or down (+1) in run order. The
+  // list updates right away; on failure it goes back to the server order.
+  move: async (id, offset) => {
+    const rules = get().rules
+    const from = rules.findIndex((r) => r.id === id)
+    const to = from + offset
+    if (from < 0 || to < 0 || to >= rules.length) return
+    const next = [...rules]
+    ;[next[from], next[to]] = [next[to], next[from]]
+    set({ rules: next, error: null, code: null })
+    try {
+      set({ rules: await reorderRules(next.map((r) => r.id)) })
+    } catch (err) {
+      const info = errInfo(err)
+      await get().fetch()
+      set(info)
     }
   },
 

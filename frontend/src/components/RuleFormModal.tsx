@@ -180,7 +180,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
                 ))}
               </select>
             </Field>
-            <Field label="Priority">
+            <Field label="Priority (higher runs first)">
               <input
                 className={inputClass}
                 type="number"

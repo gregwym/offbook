@@ -26,6 +26,27 @@ func (h *CategorizationRuleHandler) Register(g *gin.RouterGroup) {
 	g.DELETE("/categorization-rules/:id", h.Delete)
 	g.POST("/categorization-rules/apply", h.Apply)
 	g.POST("/categorization-rules/preview", h.PreviewDraft)
+	g.POST("/categorization-rules/reorder", h.Reorder)
+}
+
+type reorderRulesRequest struct {
+	RuleIDs []int64 `json:"rule_ids" binding:"required"`
+}
+
+// Reorder sets the run order of all the caller's rules (first id runs
+// first) and returns the rules in their new order.
+func (h *CategorizationRuleHandler) Reorder(c *gin.Context) {
+	var req reorderRulesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	rules, err := h.svc.Reorder(c.Request.Context(), auth.MustUserID(c.Request.Context()), req.RuleIDs)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rules, "total": int64(len(rules))})
 }
 
 type applyRulesRequest struct {
@@ -225,6 +246,8 @@ func (h *CategorizationRuleHandler) writeServiceError(c *gin.Context, err error)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REGEX"})
 	case errors.Is(err, service.ErrUnknownCategory):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "UNKNOWN_CATEGORY"})
+	case errors.Is(err, service.ErrInvalidRuleOrder):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_RULE_ORDER"})
 	case errors.Is(err, service.ErrInvalidApplyScope):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_SCOPE"})
 	case errors.Is(err, service.ErrEmptyPattern),

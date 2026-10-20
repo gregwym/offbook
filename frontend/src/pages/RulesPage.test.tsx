@@ -286,4 +286,52 @@ describe('RulesPage smoke', () => {
     await waitFor(() => expect(screen.queryByText('Marks reviewed')).toBeNull())
     expect(patches[0]).toMatchObject({ mark_reviewed: false })
   })
+
+  // #540: rules run top to bottom; moving one sends the full new order and
+  // a rejected reorder puts the list back to the server order.
+  describe('run order', () => {
+    const amazon = { ...fx.rules[0], id: 11, pattern: 'AMAZON', priority: 20 }
+    const prime = { ...fx.rules[0], id: 12, pattern: 'AMAZON PRIME', priority: 10 }
+    const order = () =>
+      screen.getAllByRole('row').slice(1).map((row) => within(row).getAllByRole('cell')[1].textContent)
+
+    it('moves a rule up and saves the whole order', async () => {
+      const bodies: unknown[] = []
+      server.use(
+        http.get(`${API}/categorization-rules`, () => HttpResponse.json({ data: [amazon, prime], total: 2 })),
+        http.post(`${API}/categorization-rules/reorder`, async ({ request }) => {
+          bodies.push(await request.json())
+          return HttpResponse.json({ data: [{ ...prime, priority: 20 }, { ...amazon, priority: 10 }], total: 2 })
+        }),
+      )
+      renderPage(<RulesPage />)
+      expect(await screen.findByText('AMAZON PRIME')).toBeTruthy()
+      expect(screen.getByText(/the first match wins/)).toBeTruthy()
+      expect(order()).toEqual(['AMAZON', 'AMAZON PRIME'])
+      expect((screen.getByRole('button', { name: 'Move "AMAZON" up' }) as HTMLButtonElement).disabled).toBe(true)
+      expect((screen.getByRole('button', { name: 'Move "AMAZON PRIME" down' }) as HTMLButtonElement).disabled).toBe(true)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Move "AMAZON PRIME" up' }))
+      await waitFor(() => expect(bodies).toEqual([{ rule_ids: [12, 11] }]))
+      expect(order()).toEqual(['AMAZON PRIME', 'AMAZON'])
+      expect(screen.queryByText(/rule order must/)).toBeNull()
+    })
+
+    it('shows the error and restores the server order when a reorder fails', async () => {
+      server.use(
+        http.get(`${API}/categorization-rules`, () => HttpResponse.json({ data: [amazon, prime], total: 2 })),
+        http.post(`${API}/categorization-rules/reorder`, () =>
+          HttpResponse.json(
+            { error: 'rule order must list each of your rules exactly once', code: 'INVALID_RULE_ORDER' },
+            { status: 400 },
+          ),
+        ),
+      )
+      renderPage(<RulesPage />)
+      expect(await screen.findByText('AMAZON PRIME')).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Move "AMAZON" down' }))
+      expect(await screen.findByText(/rule order must list each of your rules exactly once/)).toBeTruthy()
+      expect(order()).toEqual(['AMAZON', 'AMAZON PRIME'])
+    })
+  })
 })
