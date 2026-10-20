@@ -33,7 +33,7 @@ test.describe('transactions filters journey', () => {
 
     const vp = page.viewportSize()!
     const toggle = page.getByRole('button', { name: /^Filters/ })
-    const fromInput = page.getByLabel('From')
+    const fromInput = page.getByLabel('From', { exact: true })
     const accountSelect = page.getByLabel('Account', { exact: true })
 
     if (vp.width < 768) {
