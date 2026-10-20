@@ -63,6 +63,19 @@ export const ACCOUNT_TYPES = [
 ] as const
 export type AccountType = (typeof ACCOUNT_TYPES)[number]
 
+// accountTypeLabel turns the wire enum into the words shown to the user
+// ("credit_card" → "Credit card").
+export function accountTypeLabel(t: string): string {
+  const words = t.replace(/_/g, ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+// isLiabilityType: balances on these accounts are what the user owes, entered
+// as a negative number.
+export function isLiabilityType(t: string): boolean {
+  return t === 'credit_card' || t === 'loan'
+}
+
 // CreateAccountRequest mirrors backend handler.createAccountRequest. Balance
 // is a decimal string when sent over the wire.
 export type CreateAccountInput = {

@@ -66,7 +66,7 @@ describe('Update balance (#504)', () => {
       ),
     )
     renderPage(<AccountsPage />)
-    await screen.findByText('Checking')
+    await screen.findAllByText('Checking')
     expect(screen.queryByRole('button', { name: /update balance/i })).toBeNull()
   })
 })

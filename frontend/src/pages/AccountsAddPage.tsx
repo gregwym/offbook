@@ -20,7 +20,13 @@ import {
   syncTransactions,
 } from '../api/plaid'
 import { clearPendingLink, savePendingLink } from '../lib/plaidOAuth'
-import { ACCOUNT_TYPES, type AccountType, type CreateAccountInput } from '../types/account'
+import {
+  ACCOUNT_TYPES,
+  accountTypeLabel,
+  isLiabilityType,
+  type AccountType,
+  type CreateAccountInput,
+} from '../types/account'
 
 type Mode = 'picker' | 'manual'
 
@@ -185,8 +191,10 @@ export function AccountsAddPage() {
         <ManualAccountForm
           dismissed={plaidDismissed}
           onCreated={async (input) => {
-            await create(input)
-            navigate('/accounts')
+            const account = await create(input)
+            // Accounts confirms the new account and offers importing its
+            // transactions as the next step (#520).
+            navigate('/accounts', { state: { created: { id: account.id, name: account.name } } })
           }}
           onBack={() => {
             setPlaidDismissed(false)
@@ -293,17 +301,23 @@ function ManualAccountForm({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const submit = async () => {
+  const submit = async (e?: React.FormEvent) => {
+    e?.preventDefault()
     if (!name.trim()) {
       setError('Name is required.')
       return
     }
     if (!institution.trim()) {
-      setError('Institution is required.')
+      setError('Institution is required — the bank or provider, e.g. Ally Bank.')
       return
     }
     if (currency.trim().length !== 3) {
       setError('Currency must be a 3-letter code.')
+      return
+    }
+    const opening = balance.replace(/[,\s$]/g, '') || '0'
+    if (!/^-?\d+(\.\d+)?$/.test(opening)) {
+      setError('Enter the balance as a number, e.g. 1234.56.')
       return
     }
     setError(null)
@@ -314,7 +328,7 @@ function ManualAccountForm({
         institution_slug: institution.trim(),
         account_type: accountType,
         currency: currency.trim().toUpperCase(),
-        balance,
+        balance: opening,
       })
     } catch (e) {
       setError(errMsg(e))
@@ -324,7 +338,7 @@ function ManualAccountForm({
   }
 
   return (
-    <div className="mt-6 max-w-lg rounded-lg border border-gray-200 bg-white p-5">
+    <form onSubmit={(e) => void submit(e)} noValidate className="mt-6 max-w-lg rounded-lg border border-gray-200 bg-white p-5">
       {dismissed && (
         <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           Plaid was dismissed. You can finish adding the account manually here, or
@@ -342,7 +356,7 @@ function ManualAccountForm({
 
       <div className="mt-4 space-y-3">
         {error && (
-          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
           </div>
         )}
@@ -355,12 +369,12 @@ function ManualAccountForm({
             autoFocus
           />
         </FormField>
-        <FormField label="Institution slug">
+        <FormField label="Institution">
           <input
             className={inputClass}
             value={institution}
             onChange={(e) => setInstitution(e.target.value)}
-            placeholder="e.g. ally"
+            placeholder="e.g. Ally Bank"
           />
         </FormField>
         <div className="grid grid-cols-2 gap-3">
@@ -372,7 +386,7 @@ function ManualAccountForm({
             >
               {ACCOUNT_TYPES.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {accountTypeLabel(t)}
                 </option>
               ))}
             </select>
@@ -386,14 +400,20 @@ function ManualAccountForm({
             />
           </FormField>
         </div>
-        <FormField label="Initial balance (optional)">
+        <FormField label="Current balance (optional)">
           <input
             className={inputClass}
             value={balance}
             onChange={(e) => setBalance(e.target.value)}
             inputMode="decimal"
+            aria-describedby="manual-balance-hint"
           />
         </FormField>
+        <p id="manual-balance-hint" className="-mt-2 text-[11px] text-gray-500">
+          {isLiabilityType(accountType)
+            ? 'Enter what you owe as a negative number, e.g. -450.00.'
+            : 'What the bank shows today. You can update it later.'}
+        </p>
       </div>
 
       <div className="mt-5 flex justify-end gap-2">
@@ -405,15 +425,14 @@ function ManualAccountForm({
           Back
         </button>
         <button
-          type="button"
-          onClick={() => void submit()}
+          type="submit"
           disabled={submitting}
           className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
         >
           {submitting ? 'Creating…' : 'Create account'}
         </button>
       </div>
-    </div>
+    </form>
   )
 }
 
