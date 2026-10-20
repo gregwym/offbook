@@ -95,7 +95,9 @@ type HouseholdAggregatorRepository interface {
 	// — the household analogue of TransactionRepository.FoldByUserAsOf, but
 	// scoped by account set rather than user (the aggregator is the only
 	// blessed cross-user reader). AccountID/UserID are left zero; the caller
-	// values each asset in a single household quote currency.
+	// values each asset in a single household quote currency. Like
+	// FoldByUserAsOf, an opening_balance row counts from the earliest dated row
+	// of its own (account, asset) — the day-0 anchor (#528).
 	FoldByAccountSetAsOf(ctx context.Context, accountIDs []int64, asOf time.Time) ([]model.Position, error)
 
 	// AssetKinds maps asset id → asset kind (fiat/crypto/equity/…) for the
@@ -495,15 +497,22 @@ func (r *householdAggregatorRepo) FoldByAccountSetAsOf(ctx context.Context, acco
 	}
 	var rows []row
 	if err := r.db.WithContext(ctx).Raw(`
-		SELECT asset_id, COALESCE(SUM(amount), 0)::text AS qty
-		FROM transactions
-		WHERE deleted_at IS NULL
-		  AND account_id IN ?
-		  AND transaction_date <= ?
-		GROUP BY asset_id
-		HAVING COALESCE(SUM(amount), 0) <> 0
-		ORDER BY asset_id
-	`, accountIDs, asOf).Scan(&rows).Error; err != nil {
+		WITH day0 AS (
+			SELECT account_id, asset_id, MIN(transaction_date) AS first_date
+			FROM transactions
+			WHERE deleted_at IS NULL AND account_id IN ?
+			GROUP BY account_id, asset_id
+		)
+		SELECT t.asset_id, COALESCE(SUM(t.amount), 0)::text AS qty
+		FROM transactions t
+		JOIN day0 d ON d.account_id = t.account_id AND d.asset_id = t.asset_id
+		WHERE t.deleted_at IS NULL
+		  AND t.account_id IN ?
+		  AND CASE WHEN t.kind = ? THEN d.first_date ELSE t.transaction_date END <= ?
+		GROUP BY t.asset_id
+		HAVING COALESCE(SUM(t.amount), 0) <> 0
+		ORDER BY t.asset_id
+	`, accountIDs, accountIDs, model.KindOpeningBalance, asOf).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make([]model.Position, 0, len(rows))

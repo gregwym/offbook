@@ -6,7 +6,8 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 // headline for manual accounts with dated history, the range selector
 // (3M/6M/1Y/3Y) refetches a longer series without breaking the headline,
 // the choice survives nothing it shouldn't (reload resets to the default),
-// and neither viewport overflows. Throwaway user; desktop + mobile projects.
+// earlier month-ends include the opening balance (#528), and neither
+// viewport overflows. Throwaway user; desktop + mobile projects.
 
 test.describe('net worth history journey', () => {
   test('headline is exact and the range selector extends the trend', async ({ page }, testInfo) => {
@@ -49,11 +50,13 @@ test.describe('net worth history journey', () => {
     await expect(group.getByRole('button', { name: '1Y' })).toHaveAttribute('aria-pressed', 'true')
 
     const lens: Record<string, number> = {}
+    let series: { date: string; total: string }[] = []
     for (const [label, months] of [['3M', 3], ['6M', 6], ['3Y', 36]] as const) {
       const resp = trendResponse(months)
       await group.getByRole('button', { name: label }).click()
       const body = await (await resp).json()
       lens[label] = body.data.length
+      if (label === '3Y') series = body.data
       await expect(group.getByRole('button', { name: label })).toHaveAttribute('aria-pressed', 'true')
       await expect(page.getByRole('alert').filter({ hasText: 'range' })).toHaveCount(0)
       // Headline never changes with the chart window.
@@ -63,6 +66,17 @@ test.describe('net worth history journey', () => {
     }
     expect(lens['6M']).toBeGreaterThan(lens['3M'])
     expect(lens['3Y']).toBeGreaterThanOrEqual(lens['6M'])
+
+    // #528: opening balances are dated today but are the day-0 anchor, so
+    // month-ends that hold older rows include the starting balance instead
+    // of only the flows (which would read 179.75 / 300.00 here).
+    const pointAt = (m: number) => {
+      const month = monthsAgo(m).slice(0, 7)
+      return series.find((p: { date: string }) => p.date.startsWith(month))?.total
+    }
+    expect(pointAt(2)).toMatch(/^3680\.4/)
+    expect(pointAt(5)).toMatch(/^2800\.55/)
+    expect(Number(pointAt(9) ?? '0')).toBe(0)
     await expectNoOverflow(page)
 
     await page.reload()
