@@ -4,6 +4,14 @@
 // The three last_sync_* fields are joined from the underlying plaid_items
 // row server-side (#65). They are `null` for accounts not linked to Plaid
 // (manual entries) — the frontend uses that as the signal to hide the pill.
+// UnpricedAsset mirrors backend service.UnpricedAsset: a holding whose price
+// was stale or missing when the balance was valued.
+export type UnpricedAsset = {
+  asset_id: number
+  symbol: string
+  kind: string
+}
+
 export type Account = {
   id: number
   user_id: number
@@ -20,6 +28,9 @@ export type Account = {
   // price, so balance is a partial sum — never treat it as the full value.
   balance: string
   balance_complete: boolean
+  // unpriced_assets names each holding behind balance_complete=false (#530)
+  // so the UI can say which one needs a price. [] when complete.
+  unpriced_assets?: UnpricedAsset[]
   last_four?: string | null
   plaid_account_id?: string | null
   plaid_item_id?: string | null

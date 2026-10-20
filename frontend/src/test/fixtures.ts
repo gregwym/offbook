@@ -70,6 +70,7 @@ export const account1: Account = {
   primary_quote_asset_id: 1,
   balance: '1234.560000000000000000',
   balance_complete: true,
+  unpriced_assets: [],
   last_four: '1234',
   plaid_account_id: null,
   plaid_item_id: null,

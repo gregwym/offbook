@@ -32,6 +32,11 @@ type AccountResponse struct {
 	// missing, i.e. Balance is a partial sum rather than the whole story —
 	// the #282 "no wrong-but-confident totals" contract.
 	BalanceComplete bool `json:"balance_complete"`
+	// UnpricedAssets names the holdings behind BalanceComplete=false — each
+	// asset whose price chain was stale or missing, once — so the UI can say
+	// which holding needs a price instead of only "partial" (#530). Always a
+	// non-nil slice: [] when the balance is complete.
+	UnpricedAssets []UnpricedAsset `json:"unpriced_assets"`
 
 	// LastObservedAt/LastObservedSource surface the most recent
 	// account_balance_observations row (ADR-0017) across the account's
@@ -51,4 +56,12 @@ type AccountResponse struct {
 	// BalanceComplete's "no wiring means don't claim a signal we can't back"
 	// contract inverted for a boolean flag: default to "nothing to flag".
 	NeedsAttention bool `json:"needs_attention"`
+}
+
+// UnpricedAsset identifies a holding whose price chain was stale or missing
+// (#530). Symbol and kind are instance-wide reference data, not PII.
+type UnpricedAsset struct {
+	AssetID int64  `json:"asset_id"`
+	Symbol  string `json:"symbol"`
+	Kind    string `json:"kind"`
 }

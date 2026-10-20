@@ -419,6 +419,7 @@ func (s *AccountService) fillBalances(ctx context.Context, userID int64, resps [
 		// so it reads as "unknown", not "empty account".
 		for _, r := range resps {
 			r.BalanceComplete = false
+			r.UnpricedAssets = []UnpricedAsset{}
 		}
 		return nil
 	}
@@ -431,6 +432,7 @@ func (s *AccountService) fillBalances(ctx context.Context, userID int64, resps [
 		byAccount[p.AccountID] = append(byAccount[p.AccountID], p)
 	}
 	now := time.Now().UTC()
+	assets := make(map[int64]*model.Asset)
 	for _, r := range resps {
 		val, err := s.valuationSvc.ValuePositions(ctx, byAccount[r.ID], now, r.PrimaryQuoteAssetID)
 		if err != nil {
@@ -438,8 +440,36 @@ func (s *AccountService) fillBalances(ctx context.Context, userID int64, resps [
 		}
 		r.Balance = val.Value
 		r.BalanceComplete = val.Complete()
+		r.UnpricedAssets, err = s.unpricedAssets(ctx, val.Unpriced, assets)
+		if err != nil {
+			return fmt.Errorf("name unpriced assets for account %d: %w", r.ID, err)
+		}
 	}
 	return nil
+}
+
+// unpricedAssets resolves valuation's unpriced asset ids to their symbol and
+// kind (#530), once per asset, in first-seen order. cache is shared across
+// the accounts of one response so each asset row loads at most once.
+func (s *AccountService) unpricedAssets(ctx context.Context, ids []int64, cache map[int64]*model.Asset) ([]UnpricedAsset, error) {
+	out := []UnpricedAsset{}
+	seen := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		a, ok := cache[id]
+		if !ok {
+			var err error
+			if a, err = s.assetRepo.GetByID(ctx, id); err != nil {
+				return nil, err
+			}
+			cache[id] = a
+		}
+		out = append(out, UnpricedAsset{AssetID: a.ID, Symbol: a.Symbol, Kind: a.Kind})
+	}
+	return out, nil
 }
 
 // loadPlaidItems indexes the user's PlaidItem rows by plaid_item_id (the
