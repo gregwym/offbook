@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
-import { AlertTriangle, LineChart, Pencil, Plus, Trash2, Upload } from 'lucide-react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { AlertTriangle, CheckCircle2, LineChart, Pencil, Plus, Trash2, Upload, X } from 'lucide-react'
 import { AccountVisibilityChip } from '../components/AccountVisibilityChip'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
@@ -16,6 +16,7 @@ import { useAccountsStore } from '../store/accountsStore'
 import { useScopeStore } from '../store/scopeStore'
 import {
   ACCOUNT_TYPES,
+  accountTypeLabel,
   type Account,
   type AccountType,
   type CreateAccountInput,
@@ -44,6 +45,20 @@ export function AccountsPage() {
   const [settingPrice, setSettingPrice] = useState(false)
   // Manual "what does the bank say?" balance (#504) — non-Plaid cash accounts.
   const [balancing, setBalancing] = useState<Account | null>(null)
+  // A manual account just created on /accounts/add (#520): confirm it and
+  // offer importing its transactions as the obvious next step. Read once from
+  // router state, then cleared so a reload doesn't re-show it.
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [justCreated, setJustCreated] = useState<CreatedAccount | null>(
+    () => (location.state as { created?: CreatedAccount } | null)?.created ?? null,
+  )
+  useEffect(() => {
+    if ((location.state as { created?: CreatedAccount } | null)?.created) {
+      navigate(location.pathname, { replace: true, state: null })
+    }
+  }, [location.state, location.pathname, navigate])
+  const createdAccount = justCreated ? accounts.find((a) => a.id === justCreated.id) ?? null : null
 
   const confirmRemove = async (a: Account) => {
     if (window.confirm(`Delete "${a.name}"?`)) {
@@ -77,6 +92,34 @@ export function AccountsPage() {
       {error && (
         <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {justCreated && (
+        <div role="status" className="mt-4 flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm">
+          <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-emerald-600" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium text-emerald-900">{justCreated.name} added.</div>
+            <div className="mt-0.5 text-emerald-800">
+              Next, bring in its transactions: import a statement from your bank (CSV, PDF or photo).
+            </div>
+            <button
+              type="button"
+              onClick={() => createdAccount && setImportingInto(createdAccount)}
+              disabled={!createdAccount}
+              className="mt-2 inline-flex min-h-9 items-center gap-2 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              <Upload size={14} /> Import transactions
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => setJustCreated(null)}
+            aria-label="Dismiss"
+            className="-m-1 p-1 text-emerald-700 hover:text-emerald-900"
+          >
+            <X size={16} />
+          </button>
         </div>
       )}
 
@@ -158,7 +201,7 @@ export function AccountsPage() {
                   </div>
                 </td>
                 <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{a.institution_slug}</td>
-                <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{a.account_type}</td>
+                <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{accountTypeLabel(a.account_type)}</td>
                 <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{a.last_four ?? '—'}</td>
                 <td className="px-4 py-2 text-right align-top">
                   <AmountDisplay amount={a.balance} currency={a.currency} />
@@ -252,7 +295,10 @@ export function AccountsPage() {
           accounts={accounts}
           initialAccountID={importingInto.id}
           onClose={() => setImportingInto(null)}
-          onImported={() => { void fetch() }}
+          onImported={() => {
+            setJustCreated(null)
+            void fetch()
+          }}
           onUndone={() => { void fetch() }}
         />
       )}
@@ -301,15 +347,10 @@ export function AccountsPage() {
   )
 }
 
+type CreatedAccount = { id: number; name: string }
+
 // isBrokerage mirrors backend service.brokerageAccountTypes — only these
 // account shapes accept trades.
-// accountTypeLabel turns the wire enum into the words shown on the stacked
-// mobile row ("credit_card" → "Credit card").
-function accountTypeLabel(t: string): string {
-  const words = t.replace(/_/g, ' ')
-  return words.charAt(0).toUpperCase() + words.slice(1)
-}
-
 function isBrokerage(a: Account): boolean {
   return a.account_type === 'investment' || a.account_type === 'crypto'
 }
@@ -383,14 +424,14 @@ function AccountFormModal({ mode, account, onClose, onSubmit }: FormProps) {
           <Field label="Name">
             <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
-          <Field label="Institution slug">
-            <input className={inputClass} value={institution} onChange={(e) => setInstitution(e.target.value)} placeholder="e.g. chase" />
+          <Field label="Institution">
+            <input className={inputClass} value={institution} onChange={(e) => setInstitution(e.target.value)} placeholder="e.g. Chase" />
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Type">
               <select className={inputClass} value={accountType} onChange={(e) => setAccountType(e.target.value as AccountType)}>
                 {ACCOUNT_TYPES.map((t) => (
-                  <option key={t} value={t}>{t}</option>
+                  <option key={t} value={t}>{accountTypeLabel(t)}</option>
                 ))}
               </select>
             </Field>

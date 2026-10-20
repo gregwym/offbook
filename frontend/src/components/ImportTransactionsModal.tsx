@@ -215,9 +215,9 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
 
   return (
     <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-lg bg-white shadow-xl">
+      <div role="dialog" aria-modal="true" aria-labelledby="import-transactions-title" className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-lg bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
-          <span className="text-lg font-semibold text-gray-900">Import transactions</span>
+          <span id="import-transactions-title" className="text-lg font-semibold text-gray-900">Import transactions</span>
           <button type="button" onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600">
             <X size={18} />
           </button>

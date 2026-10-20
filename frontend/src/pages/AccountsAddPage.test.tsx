@@ -59,4 +59,40 @@ describe('AccountsAddPage smoke', () => {
     expect(tokenCalls).toBe(1)
     expect(exchangeCalls).toBe(1)
   })
+
+  // #520: the manual form speaks plain language and Enter submits it.
+  it('manual form uses plain labels, hints liability sign, and submits on Enter', async () => {
+    let body: Record<string, unknown> | null = null
+    server.use(
+      http.post(`${API}/accounts`, async ({ request }) => {
+        body = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({ data: { id: 9, name: body.name } }, { status: 201 })
+      }),
+    )
+    renderPage(<AccountsAddPage />)
+    fireEvent.click(screen.getByRole('button', { name: /^add manually$/i }))
+
+    expect(screen.queryByText(/slug/i)).toBeNull()
+    expect(screen.getByRole('option', { name: 'Credit card' })).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'credit_card' } })
+    expect(screen.getByText(/what you owe as a negative number/i)).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('Account name'), { target: { value: 'Visa' } })
+    fireEvent.change(screen.getByLabelText('Institution'), { target: { value: 'Chase' } })
+    fireEvent.change(screen.getByLabelText('Current balance (optional)'), { target: { value: '-1,250.50' } })
+    fireEvent.submit(screen.getByLabelText('Account name').closest('form')!)
+
+    await waitFor(() => expect(body).not.toBeNull())
+    expect(body).toMatchObject({ name: 'Visa', institution_slug: 'Chase', account_type: 'credit_card', balance: '-1250.50' })
+  })
+
+  it('rejects a non-numeric balance with a clear message', async () => {
+    renderPage(<AccountsAddPage />)
+    fireEvent.click(screen.getByRole('button', { name: /^add manually$/i }))
+    fireEvent.change(screen.getByLabelText('Account name'), { target: { value: 'Cash' } })
+    fireEvent.change(screen.getByLabelText('Institution'), { target: { value: 'Wallet' } })
+    fireEvent.change(screen.getByLabelText('Current balance (optional)'), { target: { value: 'abc' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
+    expect((await screen.findByRole('alert')).textContent).toMatch(/as a number/i)
+  })
 })

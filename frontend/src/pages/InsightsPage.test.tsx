@@ -17,6 +17,22 @@ describe('InsightsPage smoke', () => {
   })
 })
 
+describe('InsightsPage first run', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  // #520: a brand-new user sees one call to action, not price controls for
+  // assets they don't have yet.
+  it('shows only the add-account call to action when there are no accounts', async () => {
+    server.use(http.get('/api/v1/accounts', () => HttpResponse.json({ data: [], total: 0 })))
+    renderPage(<InsightsPage />)
+    expect(await screen.findByRole('heading', { name: 'Add your first account' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /refresh prices/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /set price/i })).toBeNull()
+  })
+})
+
 describe('InsightsPage net-worth range selector', () => {
   beforeEach(() => {
     resetStores()
