@@ -11,7 +11,8 @@ import {
   listImportHistory,
   undoImport,
 } from '../api/transactions'
-import type { Account } from '../types/account'
+import { absDecimal, addDecimal } from '../lib/decimal'
+import { isLiabilityType, type Account } from '../types/account'
 import type { ColumnMapping, ImportHistoryEntry, ImportResult, ReconcileEffect } from '../types/transaction'
 
 type Props = {
@@ -25,12 +26,23 @@ type Props = {
   onUndone?: () => void
 }
 
-// The required logical columns, in display order, for manual CSV mapping.
-const FIELDS: Array<{ key: keyof ColumnMapping; label: string }> = [
-  { key: 'date', label: 'Date' },
-  { key: 'amount', label: 'Amount' },
-  { key: 'description', label: 'Description' },
-]
+// The column pickers for manual CSV mapping, per amount shape (#542): one
+// signed Amount column, or separate money-out (debit) and money-in (credit).
+type AmountShape = 'single' | 'split'
+type MappingKey = 'date' | 'amount' | 'debit' | 'credit' | 'description'
+const FIELDS: Record<AmountShape, Array<{ key: MappingKey; label: string }>> = {
+  single: [
+    { key: 'date', label: 'Date' },
+    { key: 'amount', label: 'Amount' },
+    { key: 'description', label: 'Description' },
+  ],
+  split: [
+    { key: 'date', label: 'Date' },
+    { key: 'debit', label: 'Money out (debit)' },
+    { key: 'credit', label: 'Money in (credit)' },
+    { key: 'description', label: 'Description' },
+  ],
+}
 
 // fileMode picks the pipeline from the selected file: deterministic CSV vs the
 // AI document extractor (PDF/photo). Falls back to CSV for unknown types.
@@ -76,6 +88,9 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
   // CSV manual-mapping fallback.
   const [headers, setHeaders] = useState<string[] | null>(null)
   const [mapping, setMapping] = useState<Partial<ColumnMapping>>({})
+  const [amountShape, setAmountShape] = useState<AmountShape>('single')
+  // Negate every CSV amount, for exports that list purchases as positive.
+  const [flipSign, setFlipSign] = useState(false)
 
   const account = useMemo(
     () => accounts.find((a) => String(a.id) === accountID),
@@ -83,7 +98,9 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
   )
   const mode = file ? fileMode(file) : 'csv'
   const needsManualMapping = headers !== null
-  const mappingComplete = FIELDS.every((f) => (mapping[f.key] ?? '') !== '')
+  const mappingComplete =
+    !!mapping.date && !!mapping.description &&
+    (amountShape === 'single' ? !!mapping.amount : !!mapping.debit || !!mapping.credit)
 
   useEffect(() => {
     if (!accountID) return
@@ -111,6 +128,8 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
     setJobID(null)
     setHeaders(null)
     setMapping({})
+    setAmountShape('single')
+    setFlipSign(false)
     setReviewedAck(false)
     setError(null)
   }
@@ -120,27 +139,40 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
     resetDerived()
   }
 
-  // CSV: deterministic preview / commit.
-  const runCSV = async (commit: boolean) => {
-    if (!guard()) return
-    if (needsManualMapping && !mappingComplete) {
-      setError('Map all three columns first.')
-      return
+  // requestMapping is what a fresh CSV preview sends: the user's manual
+  // column picks (only those for the chosen amount shape) or just the sign.
+  const requestMapping = (): Partial<ColumnMapping> | undefined => {
+    if (!needsManualMapping) return flipSign ? { flip_sign: true } : undefined
+    const base = { date: mapping.date, description: mapping.description, flip_sign: flipSign }
+    return amountShape === 'single'
+      ? { ...base, amount: mapping.amount }
+      : { ...base, debit: mapping.debit, credit: mapping.credit }
+  }
+
+  // CSV: deterministic preview / commit. Commit re-sends the mapping the
+  // server resolved for the preview, so it parses exactly what was shown.
+  // override re-previews with a changed mapping (the flip-signs toggle).
+  const runCSV = async (commit: boolean, override?: Partial<ColumnMapping>): Promise<boolean> => {
+    if (!guard()) return false
+    if (!commit && !override && needsManualMapping && !mappingComplete) {
+      setError('Map the date, amount and description columns first.')
+      return false
     }
     setError(null)
     setBusy(commit ? 'commit' : 'preview')
     try {
       const result = await importTransactions(Number(accountID), file!, {
         commit,
-        mapping: needsManualMapping ? mapping : undefined,
+        mapping: commit ? preview?.mapping : override ?? requestMapping(),
       })
       if (commit) {
         onImported(result)
         onClose()
-        return
+        return true
       }
       setPreview(result)
       setHeaders(null)
+      return true
     } catch (err) {
       if (err instanceof ImportUnmappableError) {
         setHeaders(err.headers)
@@ -149,6 +181,7 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
       } else {
         setError(errMsg(err))
       }
+      return false
     } finally {
       setBusy(false)
     }
@@ -247,8 +280,9 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
               onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
             />
             <p className="mt-1 text-xs text-gray-500">
-              CSV is parsed locally. PDF or photo statements are read by your configured AI provider. Amount: negative =
-              money out. Re-importing the same file won't create duplicates.
+              CSV is parsed locally. PDF or photo statements are read by your configured AI provider. Money out should
+              show as negative; if purchases come in positive, you can flip the signs before importing. Re-importing
+              the same file won't create duplicates.
             </p>
           </Field>
 
@@ -266,8 +300,21 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
           {needsManualMapping && headers && (
             <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
               <p className="mb-2 text-sm font-medium text-amber-900">Map your columns</p>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                {FIELDS.map((f) => (
+              <fieldset className="mb-2">
+                <legend className="mb-1 text-xs font-medium text-gray-600">How does the file show amounts?</legend>
+                <div className="flex flex-col gap-1 text-sm text-gray-800 sm:flex-row sm:gap-4">
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" name="amount-shape" checked={amountShape === 'single'} onChange={() => setAmountShape('single')} />
+                    One amount column
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" name="amount-shape" checked={amountShape === 'split'} onChange={() => setAmountShape('split')} />
+                    Separate debit &amp; credit columns
+                  </label>
+                </div>
+              </fieldset>
+              <div className={`grid grid-cols-1 gap-2 ${amountShape === 'split' ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
+                {FIELDS[amountShape].map((f) => (
                   <Field key={f.key} label={f.label}>
                     <select
                       className={inputClass}
@@ -308,6 +355,22 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
               {preview.duplicate_of.file_name || preview.duplicate_of.imported_at ? ')' : ''}. Existing transactions are
               skipped, so importing again won’t create duplicates.
             </div>
+          )}
+
+          {preview && mode === 'csv' && (
+            <SignCheck
+              result={preview}
+              currency={account?.currency}
+              liability={!!account && isLiabilityType(account.account_type)}
+              flipped={flipSign}
+              disabled={busy !== false}
+              onFlip={(flip) => {
+                setFlipSign(flip)
+                void runCSV(false, { ...preview.mapping, flip_sign: flip }).then((ok) => {
+                  if (!ok) setFlipSign(!flip)
+                })
+              }}
+            />
           )}
 
           {preview && <PreviewSummary result={preview} currency={account?.currency} />}
@@ -383,6 +446,76 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+// SignCheck shows a CSV preview's money in / money out totals and lets the
+// user flip every amount's sign (#542). Some card exports list purchases as
+// positive; imported as-is they'd count as income. On a credit card or loan,
+// where most rows should be money out, a money-in majority is called out.
+function SignCheck({
+  result,
+  currency,
+  liability,
+  flipped,
+  disabled,
+  onFlip,
+}: {
+  result: ImportResult
+  currency?: string
+  liability: boolean
+  // flipped is the user's choice, shown at once while the re-preview loads;
+  // the totals and warning follow the preview the server actually parsed.
+  flipped: boolean
+  disabled: boolean
+  onFlip: (flip: boolean) => void
+}) {
+  let moneyIn = '0'
+  let moneyOut = '0'
+  let inCount = 0
+  let outCount = 0
+  for (const row of result.rows) {
+    if (row.status === 'error') continue
+    if (row.amount.trim().startsWith('-')) {
+      moneyOut = addDecimal(moneyOut, absDecimal(row.amount))
+      outCount++
+    } else {
+      moneyIn = addDecimal(moneyIn, row.amount)
+      inCount++
+    }
+  }
+  const suspicious = liability && !result.mapping.flip_sign && inCount > outCount
+  const split = !!(result.mapping.debit || result.mapping.credit)
+
+  return (
+    <div
+      role={suspicious ? 'alert' : undefined}
+      className={`rounded-md border px-3 py-2 text-sm ${suspicious ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-700'}`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p>
+          Money in <AmountDisplay amount={moneyIn} currency={currency} /> ({inCount}) · Money out{' '}
+          <AmountDisplay amount={moneyOut} currency={currency} /> ({outCount})
+        </p>
+        <label className="flex items-center gap-1.5 text-sm font-medium">
+          <input type="checkbox" checked={flipped} disabled={disabled} onChange={(e) => onFlip(e.target.checked)} />
+          Flip signs
+        </label>
+      </div>
+      {suspicious && (
+        <p className="mt-1">
+          Most rows are money in. On a credit card or loan, purchases should be money out. If these are purchases,
+          flip the signs before importing.
+        </p>
+      )}
+      {split && (
+        <p className="mt-1 text-xs text-gray-500">
+          Amounts read from {result.mapping.debit ? `“${result.mapping.debit}” as money out` : ''}
+          {result.mapping.debit && result.mapping.credit ? ' and ' : ''}
+          {result.mapping.credit ? `“${result.mapping.credit}” as money in` : ''}.
+        </p>
+      )}
     </div>
   )
 }

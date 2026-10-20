@@ -168,3 +168,49 @@ func TestReviewEndpoints_Validation(t *testing.T) {
 		})
 	}
 }
+
+// TestImportCSV_DebitCreditFormFields proves the split-column form fields
+// (#542) reach the parser: a debit_col/credit_col naming a header the file
+// lacks is reported back as unmappable before any service/DB call.
+func TestImportCSV_DebitCreditFormFields(t *testing.T) {
+	cases := []struct {
+		name    string
+		fields  map[string]string
+		missing string
+	}{
+		{"debit_col names a missing header", map[string]string{"debit_col": "Withdrawn", "credit_col": "In"}, "debit"},
+		{"credit_col names a missing header", map[string]string{"debit_col": "Out", "credit_col": "Deposited"}, "credit"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var body bytes.Buffer
+			w := multipart.NewWriter(&body)
+			fw, err := w.CreateFormFile("file", "stmt.csv")
+			if err != nil {
+				t.Fatalf("create form file: %v", err)
+			}
+			_, _ = fw.Write([]byte("Date,Description,Out,In\n2026-05-15,Cafe,4.50,\n"))
+			for k, v := range tc.fields {
+				_ = w.WriteField(k, v)
+			}
+			_ = w.WriteField("flip_sign", "true")
+			_ = w.Close()
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts/1/transactions/import", &body)
+			req.Header.Set("Content-Type", w.FormDataContentType())
+			rec := httptest.NewRecorder()
+			importRouter(nil, 7).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest || codeOf(t, rec.Body.Bytes()) != "IMPORT_UNMAPPABLE" {
+				t.Fatalf("status=%d body=%s, want 400 IMPORT_UNMAPPABLE", rec.Code, rec.Body.String())
+			}
+			var env struct {
+				Missing []string `json:"missing"`
+			}
+			_ = json.Unmarshal(rec.Body.Bytes(), &env)
+			if len(env.Missing) != 1 || env.Missing[0] != tc.missing {
+				t.Errorf("missing = %v, want [%s]", env.Missing, tc.missing)
+			}
+		})
+	}
+}
