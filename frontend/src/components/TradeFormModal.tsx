@@ -11,7 +11,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { recordTrade } from '../api/trades'
 import { useAssetsStore } from '../store/assetsStore'
 import type { Account } from '../types/account'
-import type { Asset, AssetKind } from '../types/asset'
+import { assetKindLabel, type Asset, type AssetKind } from '../types/asset'
 import type { TradeKind } from '../types/trade'
 
 type Props = {
@@ -141,7 +141,7 @@ export function TradeFormModal({ account, onClose, onRecorded }: Props) {
               <datalist id="trade-asset-symbols">
                 {tradeableAssets.map((a) => (
                   <option key={a.id} value={a.symbol}>
-                    {a.display_name ? `${a.display_name} · ${a.kind}` : a.kind}
+                    {a.display_name ? `${a.display_name} · ${assetKindLabel(a.kind)}` : assetKindLabel(a.kind)}
                   </option>
                 ))}
               </datalist>
@@ -150,7 +150,7 @@ export function TradeFormModal({ account, onClose, onRecorded }: Props) {
             <Field label="Kind">
               <select className={inputClass} value={assetKind} onChange={(e) => setAssetKind(e.target.value as AssetKind)}>
                 {TRADEABLE_KINDS.map((k) => (
-                  <option key={k} value={k}>{k}</option>
+                  <option key={k} value={k}>{assetKindLabel(k)}</option>
                 ))}
               </select>
             </Field>

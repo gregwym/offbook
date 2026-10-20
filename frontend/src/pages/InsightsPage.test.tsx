@@ -97,9 +97,40 @@ describe('InsightsPage net-worth asset-class drill-in', () => {
     )
     renderPage(<InsightsPage />)
     fireEvent.click(await screen.findByText('By asset class'))
-    const row = screen.getByRole('rowheader', { name: /equity/i }).closest('tr') as HTMLElement
+    const row = screen.getByRole('rowheader', { name: 'Stocks' }).closest('tr') as HTMLElement
     expect(row).toHaveTextContent('150.00')
-    expect(screen.getByRole('rowheader', { name: /fiat/i }).closest('tr')).toHaveTextContent('500.00')
+    expect(screen.getByRole('rowheader', { name: /^Cash/ }).closest('tr')).toHaveTextContent('500.00')
+    // #524: storage codes never reach the user.
+    expect(screen.queryByRole('rowheader', { name: /fiat|equity/i })).toBeNull()
+  })
+})
+
+describe('InsightsPage allocation labels', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  // #524: the allocation band names asset classes in plain language.
+  it('labels asset classes Cash / Stocks / Crypto instead of backend codes', async () => {
+    server.use(
+      http.get('*/dashboard/allocation', () =>
+        HttpResponse.json({
+          data: [
+            { kind: 'fiat', value: '600', complete: true },
+            { kind: 'equity', value: '300', complete: true },
+            { kind: 'crypto', value: '100', complete: true },
+          ],
+          total: 3,
+        }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    const band = (await screen.findByRole('heading', { name: /asset allocation/i })).closest('section') as HTMLElement
+    await waitFor(() => expect(within(band).getByText('Cash')).toBeTruthy())
+    expect(within(band).getByText('Stocks')).toBeTruthy()
+    expect(within(band).getByText('Crypto')).toBeTruthy()
+    expect(band).toHaveTextContent('60.0%')
+    expect(band).not.toHaveTextContent(/fiat|equity/i)
   })
 })
 
@@ -131,7 +162,7 @@ describe('InsightsPage household asset-class drill-in', () => {
     )
     renderPage(<InsightsPage />)
     fireEvent.click(await screen.findByText('By asset class'))
-    expect(screen.getByRole('rowheader', { name: /equity/i }).closest('tr')).toHaveTextContent('150.00')
+    expect(screen.getByRole('rowheader', { name: 'Stocks' }).closest('tr')).toHaveTextContent('150.00')
   })
 })
 

@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { setManualPrice } from '../api/prices'
 import { useAssetsStore } from '../store/assetsStore'
-import type { Asset, AssetKind } from '../types/asset'
+import { assetKindLabel, type Asset, type AssetKind } from '../types/asset'
 
 type Props = {
   onClose: () => void
@@ -110,7 +110,7 @@ export function SetPriceModal({ onClose, onSet }: Props) {
               <datalist id="set-price-asset-symbols">
                 {priceableAssets.map((a) => (
                   <option key={a.id} value={a.symbol}>
-                    {a.display_name ? `${a.display_name} · ${a.kind}` : a.kind}
+                    {a.display_name ? `${a.display_name} · ${assetKindLabel(a.kind)}` : assetKindLabel(a.kind)}
                   </option>
                 ))}
               </datalist>
@@ -124,7 +124,7 @@ export function SetPriceModal({ onClose, onSet }: Props) {
               >
                 {PRICEABLE_KINDS.map((k) => (
                   <option key={k} value={k}>
-                    {k}
+                    {assetKindLabel(k)}
                   </option>
                 ))}
               </select>
