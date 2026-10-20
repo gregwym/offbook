@@ -38,6 +38,7 @@ import {
 import { refreshPrices } from '../api/prices'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { FALLBACK_PIE_COLORS } from '../components/chartColors'
+import { assetKindLabel } from '../types/asset'
 import { PartialBadge } from '../components/PartialBadge'
 import { SetPriceModal } from '../components/SetPriceModal'
 import { TREND_RANGES, useScopedInsights, type InsightsData } from '../hooks/useScopedInsights'
@@ -313,6 +314,7 @@ function NetWorthBand({
                   {/* Months with an unpriced asset render a hollow amber dot —
                       the value plotted there is a partial sum (#339). */}
                   <Line
+                    isAnimationActive={false}
                     type="monotone"
                     dataKey="total"
                     stroke="#6366F1"
@@ -379,8 +381,8 @@ function KindBreakdown({ trend }: { trend: InsightsData['net_worth_trend'] }) {
             const delta = subDecimal(k.value, before)
             return (
               <tr key={k.kind} className="border-t border-gray-100">
-                <th scope="row" className="py-1 text-left font-normal capitalize text-gray-700">
-                  {k.kind}
+                <th scope="row" className="py-1 text-left font-normal text-gray-700">
+                  {assetKindLabel(k.kind)}
                   {!k.complete && <PartialBadge title="Some holdings of this class have no price — partial." />}
                 </th>
                 <td className="py-1 text-right"><AmountDisplay amount={before} /></td>
@@ -420,9 +422,12 @@ function AllocationBand({ data, onSetPrice }: { data: InsightsData; onSetPrice: 
           {total > 0 && (
             <ResponsiveContainer width="100%" height={220}>
               <PieChart>
+                {/* No entry animation (#524): a ~1.5s sweep left the card
+                    looking empty on load and in screenshot evidence. */}
                 <Pie
+                  isAnimationActive={false}
                   data={rows.map((r, i) => ({
-                    name: r.kind,
+                    name: assetKindLabel(r.kind),
                     value: num(r.value),
                     color: FALLBACK_PIE_COLORS[i % FALLBACK_PIE_COLORS.length],
                   }))}
@@ -452,7 +457,7 @@ function AllocationBand({ data, onSetPrice }: { data: InsightsData; onSetPrice: 
                       className="inline-block h-2.5 w-2.5 rounded-full"
                       style={{ background: FALLBACK_PIE_COLORS[i % FALLBACK_PIE_COLORS.length] }}
                     />
-                    {r.kind}
+                    {assetKindLabel(r.kind)}
                   </span>
                   <span className="text-gray-500">
                     <AmountDisplay amount={r.value} /> · {pct.toFixed(1)}%
@@ -612,8 +617,8 @@ function CashFlowTrend({ months }: { months: InsightsData['cash_flow'] }) {
             <XAxis dataKey="month" tick={{ fontSize: 10 }} />
             <YAxis hide />
             <Tooltip formatter={(v) => (typeof v === 'number' ? Math.abs(v).toFixed(2) : String(v))} />
-            <Bar dataKey="inflow" stackId="0" fill="#10B981" name="Inflow" />
-            <Bar dataKey="outflow" stackId="0" fill="#EF4444" name="Outflow" />
+            <Bar isAnimationActive={false} dataKey="inflow" stackId="0" fill="#10B981" name="Inflow" />
+            <Bar isAnimationActive={false} dataKey="outflow" stackId="0" fill="#EF4444" name="Outflow" />
           </BarChart>
         </ResponsiveContainer>
       )}

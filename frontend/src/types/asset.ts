@@ -14,6 +14,24 @@ export const ASSET_KINDS = [
 
 export type AssetKind = (typeof ASSET_KINDS)[number]
 
+// Plain-language names for asset classes (#524). The backend codes ('fiat',
+// 'equity', …) are storage values, not copy.
+const ASSET_KIND_LABELS: Record<AssetKind, string> = {
+  fiat: 'Cash',
+  equity: 'Stocks',
+  fund: 'Funds',
+  crypto: 'Crypto',
+  bond: 'Bonds',
+  commodity: 'Commodities',
+  other: 'Other',
+}
+
+export function assetKindLabel(kind: string): string {
+  return (
+    ASSET_KIND_LABELS[kind as AssetKind] ?? (kind ? kind.charAt(0).toUpperCase() + kind.slice(1) : 'Other')
+  )
+}
+
 export type Asset = {
   id: number
   symbol: string

@@ -45,8 +45,8 @@ test.describe('household insights asset-class drill-in', () => {
     await page.getByText('By asset class').first().click()
     const table = page.getByRole('table', { name: /net worth by asset class/i })
     await expect(table).toBeVisible()
-    const fiat = table.getByRole('row', { name: /fiat/i })
-    await expect(fiat).toContainText('800.00')
+    const cash = table.getByRole('row', { name: /cash/i })
+    await expect(cash).toContainText('800.00')
     // The private account's 777.00 must not appear in any figure.
     await expect(page.locator('body')).not.toContainText('1,577.00')
     await expect(page.locator('body')).not.toContainText('777.00')
