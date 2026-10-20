@@ -109,7 +109,12 @@ export function UpdateBalanceModal({ account, onClose, onUpdated }: Props) {
                 <input
                   className={inputClass}
                   value={balance}
-                  onChange={(e) => setBalance(e.target.value)}
+                  onChange={(e) => {
+                    setBalance(e.target.value)
+                    // #512: a stale "enter a number" error must not sit next
+                    // to a value that is now valid.
+                    if (error && DECIMAL.test(e.target.value.replace(/[,\s$]/g, ''))) setError(null)
+                  }}
                   inputMode="decimal"
                   autoFocus
                 />

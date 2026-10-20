@@ -35,6 +35,8 @@ describe('Update balance (#504)', () => {
     expect(posted).toBeNull()
 
     fireEvent.change(input, { target: { value: '1,300.00' } })
+    // #512: the error clears as soon as the field holds a valid number.
+    expect(screen.queryByRole('alert')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Save balance' }))
     const status = await screen.findByRole('status')
     expect(status).toHaveTextContent('1,300.00')
