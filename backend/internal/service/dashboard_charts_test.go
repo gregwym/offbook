@@ -750,6 +750,73 @@ func TestDashboard_TopMerchants_GroupsAndExcludesTransfersAndNonFlow(t *testing.
 	}
 }
 
+// TestDashboard_TopMerchants_NetsRefundsLikeCategories (#532): a refund nets
+// against its merchant exactly as it nets against its category, a merchant
+// that was fully refunded drops off the list, a split purchase counts once at
+// its full amount, and a hidden row never counts.
+func TestDashboard_TopMerchants_NetsRefundsLikeCategories(t *testing.T) {
+	svc, userID, accountID, g := newDashboardSvc(t)
+	ctx := context.Background()
+
+	suffix := time.Now().Format("150405.000000")
+	shopping := &model.Category{Name: "MerchShop-" + suffix, Slug: "merch-shop-" + suffix}
+	home := &model.Category{Name: "MerchHome-" + suffix, Slug: "merch-home-" + suffix}
+	for _, c := range []*model.Category{shopping, home} {
+		if err := g.Create(c).Error; err != nil {
+			t.Fatalf("seed cat: %v", err)
+		}
+		c := c
+		t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, c.ID) })
+	}
+	d := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
+	dec := decimal.RequireFromString
+	seed := func(merchant string, cat *int64, amt string, hidden bool) *model.Transaction {
+		t.Helper()
+		m := merchant
+		tx := &model.Transaction{
+			UserID: userID, AccountID: accountID, CategoryID: cat, MerchantName: &m,
+			Amount: dec(amt), TransactionDate: d, Source: "manual",
+		}
+		if hidden {
+			tx.HiddenAt = &d
+		}
+		if err := g.Create(tx).Error; err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		return tx
+	}
+
+	seed("OUTDOORCO", &shopping.ID, "-120.00", false)
+	seed("OUTDOORCO", &shopping.ID, "20.00", false) // partial refund
+	seed("RETURNSHOP", &shopping.ID, "-30.00", false)
+	seed("RETURNSHOP", &shopping.ID, "30.00", false)  // fully refunded
+	seed("RETURNSHOP", &shopping.ID, "-500.00", true) // hidden: never counts
+	split := seed("HOMEMART", &shopping.ID, "-90.00", false)
+	if err := repository.NewTransactionRepository(g).ReplaceSplits(ctx, userID, split.ID, []model.TransactionSplit{
+		{CategoryID: &shopping.ID, Amount: dec("-60.00")},
+		{CategoryID: &home.ID, Amount: dec("-30.00")},
+	}); err != nil {
+		t.Fatalf("split: %v", err)
+	}
+
+	items, err := svc.TopMerchants(ctx, userID, time.Time{}, time.Time{}, 10)
+	if err != nil {
+		t.Fatalf("TopMerchants: %v", err)
+	}
+	want := []service.MerchantSpendItem{
+		{Merchant: "OUTDOORCO", Amount: "100", Count: 2},
+		{Merchant: "HOMEMART", Amount: "90", Count: 1},
+	}
+	if len(items) != len(want) {
+		t.Fatalf("items = %+v, want %+v", items, want)
+	}
+	for i := range want {
+		if items[i] != want[i] {
+			t.Errorf("item %d = %+v, want %+v", i, items[i], want[i])
+		}
+	}
+}
+
 // TestDashboard_TopMerchants_TenantIsolation: user B's merchant spend must
 // never appear in user A's top-merchants view.
 func TestDashboard_TopMerchants_TenantIsolation(t *testing.T) {
