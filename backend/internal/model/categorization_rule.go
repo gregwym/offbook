@@ -17,10 +17,13 @@ type CategorizationRule struct {
 	// AssetID, when non-nil, narrows the rule to transactions whose
 	// asset_id matches. Combined (AND) with the text matcher. NULL keeps
 	// the rule asset-agnostic — the M2-era behavior.
-	AssetID   *int64         `json:"asset_id,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	AssetID *int64 `json:"asset_id,omitempty"`
+	// RenameMerchant, when non-nil, is written to merchant_name on every
+	// row this rule wins (#534). NULL leaves the merchant alone.
+	RenameMerchant *string        `json:"rename_merchant,omitempty"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Category *Category `gorm:"foreignKey:CategoryID" json:"-"`
 	Asset    *Asset    `gorm:"foreignKey:AssetID" json:"-"`

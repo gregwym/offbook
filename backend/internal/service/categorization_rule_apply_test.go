@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -417,5 +418,106 @@ func TestCategorizationRuleService_PreviewDraft(t *testing.T) {
 	}
 	if ruled != 0 {
 		t.Errorf("rule-categorized rows after PreviewDraft = %d, want 0", ruled)
+	}
+}
+
+// TestCategorizationRuleService_Apply_RenameMerchant (#534): a rule with a
+// merchant rename writes it on every row it wins, skips manual rows, and a
+// re-run is a no-op. Create/Update trim the rename; blank clears it.
+func TestCategorizationRuleService_Apply_RenameMerchant(t *testing.T) {
+	svc, userID, accountID, fixtureCat, g := newRuleApplySvc(t)
+	ctx := context.Background()
+
+	rename := "  Amazon "
+	rule, err := svc.Create(ctx, userID, service.CreateRuleInput{
+		Pattern: "AMZN", MatchType: "contains", CategoryID: fixtureCat, Priority: 50, RenameMerchant: &rename,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.CategorizationRule{}, rule.ID) })
+	if rule.RenameMerchant == nil || *rule.RenameMerchant != "Amazon" {
+		t.Fatalf("stored rename = %v, want Amazon", rule.RenameMerchant)
+	}
+
+	a := mkTxn(t, g, userID, accountID, withDescription("AMZN MKTP US*2K4"))
+	b := mkTxn(t, g, userID, accountID, withDescription("AMZN Digital*9X1"), func(tx *model.Transaction) {
+		v := "AMZN Digital"
+		tx.MerchantName = &v
+	})
+	manual := mkTxn(t, g, userID, accountID, withDescription("AMZN manual"), withManualCategory(fixtureCat))
+	other := mkTxn(t, g, userID, accountID, withDescription("SHELL GAS"))
+
+	draft, err := svc.PreviewDraft(ctx, userID, service.DraftRuleInput{
+		RuleID: &rule.ID, Pattern: "AMZN", MatchType: "contains", CategoryID: fixtureCat, Priority: 50, IsActive: true, RenameMerchant: &rename,
+	})
+	if err != nil {
+		t.Fatalf("PreviewDraft: %v", err)
+	}
+	if draft.Matched != 2 || draft.WouldChange != 2 || draft.WouldRename != 2 {
+		t.Errorf("draft = %+v, want matched 2, would_change 2, would_rename 2", draft)
+	}
+
+	res, err := svc.Apply(ctx, userID, "")
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if res.Updated != 2 || res.SkippedManual != 1 {
+		t.Errorf("Apply = %+v, want updated 2, skipped_manual 1", res)
+	}
+	merchant := func(id int64) *string {
+		var got model.Transaction
+		if err := g.First(&got, id).Error; err != nil {
+			t.Fatalf("load %d: %v", id, err)
+		}
+		return got.MerchantName
+	}
+	for _, id := range []int64{a.ID, b.ID} {
+		if m := merchant(id); m == nil || *m != "Amazon" {
+			t.Errorf("txn %d merchant = %v, want Amazon", id, m)
+		}
+	}
+	if m := merchant(manual.ID); m != nil {
+		t.Errorf("manual row merchant = %q, want untouched (nil)", *m)
+	}
+	if m := merchant(other.ID); m != nil {
+		t.Errorf("non-matching row merchant = %q, want nil", *m)
+	}
+
+	res, err = svc.Apply(ctx, userID, "")
+	if err != nil {
+		t.Fatalf("re-Apply: %v", err)
+	}
+	if res.Updated != 0 {
+		t.Errorf("re-Apply updated = %d, want 0 (idempotent)", res.Updated)
+	}
+
+	// A changed rename re-applies; a blank one clears the rule's rename and
+	// leaves merchants as they are.
+	renamed := "Amazon.com"
+	if _, err := svc.Update(ctx, userID, rule.ID, service.UpdateRuleInput{RenameMerchant: &renamed}); err != nil {
+		t.Fatalf("Update rename: %v", err)
+	}
+	if res, _ = svc.Apply(ctx, userID, ""); res.Updated != 2 {
+		t.Errorf("Apply after rename change updated = %d, want 2", res.Updated)
+	}
+	blank := " "
+	updated, err := svc.Update(ctx, userID, rule.ID, service.UpdateRuleInput{RenameMerchant: &blank})
+	if err != nil {
+		t.Fatalf("Update clear: %v", err)
+	}
+	if updated.RenameMerchant != nil {
+		t.Errorf("rename after clear = %q, want nil", *updated.RenameMerchant)
+	}
+	if res, _ = svc.Apply(ctx, userID, ""); res.Updated != 0 {
+		t.Errorf("Apply after clear updated = %d, want 0", res.Updated)
+	}
+	if m := merchant(a.ID); m == nil || *m != "Amazon.com" {
+		t.Errorf("merchant after clear = %v, want Amazon.com kept", m)
+	}
+
+	long := strings.Repeat("x", 201)
+	if _, err := svc.Update(ctx, userID, rule.ID, service.UpdateRuleInput{RenameMerchant: &long}); !errors.Is(err, service.ErrRenameTooLong) {
+		t.Errorf("long rename err = %v, want ErrRenameTooLong", err)
 	}
 }
