@@ -13,6 +13,7 @@ import { useAssetsStore } from '../store/assetsStore'
 import type { Account } from '../types/account'
 import { assetKindLabel, type Asset, type AssetKind } from '../types/asset'
 import type { TradeKind } from '../types/trade'
+import { ModalShell } from './ModalShell'
 
 type Props = {
   account: Account
@@ -105,98 +106,96 @@ export function TradeFormModal({ account, onClose, onRecorded }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
-        <div className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
-          Record trade — {account.name}
-        </div>
-        <div className="space-y-3 px-5 py-4">
-          {error && (
-            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {error}
-            </div>
-          )}
-          <Field label="Side">
-            <div className="flex gap-3 text-sm">
-              <label className="inline-flex items-center gap-1.5">
-                <input type="radio" name="trade-kind" value="buy" checked={kind === 'buy'} onChange={() => setKind('buy')} />
-                Buy
-              </label>
-              <label className="inline-flex items-center gap-1.5">
-                <input type="radio" name="trade-kind" value="sell" checked={kind === 'sell'} onChange={() => setKind('sell')} />
-                Sell
-              </label>
-            </div>
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Symbol">
-              <input
-                className={inputClass}
-                value={symbol}
-                onChange={(e) => handleSymbolChange(e.target.value)}
-                placeholder="AAPL"
-                list="trade-asset-symbols"
-                autoComplete="off"
-              />
-              <datalist id="trade-asset-symbols">
-                {tradeableAssets.map((a) => (
-                  <option key={a.id} value={a.symbol}>
-                    {a.display_name ? `${a.display_name} · ${assetKindLabel(a.kind)}` : assetKindLabel(a.kind)}
-                  </option>
-                ))}
-              </datalist>
-              {!loaded && <p className="mt-1 text-[11px] text-gray-400">Loading known assets…</p>}
-            </Field>
-            <Field label="Kind">
-              <select className={inputClass} value={assetKind} onChange={(e) => setAssetKind(e.target.value as AssetKind)}>
-                {TRADEABLE_KINDS.map((k) => (
-                  <option key={k} value={k}>{assetKindLabel(k)}</option>
-                ))}
-              </select>
-            </Field>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Quantity">
-              <input
-                className={inputClass}
-                value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
-                inputMode="decimal"
-                placeholder="10"
-              />
-            </Field>
-            <Field label={`Price per unit (${account.currency})`}>
-              <input
-                className={inputClass}
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                inputMode="decimal"
-                placeholder="182.00"
-              />
-            </Field>
-          </div>
-          <Field label="Trade date">
-            <input type="date" className={inputClass} value={tradeDate} onChange={(e) => setTradeDate(e.target.value)} />
-          </Field>
-          <Field label="Notes (optional)">
-            <input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} />
-          </Field>
-        </div>
-        <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
-          <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={submitting}
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {submitting ? 'Recording…' : 'Record trade'}
-          </button>
-        </div>
+    <ModalShell aria-label={`Record trade — ${account.name}`}>
+      <div className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
+        Record trade — {account.name}
       </div>
-    </div>
+      <div className="space-y-3 px-5 py-4">
+        {error && (
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+        <Field label="Side">
+          <div className="flex gap-3 text-sm">
+            <label className="inline-flex items-center gap-1.5">
+              <input type="radio" name="trade-kind" value="buy" checked={kind === 'buy'} onChange={() => setKind('buy')} />
+              Buy
+            </label>
+            <label className="inline-flex items-center gap-1.5">
+              <input type="radio" name="trade-kind" value="sell" checked={kind === 'sell'} onChange={() => setKind('sell')} />
+              Sell
+            </label>
+          </div>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Symbol">
+            <input
+              className={inputClass}
+              value={symbol}
+              onChange={(e) => handleSymbolChange(e.target.value)}
+              placeholder="AAPL"
+              list="trade-asset-symbols"
+              autoComplete="off"
+            />
+            <datalist id="trade-asset-symbols">
+              {tradeableAssets.map((a) => (
+                <option key={a.id} value={a.symbol}>
+                  {a.display_name ? `${a.display_name} · ${assetKindLabel(a.kind)}` : assetKindLabel(a.kind)}
+                </option>
+              ))}
+            </datalist>
+            {!loaded && <p className="mt-1 text-[11px] text-gray-400">Loading known assets…</p>}
+          </Field>
+          <Field label="Kind">
+            <select className={inputClass} value={assetKind} onChange={(e) => setAssetKind(e.target.value as AssetKind)}>
+              {TRADEABLE_KINDS.map((k) => (
+                <option key={k} value={k}>{assetKindLabel(k)}</option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Quantity">
+            <input
+              className={inputClass}
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              inputMode="decimal"
+              placeholder="10"
+            />
+          </Field>
+          <Field label={`Price per unit (${account.currency})`}>
+            <input
+              className={inputClass}
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              inputMode="decimal"
+              placeholder="182.00"
+            />
+          </Field>
+        </div>
+        <Field label="Trade date">
+          <input type="date" className={inputClass} value={tradeDate} onChange={(e) => setTradeDate(e.target.value)} />
+        </Field>
+        <Field label="Notes (optional)">
+          <input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </Field>
+      </div>
+      <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
+        <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={submitting}
+          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {submitting ? 'Recording…' : 'Record trade'}
+        </button>
+      </div>
+    </ModalShell>
   )
 }
 

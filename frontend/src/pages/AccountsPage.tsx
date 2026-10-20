@@ -22,6 +22,7 @@ import {
   type CreateAccountInput,
   type UpdateAccountInput,
 } from '../types/account'
+import { ModalShell } from '../components/ModalShell'
 
 export function AccountsPage() {
   const { accounts, loading, error, fetch, update, remove } = useAccountsStore()
@@ -434,55 +435,53 @@ function AccountFormModal({ mode, account, onClose, onSubmit }: FormProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
-        <div className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
-          {mode === 'create' ? 'Add account' : `Edit "${account?.name}"`}
-        </div>
-        <div className="space-y-3 px-5 py-4">
-          {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
-          <Field label="Name">
-            <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
-          </Field>
-          <Field label="Institution">
-            <input className={inputClass} value={institution} onChange={(e) => setInstitution(e.target.value)} placeholder="e.g. Chase" />
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Type">
-              <select className={inputClass} value={accountType} onChange={(e) => setAccountType(e.target.value as AccountType)}>
-                {ACCOUNT_TYPES.map((t) => (
-                  <option key={t} value={t}>{accountTypeLabel(t)}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Currency">
-              <input className={inputClass} value={currency} maxLength={3} onChange={(e) => setCurrency(e.target.value.toUpperCase())} />
-            </Field>
-          </div>
-          {/* No balance field: balance is derived from positions × prices
-              (ADR-0013) — to change it, record a transaction or trade. */}
-          <Field label="Last 4 (optional)">
-            <input className={inputClass} value={lastFour ?? ''} maxLength={4} onChange={(e) => setLastFour(e.target.value)} />
-          </Field>
-          <label className="flex items-center gap-2 text-sm text-gray-700">
-            <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
-            Active
-          </label>
-          {mode === 'edit' && account && <PIIPanel accountID={account.id} />}
-        </div>
-        <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
-          <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">Cancel</button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={submitting}
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {submitting ? 'Saving…' : mode === 'create' ? 'Create' : 'Save'}
-          </button>
-        </div>
+    <ModalShell aria-label={mode === 'create' ? 'Add account' : `Edit "${account?.name}"`}>
+      <div className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
+        {mode === 'create' ? 'Add account' : `Edit "${account?.name}"`}
       </div>
-    </div>
+      <div className="space-y-3 px-5 py-4">
+        {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+        <Field label="Name">
+          <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field label="Institution">
+          <input className={inputClass} value={institution} onChange={(e) => setInstitution(e.target.value)} placeholder="e.g. Chase" />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Type">
+            <select className={inputClass} value={accountType} onChange={(e) => setAccountType(e.target.value as AccountType)}>
+              {ACCOUNT_TYPES.map((t) => (
+                <option key={t} value={t}>{accountTypeLabel(t)}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Currency">
+            <input className={inputClass} value={currency} maxLength={3} onChange={(e) => setCurrency(e.target.value.toUpperCase())} />
+          </Field>
+        </div>
+        {/* No balance field: balance is derived from positions × prices
+            (ADR-0013) — to change it, record a transaction or trade. */}
+        <Field label="Last 4 (optional)">
+          <input className={inputClass} value={lastFour ?? ''} maxLength={4} onChange={(e) => setLastFour(e.target.value)} />
+        </Field>
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
+          Active
+        </label>
+        {mode === 'edit' && account && <PIIPanel accountID={account.id} />}
+      </div>
+      <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
+        <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">Cancel</button>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={submitting}
+          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {submitting ? 'Saving…' : mode === 'create' ? 'Create' : 'Save'}
+        </button>
+      </div>
+    </ModalShell>
   )
 }
 

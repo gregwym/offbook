@@ -14,6 +14,7 @@ import {
 import { absDecimal, addDecimal } from '../lib/decimal'
 import { isLiabilityType, type Account } from '../types/account'
 import type { ColumnMapping, ImportHistoryEntry, ImportResult, ReconcileEffect } from '../types/transaction'
+import { ModalShell } from './ModalShell'
 
 type Props = {
   accounts: Account[]
@@ -251,202 +252,200 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
   const reviewBlocksCommit = (preview?.review_count ?? 0) > 0 && !reviewedAck
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-      <div role="dialog" aria-modal="true" aria-labelledby="import-transactions-title" className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-lg bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
-          <span id="import-transactions-title" className="text-lg font-semibold text-gray-900">Import transactions</span>
-          <button type="button" onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600">
-            <X size={18} />
-          </button>
-        </div>
+    <ModalShell size="2xl" aria-labelledby="import-transactions-title">
+      <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-5 py-3">
+        <span id="import-transactions-title" className="text-lg font-semibold text-gray-900">Import transactions</span>
+        <button type="button" onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600">
+          <X size={18} />
+        </button>
+      </div>
 
-        <div className="space-y-4 overflow-y-auto px-5 py-4">
-          {error && (
-            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-          )}
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+        {error && (
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+        )}
 
-          <Field label="Account">
-            <select className={inputClass} value={accountID} onChange={(e) => { setAccountID(e.target.value); resetDerived() }}>
-              <option value="">(choose)</option>
-              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          </Field>
+        <Field label="Account">
+          <select className={inputClass} value={accountID} onChange={(e) => { setAccountID(e.target.value); resetDerived() }}>
+            <option value="">(choose)</option>
+            {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </Field>
 
-          <Field label="File">
-            <input
-              type="file"
-              accept=".csv,text/csv,application/pdf,image/png,image/jpeg,image/gif,image/webp"
-              className="block w-full text-sm text-gray-700 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
-              onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
-            />
-            <p className="mt-1 text-xs text-gray-500">
-              CSV is parsed locally. PDF or photo statements are read by your configured AI provider. Money out should
-              show as negative; if purchases come in positive, you can flip the signs before importing. Re-importing
-              the same file won't create duplicates.
+        <Field label="File">
+          <input
+            type="file"
+            accept=".csv,text/csv,application/pdf,image/png,image/jpeg,image/gif,image/webp"
+            className="block w-full text-sm text-gray-700 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
+            onChange={(e) => onFileChange(e.target.files?.[0] ?? null)}
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            CSV is parsed locally. PDF or photo statements are read by your configured AI provider. Money out should
+            show as negative; if purchases come in positive, you can flip the signs before importing. Re-importing
+            the same file won't create duplicates.
+          </p>
+        </Field>
+
+        {/* AI consent notice — shown before the egress, until a preview exists. */}
+        {mode === 'ai' && !preview && file && !duplicateBlocked && (
+          <div className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900">
+            <p className="font-medium">This file will be sent to your AI provider</p>
+            <p className="mt-0.5 text-indigo-800">
+              Clicking <span className="font-medium">Extract with AI</span> uploads “{file.name}” to the provider you
+              configured in Settings so it can read the transactions. Nothing is saved until you review and import.
             </p>
-          </Field>
+          </div>
+        )}
 
-          {/* AI consent notice — shown before the egress, until a preview exists. */}
-          {mode === 'ai' && !preview && file && !duplicateBlocked && (
-            <div className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900">
-              <p className="font-medium">This file will be sent to your AI provider</p>
-              <p className="mt-0.5 text-indigo-800">
-                Clicking <span className="font-medium">Extract with AI</span> uploads “{file.name}” to the provider you
-                configured in Settings so it can read the transactions. Nothing is saved until you review and import.
-              </p>
-            </div>
-          )}
-
-          {needsManualMapping && headers && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
-              <p className="mb-2 text-sm font-medium text-amber-900">Map your columns</p>
-              <fieldset className="mb-2">
-                <legend className="mb-1 text-xs font-medium text-gray-600">How does the file show amounts?</legend>
-                <div className="flex flex-col gap-1 text-sm text-gray-800 sm:flex-row sm:gap-4">
-                  <label className="flex items-center gap-1.5">
-                    <input type="radio" name="amount-shape" checked={amountShape === 'single'} onChange={() => setAmountShape('single')} />
-                    One amount column
-                  </label>
-                  <label className="flex items-center gap-1.5">
-                    <input type="radio" name="amount-shape" checked={amountShape === 'split'} onChange={() => setAmountShape('split')} />
-                    Separate debit &amp; credit columns
-                  </label>
-                </div>
-              </fieldset>
-              <div className={`grid grid-cols-1 gap-2 ${amountShape === 'split' ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
-                {FIELDS[amountShape].map((f) => (
-                  <Field key={f.key} label={f.label}>
-                    <select
-                      className={inputClass}
-                      value={mapping[f.key] ?? ''}
-                      onChange={(e) => setMapping((m) => ({ ...m, [f.key]: e.target.value }))}
-                    >
-                      <option value="">(column)</option>
-                      {headers.map((h) => <option key={h} value={h}>{h}</option>)}
-                    </select>
-                  </Field>
-                ))}
+        {needsManualMapping && headers && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+            <p className="mb-2 text-sm font-medium text-amber-900">Map your columns</p>
+            <fieldset className="mb-2">
+              <legend className="mb-1 text-xs font-medium text-gray-600">How does the file show amounts?</legend>
+              <div className="flex flex-col gap-1 text-sm text-gray-800 sm:flex-row sm:gap-4">
+                <label className="flex items-center gap-1.5">
+                  <input type="radio" name="amount-shape" checked={amountShape === 'single'} onChange={() => setAmountShape('single')} />
+                  One amount column
+                </label>
+                <label className="flex items-center gap-1.5">
+                  <input type="radio" name="amount-shape" checked={amountShape === 'split'} onChange={() => setAmountShape('split')} />
+                  Separate debit &amp; credit columns
+                </label>
               </div>
+            </fieldset>
+            <div className={`grid grid-cols-1 gap-2 ${amountShape === 'split' ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
+              {FIELDS[amountShape].map((f) => (
+                <Field key={f.key} label={f.label}>
+                  <select
+                    className={inputClass}
+                    value={mapping[f.key] ?? ''}
+                    onChange={(e) => setMapping((m) => ({ ...m, [f.key]: e.target.value }))}
+                  >
+                    <option value="">(column)</option>
+                    {headers.map((h) => <option key={h} value={h}>{h}</option>)}
+                  </select>
+                </Field>
+              ))}
             </div>
-          )}
+          </div>
+        )}
 
-          {duplicateBlocked && (
-            <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              <p className="font-medium">You already imported this exact statement</p>
-              <p className="mt-0.5">
-                Nothing was sent to your AI provider. Extracting anyway uploads the file to your AI provider and would only find the same transactions as duplicates.
-              </p>
-              <button
-                type="button"
-                onClick={() => runExtract(true)}
-                disabled={busy !== false}
-                className="mt-2 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
-              >
-                Extract anyway
-              </button>
-            </div>
-          )}
-
-          {preview?.duplicate_of && (
-            <div role="status" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              This file matches a statement already imported
-              {preview.duplicate_of.file_name ? ` (“${preview.duplicate_of.file_name}”` : ''}
-              {preview.duplicate_of.imported_at ? `${preview.duplicate_of.file_name ? ', ' : ' ('}${new Date(preview.duplicate_of.imported_at).toLocaleDateString()}` : ''}
-              {preview.duplicate_of.file_name || preview.duplicate_of.imported_at ? ')' : ''}. Existing transactions are
-              skipped, so importing again won’t create duplicates.
-            </div>
-          )}
-
-          {preview && mode === 'csv' && (
-            <SignCheck
-              result={preview}
-              currency={account?.currency}
-              liability={!!account && isLiabilityType(account.account_type)}
-              flipped={flipSign}
+        {duplicateBlocked && (
+          <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <p className="font-medium">You already imported this exact statement</p>
+            <p className="mt-0.5">
+              Nothing was sent to your AI provider. Extracting anyway uploads the file to your AI provider and would only find the same transactions as duplicates.
+            </p>
+            <button
+              type="button"
+              onClick={() => runExtract(true)}
               disabled={busy !== false}
-              onFlip={(flip) => {
-                setFlipSign(flip)
-                void runCSV(false, { ...preview.mapping, flip_sign: flip }).then((ok) => {
-                  if (!ok) setFlipSign(!flip)
-                })
-              }}
-            />
-          )}
-
-          {preview && <PreviewSummary result={preview} currency={account?.currency} />}
-
-          {accountID && <ImportHistoryList accountID={Number(accountID)} entries={historyReady?.entries ?? null} failed={historyReady?.failed ?? false} currency={account?.currency} onUndone={handleUndone} />}
-
-          {preview && (preview.review_count ?? 0) > 0 && (
-            <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={reviewedAck}
-                onChange={(e) => setReviewedAck(e.target.checked)}
-              />
-              <span>
-                {preview.review_count} row{preview.review_count === 1 ? ' was' : 's were'} read with low confidence. I’ve
-                reviewed the flagged rows above and want to import them.
-              </span>
-            </label>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between gap-2 border-t border-gray-200 px-5 py-3">
-          <span className="text-xs text-gray-500">
-            {preview ? `${preview.total_rows} row${preview.total_rows === 1 ? '' : 's'} read` : ''}
-          </span>
-          <div className="flex gap-2">
-            <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">
-              Cancel
+              className="mt-2 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+            >
+              Extract anyway
             </button>
+          </div>
+        )}
 
-            {mode === 'csv' ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => runCSV(false)}
-                  disabled={busy !== false || !file}
-                  className="rounded-md border border-indigo-300 bg-white px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
-                >
-                  {busy === 'preview' ? 'Previewing…' : 'Preview'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => runCSV(true)}
-                  disabled={busy !== false || !preview || preview.new_count === 0}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  <UploadCloud size={15} />
-                  {busy === 'commit' ? 'Importing…' : preview ? `Import ${preview.new_count} new` : 'Import'}
-                </button>
-              </>
-            ) : !preview ? (
+        {preview?.duplicate_of && (
+          <div role="status" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            This file matches a statement already imported
+            {preview.duplicate_of.file_name ? ` (“${preview.duplicate_of.file_name}”` : ''}
+            {preview.duplicate_of.imported_at ? `${preview.duplicate_of.file_name ? ', ' : ' ('}${new Date(preview.duplicate_of.imported_at).toLocaleDateString()}` : ''}
+            {preview.duplicate_of.file_name || preview.duplicate_of.imported_at ? ')' : ''}. Existing transactions are
+            skipped, so importing again won’t create duplicates.
+          </div>
+        )}
+
+        {preview && mode === 'csv' && (
+          <SignCheck
+            result={preview}
+            currency={account?.currency}
+            liability={!!account && isLiabilityType(account.account_type)}
+            flipped={flipSign}
+            disabled={busy !== false}
+            onFlip={(flip) => {
+              setFlipSign(flip)
+              void runCSV(false, { ...preview.mapping, flip_sign: flip }).then((ok) => {
+                if (!ok) setFlipSign(!flip)
+              })
+            }}
+          />
+        )}
+
+        {preview && <PreviewSummary result={preview} currency={account?.currency} />}
+
+        {accountID && <ImportHistoryList accountID={Number(accountID)} entries={historyReady?.entries ?? null} failed={historyReady?.failed ?? false} currency={account?.currency} onUndone={handleUndone} />}
+
+        {preview && (preview.review_count ?? 0) > 0 && (
+          <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={reviewedAck}
+              onChange={(e) => setReviewedAck(e.target.checked)}
+            />
+            <span>
+              {preview.review_count} row{preview.review_count === 1 ? ' was' : 's were'} read with low confidence. I’ve
+              reviewed the flagged rows above and want to import them.
+            </span>
+          </label>
+        )}
+      </div>
+
+      <div className="flex shrink-0 items-center justify-between gap-2 border-t border-gray-200 px-5 py-3">
+        <span className="text-xs text-gray-500">
+          {preview ? `${preview.total_rows} row${preview.total_rows === 1 ? '' : 's'} read` : ''}
+        </span>
+        <div className="flex gap-2">
+          <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">
+            Cancel
+          </button>
+
+          {mode === 'csv' ? (
+            <>
               <button
                 type="button"
-                onClick={() => runExtract()}
+                onClick={() => runCSV(false)}
                 disabled={busy !== false || !file}
-                className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                className="rounded-md border border-indigo-300 bg-white px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
               >
-                <Sparkles size={15} />
-                {busy === 'extract' ? 'Extracting…' : 'Extract with AI'}
+                {busy === 'preview' ? 'Previewing…' : 'Preview'}
               </button>
-            ) : (
               <button
                 type="button"
-                onClick={runCommitJob}
-                disabled={busy !== false || preview.new_count === 0 || reviewBlocksCommit}
+                onClick={() => runCSV(true)}
+                disabled={busy !== false || !preview || preview.new_count === 0}
                 className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
                 <UploadCloud size={15} />
-                {busy === 'commit' ? 'Importing…' : `Import ${preview.new_count} new`}
+                {busy === 'commit' ? 'Importing…' : preview ? `Import ${preview.new_count} new` : 'Import'}
               </button>
-            )}
-          </div>
+            </>
+          ) : !preview ? (
+            <button
+              type="button"
+              onClick={() => runExtract()}
+              disabled={busy !== false || !file}
+              className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              <Sparkles size={15} />
+              {busy === 'extract' ? 'Extracting…' : 'Extract with AI'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={runCommitJob}
+              disabled={busy !== false || preview.new_count === 0 || reviewBlocksCommit}
+              className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              <UploadCloud size={15} />
+              {busy === 'commit' ? 'Importing…' : `Import ${preview.new_count} new`}
+            </button>
+          )}
         </div>
       </div>
-    </div>
+    </ModalShell>
   )
 }
 
