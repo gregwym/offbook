@@ -17,6 +17,7 @@ type CategorizationRuleRepository interface {
 	GetByID(ctx context.Context, userID, id int64) (*model.CategorizationRule, error)
 	List(ctx context.Context, userID int64) ([]model.CategorizationRule, error)
 	Update(ctx context.Context, r *model.CategorizationRule) error
+	SetPriority(ctx context.Context, userID, id int64, priority int) error
 	SoftDelete(ctx context.Context, userID, id int64) error
 }
 
@@ -60,6 +61,20 @@ func (r *categorizationRuleRepo) Update(ctx context.Context, rule *model.Categor
 	res := r.db.WithContext(ctx).
 		Where("user_id = ?", rule.UserID).
 		Save(rule)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *categorizationRuleRepo) SetPriority(ctx context.Context, userID, id int64, priority int) error {
+	res := r.db.WithContext(ctx).
+		Model(&model.CategorizationRule{}).
+		Where("user_id = ? AND id = ?", userID, id).
+		Update("priority", priority)
 	if res.Error != nil {
 		return res.Error
 	}

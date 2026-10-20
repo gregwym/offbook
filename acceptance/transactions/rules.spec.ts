@@ -7,7 +7,8 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 // (nothing changes), applies it, and manual picks survive. A second journey
 // (#534) has a rule rename the merchant, so the list and Insights Top
 // merchants read one clean name. Throwaway user; runs under both desktop and
-// mobile projects. Later journeys cover hide (#536) and mark reviewed (#538).
+// mobile projects. Later journeys cover hide (#536), mark reviewed (#538) and
+// run order (#540).
 
 test.describe('categorization rules journey', () => {
   test('rule impact preview, dry-run, apply, manual picks win', async ({ page }, testInfo) => {
@@ -272,6 +273,69 @@ test.describe('rule marks matches reviewed', () => {
     // Any one can still be sent back to review.
     await api(cookie, '/transactions/review', { ids: [fresh.id], reviewed: false })
     expect(await reviewCount(cookie)).toBe(2)
+  })
+})
+
+test.describe('rule run order', () => {
+  test('overlapping rules: the top rule wins, and moving one up changes the winner', async ({ page }, testInfo) => {
+    process.env.OFFBOOK_ROLE = process.env.OFFBOOK_ROLE ?? 'qa'
+    const user = await createThrowawayUser({ suite: `rules-order-${testInfo.project.name}` })
+    const cookie = await apiSignin(user.email, user.password)
+    const cats = await get(cookie, '/categories')
+    const pick = (slug: string) => (cats.data.find((x: { slug: string }) => x.slug === slug) ?? cats.data[0]) as { id: number; name: string }
+    const shopping = pick('shopping')
+    const subs = pick('subscriptions')
+    const acct = (await api(cookie, '/accounts', {
+      name: 'Order Checking', institution_slug: 'manual', account_type: 'checking', currency: 'USD',
+    })).data.id
+    const today = new Date().toISOString().slice(0, 10)
+    const prime = (await api(cookie, '/transactions', {
+      account_id: acct, amount: '-14.99', description: 'QAORD AMAZON PRIME*2K4', transaction_date: today, source: 'csv',
+    })).data
+    // The broad rule was made last, so it sits on top and wins.
+    await api(cookie, '/categorization-rules', { pattern: 'AMAZON PRIME', match_type: 'contains', category_id: subs.id, priority: 10 })
+    await api(cookie, '/categorization-rules', { pattern: 'AMAZON', match_type: 'contains', category_id: shopping.id, priority: 20 })
+    const categoryOf = async () => (await get(cookie, `/transactions/${prime.id}`)).data.category_id as number
+
+    await signIn(page, user.email, user.password)
+    await page.goto('/rules')
+    await expect(page.getByText(/Rules run top to bottom; the first match wins/)).toBeVisible()
+    const patterns = () => page.locator('tbody tr td:nth-child(2)').allInnerTexts()
+    await expect.poll(patterns).toEqual(['AMAZON', 'AMAZON PRIME'])
+    await expect(page.locator('tbody tr').first().locator('td').first()).toHaveText('1')
+    await expect(page.getByRole('button', { name: 'Move "AMAZON" up' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Move "AMAZON PRIME" down' })).toBeDisabled()
+    const up = page.getByRole('button', { name: 'Move "AMAZON PRIME" up' })
+    await expectInViewport(page, up)
+    await expectInViewport(page, page.getByRole('button', { name: 'Delete' }).last())
+    await testInfo.attach(`${testInfo.project.name}-order-before`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+
+    await page.getByRole('button', { name: 'Preview changes' }).click()
+    await page.getByRole('button', { name: 'Apply now' }).click()
+    await expect.poll(categoryOf).toBe(shopping.id)
+
+    // Move the specific rule above the broad one; the order sticks.
+    await up.click()
+    await expect.poll(patterns).toEqual(['AMAZON PRIME', 'AMAZON'])
+    await page.reload()
+    await expect.poll(patterns).toEqual(['AMAZON PRIME', 'AMAZON'])
+    await expectNoOverflow(page)
+    await testInfo.attach(`${testInfo.project.name}-order-after`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+
+    await page.getByRole('button', { name: 'Preview changes' }).click()
+    await expect(page.getByText(/1 of \d+ transactions would be re-categorized/)).toBeVisible()
+    await page.getByRole('button', { name: 'Apply now' }).click()
+    await expect.poll(categoryOf).toBe(subs.id)
+
+    // A new matching row follows the new order on import.
+    const fresh = (await api(cookie, '/transactions', {
+      account_id: acct, amount: '-14.99', description: 'QAORD AMAZON PRIME*7Q1', transaction_date: today, source: 'csv',
+    })).data
+    expect(fresh.category_id).toBe(subs.id)
   })
 })
 

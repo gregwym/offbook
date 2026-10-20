@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Pencil, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Pencil, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react'
 import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
 import { listCategorizationVerdicts } from '../api/aiCategorizationVerdicts'
 import { useCategoriesStore } from '../store/categoriesStore'
@@ -13,11 +13,12 @@ import type {
 } from '../types/categorizationRule'
 
 export function RulesPage() {
-  const { rules, loading, error, fetch, create, update, remove, apply, clearError } = useRulesStore()
+  const { rules, loading, error, fetch, create, update, remove, move, apply, clearError } = useRulesStore()
   const { categories, fetch: fetchCategories } = useCategoriesStore()
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<CategorizationRule | null>(null)
   const [applying, setApplying] = useState(false)
+  const [moving, setMoving] = useState(false)
   const [applyMsg, setApplyMsg] = useState<string | null>(null)
   const [previewed, setPreviewed] = useState(false)
   const [verdicts, setVerdicts] = useState<AICategorizationVerdict[]>([])
@@ -54,6 +55,15 @@ export function RulesPage() {
     return rules.reduce((m, r) => Math.max(m, r.priority), 0) + 10
   }, [rules])
 
+  const runMove = async (id: number, offset: -1 | 1) => {
+    setMoving(true)
+    try {
+      await move(id, offset)
+    } finally {
+      setMoving(false)
+    }
+  }
+
   const runApply = async (dryRun = false) => {
     setApplying(true)
     setApplyMsg(null)
@@ -75,7 +85,7 @@ export function RulesPage() {
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Categorization rules</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Auto-categorize transactions on import. Rules apply in priority order; manual picks always win.
+            Auto-categorize transactions on import. Rules run top to bottom; the first match wins. Manual picks always win.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -175,7 +185,10 @@ export function RulesPage() {
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wider text-gray-500">
             <tr>
-              <th className="hidden px-4 py-2 text-left sm:table-cell">Priority</th>
+              <th className="px-2 py-2 text-left sm:px-4">
+                <span aria-hidden="true">#</span>
+                <span className="sr-only">Run order</span>
+              </th>
               <th className="px-4 py-2 text-left">Pattern</th>
               <th className="hidden px-4 py-2 text-left sm:table-cell">Match</th>
               <th className="px-4 py-2 text-left">Category</th>
@@ -190,9 +203,9 @@ export function RulesPage() {
             {!loading && rules.length === 0 && (
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-400">No rules yet — create one to start auto-categorizing.</td></tr>
             )}
-            {rules.map((r) => (
+            {rules.map((r, i) => (
               <tr key={r.id} className="hover:bg-gray-50">
-                <td className="hidden px-4 py-2 font-mono text-gray-700 sm:table-cell">{r.priority}</td>
+                <td className="px-2 py-2 font-mono text-gray-700 sm:px-4">{i + 1}</td>
                 <td className="px-4 py-2 font-mono text-gray-900">
                   {r.pattern}
                   {!r.is_active && <span className="ml-2 text-xs text-gray-400 sm:hidden">(inactive)</span>}
@@ -213,7 +226,27 @@ export function RulesPage() {
                     {r.is_active ? 'yes' : 'no'}
                   </span>
                 </td>
-                <td className="px-4 py-2 text-right">
+                <td className="whitespace-nowrap px-4 py-2 text-right">
+                  <button
+                    type="button"
+                    onClick={() => runMove(r.id, -1)}
+                    disabled={moving || i === 0}
+                    className="mr-1 p-1 text-gray-500 hover:text-gray-900 disabled:opacity-30"
+                    aria-label={`Move "${r.pattern || `rule ${i + 1}`}" up`}
+                    title="Run earlier"
+                  >
+                    <ArrowUp size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => runMove(r.id, 1)}
+                    disabled={moving || i === rules.length - 1}
+                    className="mr-2 p-1 text-gray-500 hover:text-gray-900 disabled:opacity-30"
+                    aria-label={`Move "${r.pattern || `rule ${i + 1}`}" down`}
+                    title="Run later"
+                  >
+                    <ArrowDown size={16} />
+                  </button>
                   <button
                     type="button"
                     onClick={() => setEditing(r)}

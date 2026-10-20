@@ -27,6 +27,13 @@ export async function deleteRule(id: number): Promise<void> {
   await apiClient.delete(`/categorization-rules/${id}`)
 }
 
+// Sets the run order of all the user's rules (first id runs first) and
+// returns them in that order (#540).
+export async function reorderRules(ruleIds: number[]): Promise<CategorizationRule[]> {
+  const res = await apiClient.post<ApiList<CategorizationRule>>('/categorization-rules/reorder', { rule_ids: ruleIds })
+  return res.data.data
+}
+
 // Empty body defaults to scope='all' on the backend.
 // dryRun reports what would change without writing.
 export async function applyRules(scope?: ApplyScope, dryRun?: boolean): Promise<ApplyResult> {
