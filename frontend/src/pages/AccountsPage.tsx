@@ -221,7 +221,9 @@ export function AccountsPage() {
                       )}
                       {(a.unpriced_assets ?? []).map((u) => (
                         <div key={u.asset_id} className="mt-0.5 text-xs text-amber-700">
-                          Needs a price: <span className="font-medium">{u.symbol}</span>
+                          <span className="whitespace-nowrap">
+                            Needs a price: <span className="font-medium">{u.symbol}</span>
+                          </span>
                           <button
                             type="button"
                             onClick={() => setSettingPrice({ symbol: u.symbol, kind: u.kind })}
