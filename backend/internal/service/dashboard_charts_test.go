@@ -789,7 +789,7 @@ func TestDashboard_TopMerchants_NetsRefundsLikeCategories(t *testing.T) {
 	seed("OUTDOORCO", &shopping.ID, "-120.00", false)
 	seed("OUTDOORCO", &shopping.ID, "20.00", false) // partial refund
 	seed("RETURNSHOP", &shopping.ID, "-30.00", false)
-	seed("RETURNSHOP", &shopping.ID, "30.00", false) // fully refunded
+	seed("RETURNSHOP", &shopping.ID, "30.00", false)  // fully refunded
 	seed("RETURNSHOP", &shopping.ID, "-500.00", true) // hidden: never counts
 	split := seed("HOMEMART", &shopping.ID, "-90.00", false)
 	if err := repository.NewTransactionRepository(g).ReplaceSplits(ctx, userID, split.ID, []model.TransactionSplit{
