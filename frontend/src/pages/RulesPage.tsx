@@ -196,6 +196,9 @@ export function RulesPage() {
                 <td className="px-4 py-2 font-mono text-gray-900">
                   {r.pattern}
                   {!r.is_active && <span className="ml-2 text-xs text-gray-400 sm:hidden">(inactive)</span>}
+                  {r.rename_merchant && (
+                    <span className="block font-sans text-xs text-gray-500">Renames to {r.rename_merchant}</span>
+                  )}
                 </td>
                 <td className="hidden px-4 py-2 text-gray-700 sm:table-cell">{r.match_type}</td>
                 <td className="px-4 py-2 text-gray-700">{categoriesById.get(r.category_id)?.name ?? `#${r.category_id}`}</td>

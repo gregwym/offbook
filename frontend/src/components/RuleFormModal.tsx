@@ -21,7 +21,11 @@ export type RuleFormDefaults = {
   category_id?: number
   priority?: number
   is_active?: boolean
+  rename_merchant?: string
 }
+
+// Mirrors the backend's maxRenameMerchant.
+const MAX_RENAME = 200
 
 type Props = {
   mode: 'create' | 'edit'
@@ -44,26 +48,38 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
     rule?.priority ?? defaults?.priority ?? 10,
   )
   const [isActive, setIsActive] = useState(rule?.is_active ?? defaults?.is_active ?? true)
+  const [renameMerchant, setRenameMerchant] = useState(
+    rule?.rename_merchant ?? defaults?.rename_merchant ?? '',
+  )
+  const rename = renameMerchant.trim()
   const [submitting, setSubmitting] = useState(false)
   // We split form errors by field when the backend gives us a code; otherwise
   // surface as a generic banner above the form.
   const [error, setError] = useState<string | null>(null)
   const [patternError, setPatternError] = useState<string | null>(null)
   const [categoryError, setCategoryError] = useState<string | null>(null)
+  const [renameError, setRenameError] = useState<string | null>(null)
 
   // Live impact of the draft rule: debounced, cancels stale requests, and
   // never blocks saving. Results are keyed by the draft they describe, so a
   // result for an older draft reads as "loading" rather than stale.
   const cat = Number(categoryID)
   const draftReady = pattern.trim() !== '' && Number.isInteger(cat) && cat > 0 && priority >= 0
-  const draftKey = JSON.stringify([pattern.trim(), matchType, cat, priority, isActive, rule?.id ?? null])
+  const draftKey = JSON.stringify([pattern.trim(), matchType, cat, priority, isActive, rename, rule?.id ?? null])
   const [impact, setImpact] = useState<{ key: string; data: DraftPreview | null } | null>(null)
   useEffect(() => {
     if (!draftReady) return
     const ctrl = new AbortController()
     const timer = setTimeout(() => {
       previewDraftRule(
-        { pattern: pattern.trim(), match_type: matchType, category_id: cat, priority, is_active: isActive },
+        {
+          pattern: pattern.trim(),
+          match_type: matchType,
+          category_id: cat,
+          priority,
+          is_active: isActive,
+          ...(rename ? { rename_merchant: rename } : {}),
+        },
         rule?.id,
         ctrl.signal,
       )
@@ -76,7 +92,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
       clearTimeout(timer)
       ctrl.abort()
     }
-  }, [draftKey, draftReady, pattern, matchType, cat, priority, isActive, rule?.id])
+  }, [draftKey, draftReady, pattern, matchType, cat, priority, isActive, rename, rule?.id])
   const current = draftReady && impact?.key === draftKey ? impact : null
   const impactData = current?.data ?? null
   const impactLoading = draftReady && isActive && current === null
@@ -85,6 +101,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
     setError(null)
     setPatternError(null)
     setCategoryError(null)
+    setRenameError(null)
     if (!pattern.trim()) {
       setPatternError('Pattern is required.')
       return
@@ -97,6 +114,10 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
       setError('Priority must be >= 0.')
       return
     }
+    if (rename.length > MAX_RENAME) {
+      setRenameError(`Keep the merchant name to ${MAX_RENAME} characters or fewer.`)
+      return
+    }
     setSubmitting(true)
     try {
       await onSubmit({
@@ -105,6 +126,8 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
         category_id: Number(categoryID),
         priority,
         is_active: isActive,
+        // Editing sends '' to clear a rename; creating omits a blank one.
+        ...(rename || rule?.rename_merchant ? { rename_merchant: rename } : {}),
       })
     } catch (err) {
       const { code, message } = extractErr(err)
@@ -171,6 +194,17 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
               ))}
             </select>
           </Field>
+          <Field label="Rename merchant to (optional)" error={renameError}>
+            <input
+              className={inputClass}
+              value={renameMerchant}
+              onChange={(e) => setRenameMerchant(e.target.value)}
+              placeholder="e.g. Amazon"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Matching transactions show this merchant in the list, Top merchants and Recurring. Leave blank to keep the bank&rsquo;s name.
+            </p>
+          </Field>
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
             Active
@@ -186,6 +220,8 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
                   {impactData.matched === 0
                     ? 'No existing transactions would use this rule.'
                     : `Would categorize ${impactData.matched} of ${impactData.scanned} existing transactions (${impactData.would_change} would change).`}
+                  {rename && impactData.would_rename > 0 &&
+                    ` ${impactData.would_rename} would show merchant “${rename}”.`}
                   {impactData.skipped_manual > 0 && ` ${impactData.skipped_manual} manual picks are never overridden.`}
                 </p>
                 {impactData.samples.length > 0 && (
