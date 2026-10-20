@@ -8,7 +8,7 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 // (#534) has a rule rename the merchant, so the list and Insights Top
 // merchants read one clean name. Throwaway user; runs under both desktop and
 // mobile projects. Later journeys cover hide (#536), mark reviewed (#538) and
-// run order (#540).
+// run order (#540) and tags (#546).
 
 test.describe('categorization rules journey', () => {
   test('rule impact preview, dry-run, apply, manual picks win', async ({ page }, testInfo) => {
@@ -344,6 +344,79 @@ test.describe('rule run order', () => {
   })
 })
 
+test.describe('rule adds tags', () => {
+  test('matches gain the tags, the user spelling is reused, new rows arrive tagged, spending is unchanged', async ({ page }, testInfo) => {
+    process.env.OFFBOOK_ROLE = process.env.OFFBOOK_ROLE ?? 'qa'
+    const user = await createThrowawayUser({ suite: `rules-tags-${testInfo.project.name}` })
+    const cookie = await apiSignin(user.email, user.password)
+    const cats = await get(cookie, '/categories')
+    const travel = (cats.data.find((x: { slug: string }) => x.slug === 'travel') ?? cats.data[0]) as { id: number; name: string }
+    const acct = (await api(cookie, '/accounts', {
+      name: 'Tag Rule Checking', institution_slug: 'manual', account_type: 'checking', currency: 'USD',
+    })).data.id
+    const today = new Date().toISOString().slice(0, 10)
+    const tx = (description: string, amount: string) =>
+      api(cookie, '/transactions', { account_id: acct, amount, description, transaction_date: today, source: 'csv' })
+    await tx('QATAGR UBER TRIP 1', '-18.40')
+    await tx('QATAGR UBER TRIP 2', '-22.10')
+    const tagged = (await tx('QATAGR Hotel', '-210.00')).data
+    // The user already has a "Work trip" tag; the rule should reuse it.
+    await patch(cookie, `/transactions/${tagged.id}`, { tags: ['Work trip'] })
+    await tx('QATAGR Corner shop', '-9.00')
+    const spendBefore = await totalSpend(cookie)
+
+    await signIn(page, user.email, user.password)
+    await page.goto('/rules')
+    await page.getByRole('button', { name: 'New rule' }).click()
+    const dialog = page.locator('div.fixed.inset-0')
+    await dialog.getByPlaceholder('e.g. WHOLEFDS').fill('UBER')
+    await dialog.getByLabel('Category').selectOption({ label: travel.name })
+    const tags = dialog.getByLabel('Also add tags (optional)')
+    await tags.scrollIntoViewIfNeeded()
+    await expectInViewport(page, tags)
+    await tags.fill('work TRIP, reimbursable')
+    await expect(dialog).toContainText('2 would be tagged Work trip, reimbursable')
+    // The modal scrolls inside, so Create stays on screen even on a phone.
+    await expect(dialog.getByRole('button', { name: 'Create', exact: true })).toBeInViewport()
+    await testInfo.attach(`${testInfo.project.name}-tags-draft`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+    await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(page.getByText('Adds tags: Work trip, reimbursable')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Preview changes' }).click()
+    await page.getByRole('button', { name: 'Apply now' }).click()
+    await expect.poll(async () => (await get(cookie, '/transactions?tag=reimbursable&limit=50')).total).toBe(2)
+    await expectNoOverflow(page)
+    await testInfo.attach(`${testInfo.project.name}-tags-rules-list`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+    const again = await api(cookie, '/categorization-rules/apply', {})
+    expect(again.data.updated).toBe(0)
+    const tagList = await get(cookie, '/transactions/tags')
+    expect(tagList.data).toEqual(expect.arrayContaining([{ name: 'Work trip', count: 3 }, { name: 'reimbursable', count: 2 }]))
+
+    // A new matching row arrives already tagged.
+    const fresh = (await tx('QATAGR UBER TRIP 3', '-11.00')).data
+    expect(fresh.tags).toEqual(['Work trip', 'reimbursable'])
+
+    // A tag chip filters the list to exactly the rule's matches (the filter
+    // panel itself is collapsed on mobile, #518).
+    await page.goto('/transactions')
+    await page.getByRole('button', { name: 'Show transactions tagged reimbursable' }).first().click()
+    await expect(page.locator('label', { hasText: /^Tag/ }).locator('select')).toHaveValue('reimbursable')
+    await expect(page.getByText(/QATAGR UBER TRIP/).locator('visible=true')).toHaveCount(3)
+    await expect(page.getByText('QATAGR Corner shop').locator('visible=true')).toHaveCount(0)
+    await expectNoOverflow(page)
+    await testInfo.attach(`${testInfo.project.name}-tags-filtered`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+
+    // Tags are labels only: spending is unchanged apart from the new row.
+    expect((await totalSpend(cookie)) - spendBefore).toBeCloseTo(11, 2)
+  })
+})
+
 async function reviewCount(cookie: string) {
   const res = await get(cookie, '/transactions?reviewed=false&limit=1')
   return res.total as number
@@ -371,6 +444,14 @@ async function get(cookie: string, path: string) {
 async function api(cookie: string, path: string, body: unknown) {
   const res = await fetch(`${acceptanceAPIURL()}${path}`, {
     method: 'POST', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`${path} ${res.status} ${await res.text()}`)
+  return res.json()
+}
+
+async function patch(cookie: string, path: string, body: unknown) {
+  const res = await fetch(`${acceptanceAPIURL()}${path}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json', cookie }, body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`${path} ${res.status} ${await res.text()}`)
   return res.json()

@@ -218,6 +218,9 @@ export function RulesPage() {
                   {r.mark_reviewed && (
                     <span className="block font-sans text-xs text-gray-500">Marks reviewed</span>
                   )}
+                  {r.add_tags && r.add_tags.length > 0 && (
+                    <span className="block font-sans text-xs text-gray-500">Adds tags: {r.add_tags.join(', ')}</span>
+                  )}
                 </td>
                 <td className="hidden px-4 py-2 text-gray-700 sm:table-cell">{r.match_type}</td>
                 <td className="px-2 py-2 sm:px-4 text-gray-700">{categoriesById.get(r.category_id)?.name ?? `#${r.category_id}`}</td>

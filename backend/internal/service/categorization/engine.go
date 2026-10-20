@@ -38,8 +38,10 @@ type CompiledRule struct {
 	Hide bool
 	// MarkReviewed, when true, marks the flow rows this rule wins reviewed (#538).
 	MarkReviewed bool
-	patternCI    string // pattern uppercased once, for contains/exact fast path
-	Re           *regexp.Regexp
+	// AddTags are added to the flow rows this rule wins (#546).
+	AddTags   []string
+	patternCI string // pattern uppercased once, for contains/exact fast path
+	Re        *regexp.Regexp
 }
 
 // Decision is what Categorize returns when a rule matched.
@@ -54,6 +56,8 @@ type Decision struct {
 	// MarkReviewed is true when the winning rule marks its matches
 	// reviewed (#538).
 	MarkReviewed bool
+	// AddTags are the winning rule's tags to add (#546).
+	AddTags []string
 }
 
 // MerchantChanged reports whether applying d would change merchantName.
@@ -75,16 +79,49 @@ func (d Decision) ReviewChanged(t *model.Transaction) bool {
 	return d.MarkReviewed && t.ReviewedAt == nil && (t.Kind == "" || t.Kind == model.KindFlow)
 }
 
+// TagsToAdd returns the rule tags t doesn't carry yet (case-insensitive),
+// capped so t stays within model.MaxTagsPerRow. Only flow rows are tagged,
+// like hide and review. A rule never removes a tag.
+func (d Decision) TagsToAdd(t *model.Transaction) []string {
+	if len(d.AddTags) == 0 || (t.Kind != "" && t.Kind != model.KindFlow) {
+		return nil
+	}
+	have := make(map[string]bool, len(t.Tags)+len(d.AddTags))
+	for _, tag := range t.Tags {
+		have[strings.ToLower(tag)] = true
+	}
+	room := model.MaxTagsPerRow - len(t.Tags)
+	var out []string
+	for _, tag := range d.AddTags {
+		if len(out) >= room {
+			break
+		}
+		key := strings.ToLower(tag)
+		if have[key] {
+			continue
+		}
+		have[key] = true
+		out = append(out, tag)
+	}
+	return out
+}
+
+// TagsChanged reports whether applying d would add a tag to t.
+func (d Decision) TagsChanged(t *model.Transaction) bool {
+	return len(d.TagsToAdd(t)) > 0
+}
+
 // SameAs reports whether a row's stored categorization already reflects d:
 // the rule's category, the rule as provenance, its merchant rename, its
-// hide and its review mark. Re-applying such a row is a no-op.
+// hide, its review mark and its tags. Re-applying such a row is a no-op.
 func (d Decision) SameAs(t *model.Transaction) bool {
 	return t.CategoryID != nil && *t.CategoryID == d.CategoryID &&
 		t.CategorizationRuleID != nil && *t.CategorizationRuleID == d.RuleID &&
 		t.CategorizationMethod != nil && *t.CategorizationMethod == MethodRule &&
 		!d.MerchantChanged(t.MerchantName) &&
 		!d.HideChanged(t) &&
-		!d.ReviewChanged(t)
+		!d.ReviewChanged(t) &&
+		!d.TagsChanged(t)
 }
 
 // Compile turns stored rules into matcher-ready CompiledRule values. The
@@ -114,6 +151,9 @@ func Compile(rules []model.CategorizationRule) []CompiledRule {
 		}
 		c.Hide = r.HideMatches
 		c.MarkReviewed = r.MarkReviewed
+		if len(r.AddTags) > 0 {
+			c.AddTags = []string(r.AddTags)
+		}
 		if r.MatchType == "regex" {
 			re, err := regexp.Compile(r.Pattern)
 			if err != nil {
@@ -164,13 +204,13 @@ func Categorize(rules []CompiledRule, assetID int64, descriptionClean, descripti
 }
 
 func (r CompiledRule) decision() Decision {
-	return Decision{RuleID: r.ID, CategoryID: r.CategoryID, RenameMerchant: r.RenameMerchant, Hide: r.Hide, MarkReviewed: r.MarkReviewed}
+	return Decision{RuleID: r.ID, CategoryID: r.CategoryID, RenameMerchant: r.RenameMerchant, Hide: r.Hide, MarkReviewed: r.MarkReviewed, AddTags: r.AddTags}
 }
 
 // Apply runs Categorize and, when a rule matches, mutates tx in place to
 // reflect the decision: sets CategoryID, CategorizationMethod="rule",
-// CategorizationRuleID and, when the rule renames, hides or marks reviewed,
-// MerchantName, HiddenAt and ReviewedAt. Returns the decision and whether a rule matched.
+// CategorizationRuleID and, when the rule renames, hides, marks reviewed or
+// tags, MerchantName, HiddenAt, ReviewedAt and Tags. Returns the decision and whether a rule matched.
 // Caller is responsible for deciding whether to call Apply — typically only
 // when the row has no existing category.
 func Apply(tx *model.Transaction, rules []CompiledRule) (Decision, bool) {
@@ -191,8 +231,8 @@ func Apply(tx *model.Transaction, rules []CompiledRule) (Decision, bool) {
 	return d, true
 }
 
-// SetActions writes the decision's merchant rename, hide and review mark
-// onto tx, if any.
+// SetActions writes the decision's merchant rename, hide, review mark and
+// tags onto tx, if any.
 func (d Decision) SetActions(tx *model.Transaction) {
 	if d.RenameMerchant != nil {
 		v := *d.RenameMerchant
@@ -205,6 +245,11 @@ func (d Decision) SetActions(tx *model.Transaction) {
 	if d.ReviewChanged(tx) {
 		reviewed := now
 		tx.ReviewedAt = &reviewed
+	}
+	if add := d.TagsToAdd(tx); len(add) > 0 {
+		tags := make(model.Tags, 0, len(tx.Tags)+len(add))
+		tags = append(tags, tx.Tags...)
+		tx.Tags = append(tags, add...)
 	}
 }
 

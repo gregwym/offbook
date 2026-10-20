@@ -19,6 +19,9 @@ export type CategorizationRule = {
   // Marks every flow transaction this rule wins reviewed, so it skips the
   // Needs review inbox (#538). Never un-reviews.
   mark_reviewed?: boolean
+  // Tags added to every flow transaction this rule wins, skipping ones it
+  // already has (#546). Never removes a tag.
+  add_tags?: string[]
   created_at: string
   updated_at: string
 }
@@ -33,6 +36,8 @@ export type CreateRuleInput = {
   rename_merchant?: string
   hide_matches?: boolean
   mark_reviewed?: boolean
+  // [] clears the rule's tags on update (#546).
+  add_tags?: string[]
 }
 
 export type UpdateRuleInput = Partial<CreateRuleInput>
@@ -59,6 +64,8 @@ export type DraftPreview = {
   would_hide: number
   // Matched rows the draft would mark reviewed (#538).
   would_mark_reviewed: number
+  // Matched rows that would gain at least one of the draft's tags (#546).
+  would_tag: number
   skipped_manual: number
   samples: string[]
 }

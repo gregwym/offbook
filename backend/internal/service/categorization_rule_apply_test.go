@@ -681,3 +681,96 @@ func TestCategorizationRuleService_Apply_MarkReviewed(t *testing.T) {
 		t.Error("row un-reviewed after mark off, want kept reviewed")
 	}
 }
+
+// TestCategorizationRuleService_Apply_AddTags (#546): a tagging rule adds its
+// tags to every non-manual row it wins, reuses the user's existing spelling,
+// the draft preview counts them first, a re-run is a no-op, and clearing the
+// rule's tags never untags rows.
+func TestCategorizationRuleService_Apply_AddTags(t *testing.T) {
+	svc, userID, accountID, fixtureCat, g := newRuleApplySvc(t)
+	ctx := context.Background()
+
+	a := mkTxn(t, g, userID, accountID, withDescription("UBER TRIP MAY"))
+	b := mkTxn(t, g, userID, accountID, withDescription("UBER TRIP JUN"))
+	manual := mkTxn(t, g, userID, accountID, withDescription("UBER manual"), withManualCategory(fixtureCat))
+	other := mkTxn(t, g, userID, accountID, withDescription("SHELL GAS"))
+	// b already carries the tag in the user's own spelling.
+	if err := g.Model(&model.Transaction{}).Where("id = ?", b.ID).Update("tags", model.Tags{"Work-Travel"}).Error; err != nil {
+		t.Fatalf("seed tag: %v", err)
+	}
+
+	draft, err := svc.PreviewDraft(ctx, userID, service.DraftRuleInput{
+		Pattern: "UBER", MatchType: "contains", CategoryID: fixtureCat, Priority: 50, IsActive: true,
+		AddTags: []string{" work-travel ", "Reimbursable", "reimbursable"},
+	})
+	if err != nil {
+		t.Fatalf("PreviewDraft: %v", err)
+	}
+	if draft.Matched != 2 || draft.WouldTag != 2 || draft.SkippedManual != 1 {
+		t.Errorf("draft = %+v, want matched 2, would_tag 2, skipped_manual 1", draft)
+	}
+
+	if _, err := svc.Create(ctx, userID, service.CreateRuleInput{
+		Pattern: "UBER", MatchType: "contains", CategoryID: fixtureCat, AddTags: []string{strings.Repeat("x", service.MaxTagLength+1)},
+	}); !errors.Is(err, service.ErrInvalidTags) {
+		t.Errorf("Create with an over-long tag: err = %v, want ErrInvalidTags", err)
+	}
+
+	rule, err := svc.Create(ctx, userID, service.CreateRuleInput{
+		Pattern: "UBER", MatchType: "contains", CategoryID: fixtureCat, Priority: 50,
+		AddTags: []string{" work-travel ", "Reimbursable", "reimbursable"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.CategorizationRule{}, rule.ID) })
+	if got := strings.Join(rule.AddTags, ","); got != "Work-Travel,Reimbursable" {
+		t.Fatalf("stored add_tags = %q, want %q (normalized, user's spelling)", got, "Work-Travel,Reimbursable")
+	}
+
+	res, err := svc.Apply(ctx, userID, "")
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if res.Updated != 2 || res.SkippedManual != 1 {
+		t.Errorf("Apply = %+v, want updated 2, skipped_manual 1", res)
+	}
+	tags := func(id int64) string {
+		var got model.Transaction
+		if err := g.First(&got, id).Error; err != nil {
+			t.Fatalf("load %d: %v", id, err)
+		}
+		return strings.Join(got.Tags, ",")
+	}
+	for _, id := range []int64{a.ID, b.ID} {
+		if got := tags(id); got != "Work-Travel,Reimbursable" {
+			t.Errorf("txn %d tags = %q, want %q", id, got, "Work-Travel,Reimbursable")
+		}
+	}
+	if got := tags(other.ID); got != "" {
+		t.Errorf("non-matching row tags = %q, want none", got)
+	}
+	if got := tags(manual.ID); got != "" {
+		t.Errorf("manual row tags = %q, want untouched", got)
+	}
+
+	if res, _ = svc.Apply(ctx, userID, ""); res.Updated != 0 {
+		t.Errorf("re-Apply updated = %d, want 0 (idempotent)", res.Updated)
+	}
+
+	// Clearing the rule's tags keeps rows tagged; nothing for Apply to do.
+	none := []string{}
+	updated, err := svc.Update(ctx, userID, rule.ID, service.UpdateRuleInput{AddTags: &none})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(updated.AddTags) != 0 {
+		t.Errorf("add_tags after clear = %v, want []", updated.AddTags)
+	}
+	if res, _ = svc.Apply(ctx, userID, ""); res.Updated != 0 {
+		t.Errorf("Apply after clear updated = %d, want 0", res.Updated)
+	}
+	if got := tags(a.ID); got != "Work-Travel,Reimbursable" {
+		t.Errorf("row tags after clear = %q, want kept", got)
+	}
+}

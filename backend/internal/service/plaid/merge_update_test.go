@@ -308,3 +308,33 @@ func TestMergePlaidUpdate_PreservesTags(t *testing.T) {
 		t.Errorf("tags = %v, want [vacation reimbursable]", merged.Tags)
 	}
 }
+
+// TestMergePlaidUpdate_RuleAddTagsOnAddOnly (#546): a tagging rule tags a
+// newly added row, but a later modify (resync, pending→posted) keeps the
+// row's current tags — a tag the user removed stays removed.
+func TestMergePlaidUpdate_RuleAddTagsOnAddOnly(t *testing.T) {
+	rules := categorization.Compile([]model.CategorizationRule{
+		{ID: 7, CategoryID: 9, MatchType: "contains", Pattern: "UBER", IsActive: true, AddTags: model.Tags{"work-travel"}},
+	})
+	in := plaidsvc.PlaidTransaction{
+		PlaidTransactionID: "ptx-t", PlaidAccountID: "pa", Amount: decimal.RequireFromString("18.40"),
+		Name: "UBER TRIP", Date: "2026-05-15", Pending: true,
+	}
+	added, err := plaidsvc.MapPlaidTransaction(in, 1, 11, 1, nil, rules)
+	if err != nil {
+		t.Fatalf("MapPlaidTransaction: %v", err)
+	}
+	if len(added.Tags) != 1 || added.Tags[0] != "work-travel" {
+		t.Fatalf("added tags = %v, want [work-travel]", added.Tags)
+	}
+
+	added.Tags = model.Tags{} // the user removed the tag
+	in.Pending = false
+	merged, err := plaidsvc.MergePlaidUpdate(added, in, 11, 1, nil, rules)
+	if err != nil {
+		t.Fatalf("MergePlaidUpdate: %v", err)
+	}
+	if len(merged.Tags) != 0 {
+		t.Errorf("merged tags = %v, want [] (user's choice survives)", merged.Tags)
+	}
+}
