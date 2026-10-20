@@ -103,7 +103,7 @@ describe('RulesPage smoke', () => {
       http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
         bodies.push((await request.json()) as Record<string, unknown>)
         return HttpResponse.json({
-          data: { scanned: 40, matched: 3, would_change: 2, would_rename: 0, skipped_manual: 1, samples: ['WHOLEFDS #1', 'WHOLEFDS #2'] },
+          data: { scanned: 40, matched: 3, would_change: 2, would_rename: 0, would_hide: 0, skipped_manual: 1, samples: ['WHOLEFDS #1', 'WHOLEFDS #2'] },
         })
       }),
     )
@@ -136,7 +136,7 @@ describe('RulesPage smoke', () => {
       http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
         previews.push((await request.json()) as Record<string, unknown>)
         return HttpResponse.json({
-          data: { scanned: 10, matched: 2, would_change: 2, would_rename: 2, skipped_manual: 0, samples: ['AMZN MKTP US*2K4'] },
+          data: { scanned: 10, matched: 2, would_change: 2, would_rename: 2, would_hide: 0, skipped_manual: 0, samples: ['AMZN MKTP US*2K4'] },
         })
       }),
       http.post(`${API}/categorization-rules`, async ({ request }) => {
@@ -175,5 +175,60 @@ describe('RulesPage smoke', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(screen.queryByText('Renames to Amazon')).toBeNull())
     expect(patches[0]).toMatchObject({ rename_merchant: '' })
+  })
+
+  // #536: a rule can also hide its matches. The draft preview carries the
+  // flag and says how many rows would be hidden; saving sends it; the list
+  // marks the rule; unticking on edit sends false.
+  it('hides matching transactions from a rule, previews it, and turns it off on edit', async () => {
+    const previews: Record<string, unknown>[] = []
+    const creates: Record<string, unknown>[] = []
+    const patches: Record<string, unknown>[] = []
+    let stored = [...fx.rules]
+    server.use(
+      http.get(`${API}/categorization-rules`, () => HttpResponse.json({ data: stored, total: stored.length })),
+      http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        previews.push(body)
+        return HttpResponse.json({
+          data: { scanned: 10, matched: 3, would_change: 3, would_rename: 0, would_hide: body.hide_matches ? 3 : 0, skipped_manual: 0, samples: ['CASH SWEEP'] },
+        })
+      }),
+      http.post(`${API}/categorization-rules`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        creates.push(body)
+        const r = { ...fx.rule1, id: 3, pattern: 'SWEEP', hide_matches: true }
+        stored = [...stored, r]
+        return HttpResponse.json({ data: r }, { status: 201 })
+      }),
+      http.patch(`${API}/categorization-rules/:id`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        patches.push(body)
+        stored = stored.map((r) => (r.id === 3 ? { ...r, hide_matches: false } : r))
+        return HttpResponse.json({ data: stored.find((r) => r.id === 3) })
+      }),
+    )
+    renderPage(<RulesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
+    fireEvent.change(screen.getByPlaceholderText('e.g. WHOLEFDS'), { target: { value: 'SWEEP' } })
+    const select = screen.getAllByRole('combobox').find((el) => el.textContent?.includes('pick one'))!
+    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[1].value) } })
+    fireEvent.click(screen.getByLabelText(/Also hide matching transactions/))
+
+    expect(await screen.findByText(/3 would be hidden from spending and budgets/)).toBeTruthy()
+    expect(previews.at(-1)).toMatchObject({ pattern: 'SWEEP', hide_matches: true })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText('Hides matches')).toBeTruthy()
+    expect(creates[0]).toMatchObject({ pattern: 'SWEEP', hide_matches: true })
+
+    const row = screen.getByText('Hides matches').closest('tr')!
+    fireEvent.click(within(row).getByRole('button', { name: /edit/i }))
+    const box = screen.getByLabelText(/Also hide matching transactions/) as HTMLInputElement
+    expect(box.checked).toBe(true)
+    fireEvent.click(box)
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(screen.queryByText('Hides matches')).toBeNull())
+    expect(patches[0]).toMatchObject({ hide_matches: false })
   })
 })

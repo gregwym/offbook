@@ -13,6 +13,9 @@ export type CategorizationRule = {
   is_active: boolean
   // Merchant name written to every transaction this rule wins (#534).
   rename_merchant?: string | null
+  // Hides every flow transaction this rule wins from spending, budgets and
+  // merchant reports (#536). Never unhides.
+  hide_matches?: boolean
   created_at: string
   updated_at: string
 }
@@ -25,6 +28,7 @@ export type CreateRuleInput = {
   is_active?: boolean
   // Blank clears the rename on update (#534).
   rename_merchant?: string
+  hide_matches?: boolean
 }
 
 export type UpdateRuleInput = Partial<CreateRuleInput>
@@ -47,6 +51,8 @@ export type DraftPreview = {
   would_change: number
   // Matched rows whose merchant the draft's rename would change (#534).
   would_rename: number
+  // Matched rows the draft would hide (#536).
+  would_hide: number
   skipped_manual: number
   samples: string[]
 }

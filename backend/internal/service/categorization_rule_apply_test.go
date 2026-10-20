@@ -521,3 +521,83 @@ func TestCategorizationRuleService_Apply_RenameMerchant(t *testing.T) {
 		t.Errorf("long rename err = %v, want ErrRenameTooLong", err)
 	}
 }
+
+// TestCategorizationRuleService_Apply_HideMatches (#536): a hiding rule hides
+// every non-manual row it wins, the draft preview counts them first, a re-run
+// is a no-op, and turning hiding off never unhides.
+func TestCategorizationRuleService_Apply_HideMatches(t *testing.T) {
+	svc, userID, accountID, fixtureCat, g := newRuleApplySvc(t)
+	ctx := context.Background()
+
+	a := mkTxn(t, g, userID, accountID, withDescription("CASH SWEEP TO MMF"))
+	b := mkTxn(t, g, userID, accountID, withDescription("CASH SWEEP FROM MMF"))
+	manual := mkTxn(t, g, userID, accountID, withDescription("CASH SWEEP manual"), withManualCategory(fixtureCat))
+	other := mkTxn(t, g, userID, accountID, withDescription("SHELL GAS"))
+
+	draft, err := svc.PreviewDraft(ctx, userID, service.DraftRuleInput{
+		Pattern: "SWEEP", MatchType: "contains", CategoryID: fixtureCat, Priority: 50, IsActive: true, HideMatches: true,
+	})
+	if err != nil {
+		t.Fatalf("PreviewDraft: %v", err)
+	}
+	if draft.Matched != 2 || draft.WouldChange != 2 || draft.WouldHide != 2 || draft.SkippedManual != 1 {
+		t.Errorf("draft = %+v, want matched 2, would_change 2, would_hide 2, skipped_manual 1", draft)
+	}
+
+	rule, err := svc.Create(ctx, userID, service.CreateRuleInput{
+		Pattern: "SWEEP", MatchType: "contains", CategoryID: fixtureCat, Priority: 50, HideMatches: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.CategorizationRule{}, rule.ID) })
+	if !rule.HideMatches {
+		t.Fatal("stored hide_matches = false, want true")
+	}
+
+	res, err := svc.Apply(ctx, userID, "")
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if res.Updated != 2 || res.SkippedManual != 1 {
+		t.Errorf("Apply = %+v, want updated 2, skipped_manual 1", res)
+	}
+	hidden := func(id int64) bool {
+		var got model.Transaction
+		if err := g.First(&got, id).Error; err != nil {
+			t.Fatalf("load %d: %v", id, err)
+		}
+		return got.HiddenAt != nil
+	}
+	for _, id := range []int64{a.ID, b.ID} {
+		if !hidden(id) {
+			t.Errorf("txn %d visible, want hidden", id)
+		}
+	}
+	if hidden(manual.ID) {
+		t.Error("manual row hidden, want untouched")
+	}
+	if hidden(other.ID) {
+		t.Error("non-matching row hidden")
+	}
+
+	if res, _ = svc.Apply(ctx, userID, ""); res.Updated != 0 {
+		t.Errorf("re-Apply updated = %d, want 0 (idempotent)", res.Updated)
+	}
+
+	// Turning hiding off keeps rows hidden; nothing for Apply to do.
+	off := false
+	updated, err := svc.Update(ctx, userID, rule.ID, service.UpdateRuleInput{HideMatches: &off})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.HideMatches {
+		t.Error("hide_matches after update = true, want false")
+	}
+	if res, _ = svc.Apply(ctx, userID, ""); res.Updated != 0 {
+		t.Errorf("Apply after hide off updated = %d, want 0", res.Updated)
+	}
+	if !hidden(a.ID) {
+		t.Error("row unhidden after hide off, want kept hidden")
+	}
+}

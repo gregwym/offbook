@@ -20,10 +20,13 @@ type CategorizationRule struct {
 	AssetID *int64 `json:"asset_id,omitempty"`
 	// RenameMerchant, when non-nil, is written to merchant_name on every
 	// row this rule wins (#534). NULL leaves the merchant alone.
-	RenameMerchant *string        `json:"rename_merchant,omitempty"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
-	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
+	RenameMerchant *string `json:"rename_merchant,omitempty"`
+	// HideMatches hides the flow rows this rule wins from spending, income,
+	// budgets and merchant reports (#536). A rule never unhides.
+	HideMatches bool           `gorm:"not null;default:false" json:"hide_matches"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Category *Category `gorm:"foreignKey:CategoryID" json:"-"`
 	Asset    *Asset    `gorm:"foreignKey:AssetID" json:"-"`

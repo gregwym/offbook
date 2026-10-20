@@ -11,6 +11,7 @@ package categorization
 import (
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gregwym/offbook/backend/internal/model"
 )
@@ -33,8 +34,10 @@ type CompiledRule struct {
 	// RenameMerchant, when non-nil, replaces merchant_name on rows this
 	// rule wins (#534).
 	RenameMerchant *string
-	patternCI      string // pattern uppercased once, for contains/exact fast path
-	Re             *regexp.Regexp
+	// Hide, when true, hides the flow rows this rule wins (#536).
+	Hide      bool
+	patternCI string // pattern uppercased once, for contains/exact fast path
+	Re        *regexp.Regexp
 }
 
 // Decision is what Categorize returns when a rule matched.
@@ -44,6 +47,8 @@ type Decision struct {
 	// RenameMerchant is the winning rule's merchant rename, nil when it
 	// has none.
 	RenameMerchant *string
+	// Hide is true when the winning rule hides its matches (#536).
+	Hide bool
 }
 
 // MerchantChanged reports whether applying d would change merchantName.
@@ -51,14 +56,22 @@ func (d Decision) MerchantChanged(merchantName *string) bool {
 	return d.RenameMerchant != nil && (merchantName == nil || *merchantName != *d.RenameMerchant)
 }
 
+// HideChanged reports whether applying d would hide t: the rule hides, t is
+// a flow row (ledger rows like trades or adjustments are never hidden) and
+// t isn't hidden yet. A rule never unhides.
+func (d Decision) HideChanged(t *model.Transaction) bool {
+	return d.Hide && t.HiddenAt == nil && (t.Kind == "" || t.Kind == model.KindFlow)
+}
+
 // SameAs reports whether a row's stored categorization already reflects d:
-// the rule's category, the rule as provenance, and its merchant rename.
-// Re-applying such a row is a no-op.
+// the rule's category, the rule as provenance, its merchant rename and its
+// hide. Re-applying such a row is a no-op.
 func (d Decision) SameAs(t *model.Transaction) bool {
 	return t.CategoryID != nil && *t.CategoryID == d.CategoryID &&
 		t.CategorizationRuleID != nil && *t.CategorizationRuleID == d.RuleID &&
 		t.CategorizationMethod != nil && *t.CategorizationMethod == MethodRule &&
-		!d.MerchantChanged(t.MerchantName)
+		!d.MerchantChanged(t.MerchantName) &&
+		!d.HideChanged(t)
 }
 
 // Compile turns stored rules into matcher-ready CompiledRule values. The
@@ -86,6 +99,7 @@ func Compile(rules []model.CategorizationRule) []CompiledRule {
 				c.RenameMerchant = &v
 			}
 		}
+		c.Hide = r.HideMatches
 		if r.MatchType == "regex" {
 			re, err := regexp.Compile(r.Pattern)
 			if err != nil {
@@ -136,12 +150,13 @@ func Categorize(rules []CompiledRule, assetID int64, descriptionClean, descripti
 }
 
 func (r CompiledRule) decision() Decision {
-	return Decision{RuleID: r.ID, CategoryID: r.CategoryID, RenameMerchant: r.RenameMerchant}
+	return Decision{RuleID: r.ID, CategoryID: r.CategoryID, RenameMerchant: r.RenameMerchant, Hide: r.Hide}
 }
 
 // Apply runs Categorize and, when a rule matches, mutates tx in place to
 // reflect the decision: sets CategoryID, CategorizationMethod="rule",
-// CategorizationRuleID and, when the rule renames, MerchantName. Returns the decision and whether a rule matched.
+// CategorizationRuleID and, when the rule renames or hides, MerchantName and
+// HiddenAt. Returns the decision and whether a rule matched.
 // Caller is responsible for deciding whether to call Apply — typically only
 // when the row has no existing category.
 func Apply(tx *model.Transaction, rules []CompiledRule) (Decision, bool) {
@@ -158,15 +173,19 @@ func Apply(tx *model.Transaction, rules []CompiledRule) (Decision, bool) {
 	tx.CategoryID = &catID
 	tx.CategorizationRuleID = &ruleID
 	tx.CategorizationMethod = &method
-	d.SetMerchant(tx)
+	d.SetActions(tx)
 	return d, true
 }
 
-// SetMerchant writes the decision's merchant rename onto tx, if any.
-func (d Decision) SetMerchant(tx *model.Transaction) {
+// SetActions writes the decision's merchant rename and hide onto tx, if any.
+func (d Decision) SetActions(tx *model.Transaction) {
 	if d.RenameMerchant != nil {
 		v := *d.RenameMerchant
 		tx.MerchantName = &v
+	}
+	if d.HideChanged(tx) {
+		now := time.Now().UTC()
+		tx.HiddenAt = &now
 	}
 }
 

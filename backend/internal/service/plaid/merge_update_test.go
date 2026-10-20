@@ -215,3 +215,33 @@ func TestMergePlaidUpdate_RuleRenameSurvivesModify(t *testing.T) {
 		t.Errorf("merged amount = %s, want -12.99", merged.Amount)
 	}
 }
+
+// TestMergePlaidUpdate_RuleHideOnAddOnly (#536): a hiding rule hides a newly
+// added row, but a later modify (resync, pending→posted) keeps whatever the
+// row's hidden state is now — a row the user unhid stays visible.
+func TestMergePlaidUpdate_RuleHideOnAddOnly(t *testing.T) {
+	rules := categorization.Compile([]model.CategorizationRule{
+		{ID: 6, CategoryID: 9, MatchType: "contains", Pattern: "SWEEP", IsActive: true, HideMatches: true},
+	})
+	in := plaidsvc.PlaidTransaction{
+		PlaidTransactionID: "ptx-h", PlaidAccountID: "pa", Amount: decimal.RequireFromString("500"),
+		Name: "CASH SWEEP TO MMF", Date: "2026-05-16", Pending: true,
+	}
+	added, err := plaidsvc.MapPlaidTransaction(in, 1, 11, 1, nil, rules)
+	if err != nil {
+		t.Fatalf("MapPlaidTransaction: %v", err)
+	}
+	if added.HiddenAt == nil {
+		t.Fatal("added row visible, want hidden by rule")
+	}
+
+	added.HiddenAt = nil // the user unhid it
+	in.Pending = false
+	merged, err := plaidsvc.MergePlaidUpdate(added, in, 11, 1, nil, rules)
+	if err != nil {
+		t.Fatalf("MergePlaidUpdate: %v", err)
+	}
+	if merged.HiddenAt != nil {
+		t.Errorf("merged hidden_at = %v, want nil (user's unhide survives)", merged.HiddenAt)
+	}
+}

@@ -48,8 +48,10 @@ type CreateRuleInput struct {
 	// RenameMerchant, when non-blank, is written to merchant_name on every
 	// row the rule wins (#534). Blank means no rename.
 	RenameMerchant *string
-	Priority       int
-	IsActive       *bool
+	// HideMatches hides the flow rows the rule wins (#536).
+	HideMatches bool
+	Priority    int
+	IsActive    *bool
 }
 
 // UpdateRuleInput is a sparse patch. Nil pointer = leave alone.
@@ -63,8 +65,11 @@ type UpdateRuleInput struct {
 	ClearAssetID bool
 	// RenameMerchant sets the rename; a blank string clears it (#534).
 	RenameMerchant *string
-	Priority       *int
-	IsActive       *bool
+	// HideMatches turns hiding on or off (#536). Turning it off leaves
+	// already-hidden rows hidden.
+	HideMatches *bool
+	Priority    *int
+	IsActive    *bool
 }
 
 // normRename trims a rename and maps blank to nil (no rename).
@@ -121,6 +126,7 @@ func (s *CategorizationRuleService) Create(ctx context.Context, userID int64, in
 		Priority:       in.Priority,
 		IsActive:       true,
 		RenameMerchant: normRename(in.RenameMerchant),
+		HideMatches:    in.HideMatches,
 	}
 	if in.IsActive != nil {
 		r.IsActive = *in.IsActive
@@ -174,6 +180,9 @@ func (s *CategorizationRuleService) Update(ctx context.Context, userID, id int64
 	}
 	if in.RenameMerchant != nil {
 		r.RenameMerchant = normRename(in.RenameMerchant)
+	}
+	if in.HideMatches != nil {
+		r.HideMatches = *in.HideMatches
 	}
 	if in.Priority != nil {
 		r.Priority = *in.Priority
@@ -301,7 +310,7 @@ func (s *CategorizationRuleService) apply(ctx context.Context, userID int64, sco
 				row.CategoryID = &catID
 				row.CategorizationRuleID = &ruleID
 				row.CategorizationMethod = &method
-				d.SetMerchant(row)
+				d.SetActions(row)
 				if err := txRepo.Update(ctx, row); err != nil {
 					return fmt.Errorf("update transaction %d: %w", row.ID, err)
 				}
@@ -329,8 +338,10 @@ type DraftRuleInput struct {
 	AssetID    *int64
 	// RenameMerchant as on CreateRuleInput (#534).
 	RenameMerchant *string
-	Priority       int
-	IsActive       bool
+	// HideMatches as on CreateRuleInput (#536).
+	HideMatches bool
+	Priority    int
+	IsActive    bool
 }
 
 // DraftPreview reports a draft rule's impact against the user's existing
@@ -340,12 +351,14 @@ type DraftPreview struct {
 	// Matched counts rows where the draft is the winning rule (after priority
 	// ordering against the user's other rules), manual picks excluded.
 	Matched int `json:"matched"`
-	// WouldChange is the subset of Matched whose stored category, rule or
-	// merchant (when the draft renames) differs.
+	// WouldChange is the subset of Matched whose stored category, rule,
+	// merchant (when the draft renames) or hidden state (when it hides) differs.
 	WouldChange int `json:"would_change"`
 	// WouldRename is the subset of Matched whose merchant the draft's rename
 	// would change (#534).
-	WouldRename   int `json:"would_rename"`
+	WouldRename int `json:"would_rename"`
+	// WouldHide is the subset of Matched the draft would hide (#536).
+	WouldHide     int `json:"would_hide"`
 	SkippedManual int `json:"skipped_manual"`
 	// Samples are up to draftSampleLimit descriptions of matched rows.
 	Samples []string `json:"samples"`
@@ -370,6 +383,7 @@ func (s *CategorizationRuleService) PreviewDraft(ctx context.Context, userID int
 		IsActive:       in.IsActive,
 		ID:             math.MaxInt64, // new rules get the highest id, so lose priority ties
 		RenameMerchant: normRename(in.RenameMerchant),
+		HideMatches:    in.HideMatches,
 	}
 	if in.RuleID != nil {
 		if _, err := s.repo.GetByID(ctx, userID, *in.RuleID); err != nil {
@@ -429,6 +443,9 @@ func (s *CategorizationRuleService) PreviewDraft(ctx context.Context, userID int
 			}
 			if d.MerchantChanged(row.MerchantName) {
 				out.WouldRename++
+			}
+			if d.HideChanged(row) {
+				out.WouldHide++
 			}
 			if d.SameAs(row) {
 				continue
