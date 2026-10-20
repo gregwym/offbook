@@ -699,7 +699,7 @@ function BlockedUndoNote({ blocker }: { blocker?: ImportHistoryEntry }) {
   return (
     <p className="mt-0.5 text-xs text-gray-600">
       To undo this one, first undo{' '}
-      <span className="font-medium text-gray-800 break-all">{blocker ? `“${name}”` : name}</span>
+      <span className="font-medium text-gray-800 break-words">{blocker ? `“${name}”` : name}</span>
       {blocker && <> ({new Date(blocker.imported_at).toLocaleDateString()})</>} — it set this account’s balance
       after this statement.
     </p>

@@ -88,8 +88,12 @@ test.describe('undo statement import', () => {
     await page.goto('/accounts')
     await page.getByRole('button', { name: 'Import transactions' }).first().click()
     const history = page.getByRole('region', { name: 'Import history' })
-    const mayEntry = history.getByRole('listitem').filter({ hasText: 'may-statement.csv' })
-    const juneEntry = history.getByRole('listitem').filter({ hasText: 'june-statement.csv' })
+    // Match on the entry's own file-name heading: the blocked note in May's
+    // entry also mentions june-statement.csv.
+    const entry = (name: string) =>
+      history.getByRole('listitem').filter({ has: page.getByText(name, { exact: true }) })
+    const mayEntry = entry('may-statement.csv')
+    const juneEntry = entry('june-statement.csv')
     await expect(mayEntry).toContainText('To undo this one, first undo “june-statement.csv”')
     await expect(mayEntry.getByRole('button', { name: 'Undo import' })).toHaveCount(0)
     await expect(juneEntry.getByRole('button', { name: 'Undo import' })).toBeVisible()
