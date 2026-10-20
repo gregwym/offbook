@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ArrowRightLeft, Check, CheckCheck, ChevronDown, ChevronRight, Eye, EyeOff, Plus, Scissors, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
+import { ArrowRightLeft, Check, CheckCheck, ChevronDown, ChevronRight, Eye, EyeOff, Plus, Scissors, SlidersHorizontal, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { DateDisplay } from '../components/DateDisplay'
@@ -57,6 +57,13 @@ export function TransactionsPage() {
   const [adding, setAdding] = useState(false)
   const [importing, setImporting] = useState(false)
   const filtersActive = Boolean(accountID || categoryID || from || to || searchInput)
+  // Below md only Search is shown up front; Account/Category/From/To sit
+  // behind a "Filters" toggle so the list isn't pushed below the fold (#518).
+  // Starts open when one of them is already set, so a live filter is never
+  // hidden. Desktop ignores this and always shows all five inline.
+  const moreFilterCount = [accountID, categoryID, from, to].filter(Boolean).length
+  const [moreFiltersOpen, setMoreFiltersOpen] = useState(moreFilterCount > 0)
+  const moreFilterClass = moreFiltersOpen ? 'block' : 'hidden md:block'
   const clearFilters = () => {
     setAccountID('')
     setCategoryID('')
@@ -388,26 +395,42 @@ export function TransactionsPage() {
             <span className="text-gray-500">· {transferCandidates.length}</span>
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => setMoreFiltersOpen((v) => !v)}
+          aria-expanded={moreFiltersOpen}
+          aria-controls="transaction-filters"
+          className={[
+            'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium md:hidden',
+            moreFilterCount > 0
+              ? 'border-indigo-300 bg-indigo-50 text-indigo-800'
+              : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
+          ].join(' ')}
+        >
+          <SlidersHorizontal size={12} />
+          Filters
+          {moreFilterCount > 0 && <span className="text-indigo-700">· {moreFilterCount}</span>}
+        </button>
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-5">
-        <Field label="Account">
+      <div id="transaction-filters" className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-5">
+        <Field label="Account" className={moreFilterClass}>
           <select className={inputClass} value={accountID} onChange={(e) => setAccountID(e.target.value)}>
             <option value="">All</option>
             {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </Field>
-        <Field label="Category">
+        <Field label="Category" className={moreFilterClass}>
           <select className={inputClass} value={categoryID} onChange={(e) => setCategoryID(e.target.value)}>
             <option value="">All</option>
             <option value="null">Uncategorized</option>
             {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </Field>
-        <Field label="From">
+        <Field label="From" className={moreFilterClass}>
           <input type="date" className={inputClass} value={from} onChange={(e) => setFrom(e.target.value)} />
         </Field>
-        <Field label="To">
+        <Field label="To" className={moreFilterClass}>
           <input type="date" className={inputClass} value={to} onChange={(e) => setTo(e.target.value)} />
         </Field>
         <Field label="Search">
@@ -1206,9 +1229,9 @@ function AddTransactionModal({ accounts, categories, onClose, onSubmit }: AddPro
 
 const inputClass = 'w-full rounded border border-gray-300 px-2 py-1 text-sm'
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, className = 'block', children }: { label: string; className?: string; children: ReactNode }) {
   return (
-    <label className="block text-sm">
+    <label className={`${className} text-sm`}>
       <span className="mb-1 block text-xs font-medium text-gray-600">{label}</span>
       {children}
     </label>
