@@ -259,6 +259,16 @@ func TestSpending_SurfacesAgreeOnRefundsAndHiddenRows(t *testing.T) {
 		eq(t, "outflow", months[0].Outflow, wantTotal)
 		eq(t, "inflow", months[0].Inflow, salary)
 	})
+	t.Run("top merchants", func(t *testing.T) {
+		// Every seeded row has no merchant label, so they all group under
+		// "Unknown": the refund nets in and the hidden row and card payment
+		// stay out, exactly as on the other surfaces (#532).
+		items, err := dash.TopMerchants(ctx, userID, day(1), time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), 10)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("items=%+v err=%v", items, err)
+		}
+		eq(t, "merchant total", items[0].Amount, wantTotal)
+	})
 	t.Run("budget actual", func(t *testing.T) {
 		budgets := service.NewBudgetService(
 			repository.NewBudgetRepository(g),

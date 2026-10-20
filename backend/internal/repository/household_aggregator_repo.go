@@ -697,7 +697,8 @@ func (r *householdAggregatorRepo) CategoryTrend(ctx context.Context, accountIDs 
 	return out, nil
 }
 
-// TopMerchants mirrors dashboardRepo's TopMerchants, scoped by account set.
+// TopMerchants mirrors dashboardRepo's TopMerchants (spend_lines, refunds
+// netted, proposed/category transfers excluded — #532), scoped by account set.
 func (r *householdAggregatorRepo) TopMerchants(ctx context.Context, accountIDs []int64, from, to time.Time, limit int) ([]MerchantSpendItem, error) {
 	if len(accountIDs) == 0 {
 		return nil, nil
@@ -714,19 +715,20 @@ func (r *householdAggregatorRepo) TopMerchants(ctx context.Context, accountIDs [
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT
 			COALESCE(NULLIF(t.merchant_name, ''), NULLIF(t.description_clean, ''), t.description, 'Unknown') AS merchant,
-			COALESCE(SUM(-t.amount), 0)::text AS amount,
-			COUNT(*)                          AS count
-		FROM transactions t
-		WHERE t.deleted_at IS NULL
-		  AND t.account_id IN ?
-		  AND t.is_transfer = FALSE
-		  AND t.hidden_at IS NULL
-		  AND t.kind = 'flow'
-		  AND t.amount < 0
-		  AND t.transaction_date >= ?
-		  AND t.transaction_date <  ?
+			SUM(-s.amount)::text AS amount,
+			COUNT(DISTINCT s.id) AS count
+		FROM spend_lines s
+		JOIN transactions t ON t.id = s.id
+		WHERE s.deleted_at IS NULL
+		  AND s.account_id IN ?
+		  AND s.is_transfer = FALSE
+		  AND s.kind = 'flow'
+		  AND (s.amount < 0 OR s.is_refund)
+		  AND s.transaction_date >= ?
+		  AND s.transaction_date <  ?
 		GROUP BY merchant
-		ORDER BY SUM(-t.amount) DESC
+		HAVING SUM(-s.amount) > 0
+		ORDER BY SUM(-s.amount) DESC
 		LIMIT ?
 	`, accountIDs, from, to, limit).Scan(&rows).Error
 	if err != nil {

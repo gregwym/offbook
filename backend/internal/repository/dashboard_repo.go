@@ -476,11 +476,14 @@ func (r *dashboardRepo) CategoryTrend(ctx context.Context, userID int64, now tim
 	return out, nil
 }
 
-// TopMerchants: outflows only, transfers excluded, grouped by merchant over
-// [from, to). Merchant resolves from merchant_name, falling back to
-// description_clean then the raw description — the same precedence Plaid
-// sync + manual entry populate, so every spending row lands under some
-// label even when merchant_name is unset (manual/CSV rows).
+// TopMerchants: net spend grouped by merchant over [from, to). It reads
+// spend_lines with SpendByCategory's predicate, so refunds net against
+// their merchant and hidden/transfer rows drop out exactly as they do for
+// categories and budgets (#532); merchants with no net spend are omitted.
+// Merchant resolves from merchant_name, falling back to description_clean
+// then the raw description — the same precedence Plaid sync + manual entry
+// populate, so every spending row lands under some label even when
+// merchant_name is unset (manual/CSV rows).
 func (r *dashboardRepo) TopMerchants(ctx context.Context, userID int64, from, to time.Time, limit int) ([]MerchantSpendItem, error) {
 	if limit <= 0 {
 		limit = 10
@@ -494,21 +497,20 @@ func (r *dashboardRepo) TopMerchants(ctx context.Context, userID int64, from, to
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT
 			COALESCE(NULLIF(t.merchant_name, ''), NULLIF(t.description_clean, ''), t.description, 'Unknown') AS merchant,
-			COALESCE(SUM(-t.amount), 0)::text AS amount,
-			COUNT(*)                          AS count
-		FROM transactions t
-		WHERE t.deleted_at IS NULL
-		  AND t.user_id = ?
-		  AND t.is_transfer = FALSE
-		  AND NOT txn_is_proposed_transfer(t)
-		  AND NOT txn_in_transfer_category(t.category_id)
-		  AND t.hidden_at IS NULL
-		  AND t.kind = 'flow'
-		  AND t.amount < 0
-		  AND t.transaction_date >= ?
-		  AND t.transaction_date <  ?
+			SUM(-s.amount)::text AS amount,
+			COUNT(DISTINCT s.id) AS count
+		FROM spend_lines s
+		JOIN transactions t ON t.id = s.id
+		WHERE s.deleted_at IS NULL
+		  AND s.user_id = ?
+		  AND s.is_transfer = FALSE
+		  AND s.kind = 'flow'
+		  AND (s.amount < 0 OR s.is_refund)
+		  AND s.transaction_date >= ?
+		  AND s.transaction_date <  ?
 		GROUP BY merchant
-		ORDER BY SUM(-t.amount) DESC
+		HAVING SUM(-s.amount) > 0
+		ORDER BY SUM(-s.amount) DESC
 		LIMIT ?
 	`, userID, from, to, limit).Scan(&rows).Error
 	if err != nil {

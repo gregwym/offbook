@@ -687,6 +687,60 @@ func TestAggregator_TopMerchants_PrivacyAndGrouping(t *testing.T) {
 	}
 }
 
+// TestAggregator_TopMerchants_NetsRefundsAndSkipsProposedTransfers (#532):
+// household top merchants agree with spend_lines — a refund nets against its
+// merchant, a fully refunded merchant drops off, and an unconfirmed transfer
+// pair between two shared accounts never counts as merchant spend.
+func TestAggregator_TopMerchants_NetsRefundsAndSkipsProposedTransfers(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	ownerID := seedUser(t, g, "merch-refund-owner")
+	hh := seedHouseholdRow(t, g, ownerID, "MerchRefund", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+
+	checking := seedAccount(t, g, ownerID, "merch-refund-checking")
+	card := seedAccount(t, g, ownerID, "merch-refund-card")
+	setShare(t, g, checking.ID, hh.ID, model.VisibilityBalanceAndTxns)
+	setShare(t, g, card.ID, hh.ID, model.VisibilityBalanceAndTxns)
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	cat := &model.Category{Name: "MerchRefundCat-" + suffix, Slug: "merch-refund-cat-" + suffix}
+	if err := g.Create(cat).Error; err != nil {
+		t.Fatalf("seed category: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, cat.ID) })
+
+	when := time.Now().Add(-time.Hour)
+	seed := func(accountID int64, merchant, amount string, catID *int64) {
+		t.Helper()
+		m := merchant
+		tx := &model.Transaction{
+			UserID: ownerID, AccountID: accountID, CategoryID: catID, MerchantName: &m,
+			Amount: decimal.RequireFromString(amount), Source: "manual", TransactionDate: when,
+		}
+		if err := g.Create(tx).Error; err != nil {
+			t.Fatalf("seed txn: %v", err)
+		}
+		t.Cleanup(func() { g.Unscoped().Delete(&model.Transaction{}, tx.ID) })
+	}
+	seed(card.ID, "OUTDOORCO", "-120.00", &cat.ID)
+	seed(card.ID, "OUTDOORCO", "20.00", &cat.ID) // partial refund
+	seed(card.ID, "RETURNSHOP", "-30.00", &cat.ID)
+	seed(card.ID, "RETURNSHOP", "30.00", &cat.ID) // fully refunded
+	// Card payment the user hasn't confirmed: opposite amounts across two
+	// accounts on the same day → proposed transfer, excluded from spending.
+	seed(checking.ID, "CARD PAYMENT", "-777.00", nil)
+	seed(card.ID, "CARD PAYMENT", "777.00", nil)
+
+	items, err := agg.TopMerchants(ctx, hh.ID, time.Time{}, time.Time{}, 10)
+	if err != nil {
+		t.Fatalf("TopMerchants: %v", err)
+	}
+	if len(items) != 1 || items[0].Merchant != "OUTDOORCO" || items[0].Amount != "100" || items[0].Count != 2 {
+		t.Errorf("items = %+v, want only {OUTDOORCO 100 2}", items)
+	}
+}
+
 // TestAggregator_TopMerchants_InGraceExcluded covers (c) for TopMerchants.
 func TestAggregator_TopMerchants_InGraceExcluded(t *testing.T) {
 	agg, g := newAggregator(t)

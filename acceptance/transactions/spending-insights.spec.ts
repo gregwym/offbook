@@ -5,7 +5,8 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 // Browser regression for the Insights spending band (#456): ordinary spend
 // must render as a positive amount with a bar, refunds net against their
 // category, and an unconfirmed transfer pair must not count as spending.
-// Throwaway user; runs under both desktop and mobile projects.
+// Top merchants (#532) must agree: the refund nets against its merchant and
+// the transfer legs never appear. Throwaway user; runs under both desktop and mobile projects.
 
 test.describe('insights spending band', () => {
   test('shows positive spend, nets refunds, excludes transfers', async ({ page }, testInfo) => {
@@ -26,13 +27,13 @@ test.describe('insights spending band', () => {
     const now = new Date()
     const day = (n: number) =>
       `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(n).padStart(2, '0')}`
-    const tx = (account_id: number, amount: string, description: string, d: number, category_id?: number) =>
+    const tx = (account_id: number, amount: string, description: string, d: number, category_id?: number, merchant_name?: string) =>
       api(cookie, '/transactions', {
-        account_id, amount, description, transaction_date: day(d), source: 'csv', category_id,
+        account_id, amount, description, transaction_date: day(d), source: 'csv', category_id, merchant_name,
       })
     await tx(a, '3200.00', 'QA Salary', 1, cat('income'))
-    await tx(a, '-100.00', 'QA Grocer', 2, cat('groceries'))
-    await tx(a, '30.00', 'QA Grocer refund', 3, cat('groceries'))
+    await tx(a, '-100.00', 'QA Grocer', 2, cat('groceries'), 'QA Grocer')
+    await tx(a, '30.00', 'QA Grocer refund', 3, cat('groceries'), 'QA Grocer')
     await tx(a, '-60.00', 'QA Gas station', 4, cat('gas'))
     await tx(a, '-500.00', 'QA Move out', 5)
     await tx(b, '500.00', 'QA Move in', 5)
@@ -55,6 +56,22 @@ test.describe('insights spending band', () => {
     // The unconfirmed 500 transfer pair is not spending.
     await expect(page.getByText(/spending:/i).first()).toContainText('130.00')
     await expect(page.getByText(/spending:/i).first()).not.toContainText('630.00')
+
+    // Top merchants nets the refund (100 - 30 = 70, two rows) and lists
+    // neither the salary nor the transfer legs, so its rows add up to the
+    // same 130.00 spending as the headline.
+    const merchants = band.locator('div', { has: page.getByRole('heading', { name: 'Top merchants' }) }).last()
+    const grocer = merchants.getByRole('listitem').filter({ hasText: 'QA Grocer' })
+    await expect(grocer).toHaveCount(1)
+    await expect(grocer).toContainText('×2')
+    await expect(grocer).toContainText('70.00')
+    await expect(grocer).not.toContainText('100.00')
+    await expect(merchants.getByRole('listitem').filter({ hasText: 'QA Gas station' })).toContainText('60.00')
+    await expect(merchants.getByRole('listitem')).toHaveCount(2)
+    await merchants.scrollIntoViewIfNeeded()
+    await testInfo.attach(`${testInfo.project.name}-top-merchants`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
     await expectNoOverflow(page)
   })
 })
