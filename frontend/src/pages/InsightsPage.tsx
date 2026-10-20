@@ -63,6 +63,8 @@ export function InsightsPage() {
     )
   }
 
+  const freshSignup = result.state === 'ready' && isFreshSignup(result.data)
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
@@ -74,17 +76,21 @@ export function InsightsPage() {
               : 'Net worth · allocation · spending · budgets · goals — at a glance.'}
           </p>
         </div>
-        <div className="flex shrink-0 flex-wrap items-start gap-2">
-          <button
-            type="button"
-            onClick={() => setSettingPrice(true)}
-            title="Set a price yourself for an asset no provider covers — a private fund, obscure ticker, or collectible."
-            className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-          >
-            Set price
-          </button>
-          <RefreshPricesButton onRefreshed={result.reload} />
-        </div>
+        {/* A brand-new user has no assets to price (#520): keep the first
+            run to the single "add your first account" call to action. */}
+        {!freshSignup && (
+          <div className="flex shrink-0 flex-wrap items-start gap-2">
+            <button
+              type="button"
+              onClick={() => setSettingPrice(true)}
+              title="Set a price yourself for an asset no provider covers — a private fund, obscure ticker, or collectible."
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              Set price
+            </button>
+            <RefreshPricesButton onRefreshed={result.reload} />
+          </div>
+        )}
       </div>
 
       {result.state === 'loading' && (
@@ -125,7 +131,7 @@ function InsightsBody({
   // Personal fresh-signup state: no accounts at all → single primary CTA
   // per v6 §02 A2, instead of five empty bands. Household scope keeps its
   // existing "share an account" empty state on the AccountsBand.
-  if (data.scope === 'personal' && data.accounts.length === 0) {
+  if (isFreshSignup(data)) {
     return <FreshSignupEmpty />
   }
 
@@ -185,6 +191,10 @@ function RefreshPricesButton({ onRefreshed }: { onRefreshed: () => void }) {
       {error && <span className="text-[11px] text-red-600">{error}</span>}
     </div>
   )
+}
+
+function isFreshSignup(data: InsightsData): boolean {
+  return data.scope === 'personal' && data.accounts.length === 0
 }
 
 function FreshSignupEmpty() {

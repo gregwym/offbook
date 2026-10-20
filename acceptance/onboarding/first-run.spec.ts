@@ -27,6 +27,7 @@ test.describe('first run', () => {
     // Empty Insights: one clear call to action, no error.
     await page.goto('/insights')
     await expect(page.getByRole('heading', { name: 'Add your first account' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /refresh prices/i })).toHaveCount(0)
     await expectNoOverflow(page)
     const cta = page.getByRole('link', { name: /add your first account/i }).first()
     await expectInViewport(page, cta)
