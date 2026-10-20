@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import * as fx from '../test/fixtures'
 import { server } from '../test/server'
 import { expectHealthySmoke, renderPage, resetStores } from '../test/testUtils'
+import { useTransactionsStore } from '../store/transactionsStore'
 import { TransactionsPage } from './TransactionsPage'
 
 const API = '/api/v1'
@@ -283,5 +284,39 @@ describe('TransactionsPage unpaired transfer chip (#463)', () => {
     expect(await screen.findByText('No transactions match these filters.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /clear filters/i }))
     expect(await screen.findByText('No transactions yet.')).toBeInTheDocument()
+  })
+})
+
+// #518: on mobile only Search shows up front; Account/Category/From/To sit
+// behind a Filters toggle (md:hidden) so the list stays above the fold.
+describe('TransactionsPage mobile filter toggle (#518)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('keeps secondary filters collapsed below md until the toggle opens them', async () => {
+    renderPage(<TransactionsPage />)
+    await expectHealthySmoke()
+    const toggle = screen.getByRole('button', { name: /^filters/i })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).toHaveClass('md:hidden')
+    const fromField = screen.getByText('From', { selector: 'span' }).closest('label')!
+    expect(fromField).toHaveClass('hidden', 'md:block')
+    expect(screen.getByPlaceholderText(/description or merchant/i).closest('label')).toHaveClass('block')
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(fromField).toHaveClass('block')
+    expect(fromField).not.toHaveClass('hidden')
+
+    fireEvent.change(fromField.querySelector('input')!, { target: { value: '2026-01-01' } })
+    expect(toggle).toHaveTextContent('· 1')
+  })
+
+  it('starts open when a secondary filter is already set', async () => {
+    useTransactionsStore.setState({ filter: { account_id: 1 } })
+    renderPage(<TransactionsPage />)
+    await expectHealthySmoke()
+    expect(screen.getByRole('button', { name: /^filters/i })).toHaveAttribute('aria-expanded', 'true')
   })
 })
