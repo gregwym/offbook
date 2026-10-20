@@ -400,10 +400,11 @@ test.describe('rule adds tags', () => {
     const fresh = (await tx('QATAGR UBER TRIP 3', '-11.00')).data
     expect(fresh.tags).toEqual(['Work trip', 'reimbursable'])
 
-    // The Transactions tag filter shows exactly the rule's matches.
+    // A tag chip filters the list to exactly the rule's matches (the filter
+    // panel itself is collapsed on mobile, #518).
     await page.goto('/transactions')
-    const tagFilter = page.locator('label', { hasText: /^Tag/ }).locator('select')
-    await tagFilter.selectOption('reimbursable')
+    await page.getByRole('button', { name: 'Show transactions tagged reimbursable' }).first().click()
+    await expect(page.locator('label', { hasText: /^Tag/ }).locator('select')).toHaveValue('reimbursable')
     await expect(page.getByText(/QATAGR UBER TRIP/).locator('visible=true')).toHaveCount(3)
     await expect(page.getByText('QATAGR Corner shop').locator('visible=true')).toHaveCount(0)
     await expectNoOverflow(page)
