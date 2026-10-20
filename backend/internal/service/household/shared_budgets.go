@@ -15,20 +15,22 @@ import (
 // Same shape as the personal-budget input minus the owner (household_id is
 // derived from the path).
 type SharedBudgetInput struct {
-	CategoryID int64
-	Period     string
-	Amount     decimal.Decimal
-	Rollover   *bool
-	IsActive   *bool
+	CategoryID    int64
+	Period        string
+	Amount        decimal.Decimal
+	Rollover      *bool
+	RolloverStart *decimal.Decimal
+	IsActive      *bool
 }
 
 // UpdateSharedBudgetInput is a sparse patch.
 type UpdateSharedBudgetInput struct {
-	CategoryID *int64
-	Period     *string
-	Amount     *decimal.Decimal
-	Rollover   *bool
-	IsActive   *bool
+	CategoryID    *int64
+	Period        *string
+	Amount        *decimal.Decimal
+	Rollover      *bool
+	RolloverStart *decimal.Decimal
+	IsActive      *bool
 }
 
 // Budget errors are aliases of the unified budget service's errors (ADR-0018):
@@ -40,6 +42,7 @@ var (
 	ErrUnknownCategory       = service.ErrUnknownCategory
 	ErrBudgetNotFound        = service.ErrBudgetNotFound
 	ErrDuplicateActiveBudget = service.ErrDuplicateActiveBudget
+	ErrInvalidRolloverStart  = service.ErrInvalidRolloverStart
 )
 
 // WithSharedBudgets wires the unified budget service used for household-owned
@@ -57,11 +60,12 @@ func (s *Service) CreateSharedBudget(ctx context.Context, userID, householdID in
 		return nil, err
 	}
 	return s.budgets.Create(ctx, repository.HouseholdOwner(householdID), service.CreateBudgetInput{
-		CategoryID: in.CategoryID,
-		Period:     in.Period,
-		Amount:     in.Amount,
-		Rollover:   in.Rollover,
-		IsActive:   in.IsActive,
+		CategoryID:    in.CategoryID,
+		Period:        in.Period,
+		Amount:        in.Amount,
+		Rollover:      in.Rollover,
+		RolloverStart: in.RolloverStart,
+		IsActive:      in.IsActive,
 	})
 }
 
@@ -83,11 +87,12 @@ func (s *Service) UpdateSharedBudget(ctx context.Context, userID, householdID, i
 		return nil, err
 	}
 	return s.budgets.Update(ctx, repository.HouseholdOwner(householdID), id, service.UpdateBudgetInput{
-		CategoryID: in.CategoryID,
-		Period:     in.Period,
-		Amount:     in.Amount,
-		Rollover:   in.Rollover,
-		IsActive:   in.IsActive,
+		CategoryID:    in.CategoryID,
+		Period:        in.Period,
+		Amount:        in.Amount,
+		Rollover:      in.Rollover,
+		RolloverStart: in.RolloverStart,
+		IsActive:      in.IsActive,
 	})
 }
 

@@ -461,3 +461,109 @@ func TestBudgetService_Spend_Rollover(t *testing.T) {
 		t.Errorf("rollover off: carry=%s remaining=%s, want 0/70", view.Carryover, view.Remaining)
 	}
 }
+
+// TestBudgetService_Spend_RolloverStart: a starting balance seeds the
+// carryover in the creation period, then folds through completed periods
+// under the usual floor-at-zero policy; it is ignored while rollover is off
+// and must be >= 0. Clock = 2026-05-15.
+func TestBudgetService_Spend_RolloverStart(t *testing.T) {
+	svc, userID, categoryID, g := newBudgetSvc(t)
+	ctx := context.Background()
+	owner := repository.UserOwner(userID)
+
+	suffix := time.Now().Format("150405.000000")
+	acc := &model.Account{
+		UserID: userID, Name: "BudgetRolloverStart-" + suffix, InstitutionSlug: "fixture",
+		AccountType: "checking", Currency: "USD",
+	}
+	if err := g.Create(acc).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("account_id = ?", acc.ID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, acc.ID)
+	})
+	cat := categoryID
+	for _, s := range []struct {
+		date time.Time
+		amt  string
+	}{
+		{time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC), "-40"},
+		{time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC), "-20.50"},
+		{time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC), "-30"},
+	} {
+		tx := &model.Transaction{
+			UserID: userID, AccountID: acc.ID, CategoryID: &cat,
+			Amount: decimal.RequireFromString(s.amt), TransactionDate: s.date, Source: "manual",
+		}
+		if err := g.Create(tx).Error; err != nil {
+			t.Fatalf("seed txn: %v", err)
+		}
+	}
+
+	neg := decimal.RequireFromString("-0.01")
+	roll := true
+	if _, err := svc.Create(ctx, owner, service.CreateBudgetInput{
+		CategoryID: categoryID, Period: "monthly", Amount: decimal.NewFromInt(100), Rollover: &roll, RolloverStart: &neg,
+	}); !errors.Is(err, service.ErrInvalidRolloverStart) {
+		t.Fatalf("negative start: err = %v, want ErrInvalidRolloverStart", err)
+	}
+
+	start := decimal.RequireFromString("25.125")
+	b, err := svc.Create(ctx, owner, service.CreateBudgetInput{
+		CategoryID: categoryID, Period: "monthly", Amount: decimal.NewFromInt(100), Rollover: &roll, RolloverStart: &start,
+	})
+	if err != nil {
+		t.Fatalf("create budget: %v", err)
+	}
+	if !b.RolloverStart.Equal(start) {
+		t.Fatalf("RolloverStart = %s, want %s", b.RolloverStart, start)
+	}
+	backdate := func(d time.Time) {
+		t.Helper()
+		if err := g.Model(&model.Budget{}).Where("id = ?", b.ID).Update("created_at", d).Error; err != nil {
+			t.Fatalf("backdate budget: %v", err)
+		}
+	}
+
+	cases := []struct {
+		name       string
+		created    time.Time
+		rollover   bool
+		wantCarry  string
+		wantRemain string
+	}{
+		// Created this month: the starting balance is the whole carry.
+		{"created current period", time.Date(2026, 5, 3, 0, 0, 0, 0, time.UTC), true, "25.125", "95.125"},
+		// Mar 25.125+100-40=85.125; Apr +100-20.50=164.625.
+		{"folds through completed periods", time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC), true, "164.625", "234.625"},
+		{"ignored while rollover off", time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC), false, "0", "70"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			backdate(tc.created)
+			r := tc.rollover
+			if _, err := svc.Update(ctx, owner, b.ID, service.UpdateBudgetInput{Rollover: &r}); err != nil {
+				t.Fatalf("update: %v", err)
+			}
+			view, err := svc.Spend(ctx, userID, b.ID)
+			if err != nil {
+				t.Fatalf("spend: %v", err)
+			}
+			if !view.Carryover.Equal(decimal.RequireFromString(tc.wantCarry)) ||
+				!view.Remaining.Equal(decimal.RequireFromString(tc.wantRemain)) {
+				t.Errorf("carry/remaining = %s/%s, want %s/%s", view.Carryover, view.Remaining, tc.wantCarry, tc.wantRemain)
+			}
+		})
+	}
+
+	// Patch: negative rejected, valid value persisted.
+	if _, err := svc.Update(ctx, owner, b.ID, service.UpdateBudgetInput{RolloverStart: &neg}); !errors.Is(err, service.ErrInvalidRolloverStart) {
+		t.Errorf("negative patch: err = %v, want ErrInvalidRolloverStart", err)
+	}
+	zero := decimal.Zero
+	got, err := svc.Update(ctx, owner, b.ID, service.UpdateBudgetInput{RolloverStart: &zero})
+	if err != nil || !got.RolloverStart.IsZero() {
+		t.Errorf("zero patch: start=%v err=%v", got, err)
+	}
+}

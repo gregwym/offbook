@@ -12,6 +12,8 @@ export type Budget = {
   period: BudgetPeriod
   amount: string
   rollover: boolean
+  // Starting carryover in the creation period (#508); ignored unless rollover.
+  rollover_start: string
   is_active: boolean
   created_at: string
   updated_at: string
@@ -37,6 +39,7 @@ export type CreateBudgetInput = {
   period: BudgetPeriod
   amount: string
   rollover?: boolean
+  rollover_start?: string
   is_active?: boolean
 }
 
@@ -45,5 +48,6 @@ export type UpdateBudgetInput = {
   period?: BudgetPeriod
   amount?: string
   rollover?: boolean
+  rollover_start?: string
   is_active?: boolean
 }

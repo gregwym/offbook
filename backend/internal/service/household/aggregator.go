@@ -395,7 +395,8 @@ func (a *Aggregator) BudgetPace(ctx context.Context, householdID int64, period s
 const maxRolloverMonths = 36
 
 // monthlyCarryover applies the personal rollover policy to a shared budget:
-// the balance starts at zero in the month the budget was created, each
+// the balance starts at b.RolloverStart (default zero) in the month the
+// budget was created, each
 // completed month adds (amount - spent), and the balance never drops below
 // zero. Spend is read through the same share/visibility filter as the
 // current month, so it reflects today's shares, not historical ones.
@@ -404,17 +405,18 @@ func (a *Aggregator) monthlyCarryover(ctx context.Context, accountIDs []int64, b
 	start := time.Date(created.Year(), created.Month(), 1, 0, 0, 0, 0, time.UTC)
 	cur := time.Date(currentFrom.Year(), currentFrom.Month(), 1, 0, 0, 0, 0, time.UTC)
 	earliest := cur.AddDate(0, -maxRolloverMonths, 0)
-	if earliest.Before(start) {
+	carry := decimal.Zero
+	if !earliest.After(start) {
 		earliest = start
+		carry = b.RolloverStart
 	}
 	if !earliest.Before(cur) {
-		return decimal.Zero, nil
+		return carry, nil
 	}
 	spend, err := a.repo.SpendingByCategoryMonthly(ctx, accountIDs, b.CategoryID, earliest, cur)
 	if err != nil {
 		return decimal.Zero, fmt.Errorf("rollover for budget %d: %w", b.ID, err)
 	}
-	carry := decimal.Zero
 	for m := earliest; m.Before(cur); m = m.AddDate(0, 1, 0) {
 		carry = decimal.Max(decimal.Zero, carry.Add(b.Amount).Sub(spend[m]))
 	}

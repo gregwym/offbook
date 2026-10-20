@@ -88,19 +88,21 @@ type transferOwnerRequest struct {
 }
 
 type createSharedBudgetRequest struct {
-	CategoryID int64           `json:"category_id"`
-	Period     string          `json:"period"`
-	Amount     decimal.Decimal `json:"amount"`
-	Rollover   *bool           `json:"rollover"`
-	IsActive   *bool           `json:"is_active"`
+	CategoryID    int64            `json:"category_id"`
+	Period        string           `json:"period"`
+	Amount        decimal.Decimal  `json:"amount"`
+	Rollover      *bool            `json:"rollover"`
+	RolloverStart *decimal.Decimal `json:"rollover_start"`
+	IsActive      *bool            `json:"is_active"`
 }
 
 type updateSharedBudgetRequest struct {
-	CategoryID *int64           `json:"category_id"`
-	Period     *string          `json:"period"`
-	Amount     *decimal.Decimal `json:"amount"`
-	Rollover   *bool            `json:"rollover"`
-	IsActive   *bool            `json:"is_active"`
+	CategoryID    *int64           `json:"category_id"`
+	Period        *string          `json:"period"`
+	Amount        *decimal.Decimal `json:"amount"`
+	Rollover      *bool            `json:"rollover"`
+	RolloverStart *decimal.Decimal `json:"rollover_start"`
+	IsActive      *bool            `json:"is_active"`
 }
 
 type createSharedGoalRequest struct {
@@ -313,11 +315,12 @@ func (h *HouseholdHandler) CreateSharedBudget(c *gin.Context) {
 		return
 	}
 	b, err := h.svc.CreateSharedBudget(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, household.SharedBudgetInput{
-		CategoryID: req.CategoryID,
-		Period:     req.Period,
-		Amount:     req.Amount,
-		Rollover:   req.Rollover,
-		IsActive:   req.IsActive,
+		CategoryID:    req.CategoryID,
+		Period:        req.Period,
+		Amount:        req.Amount,
+		Rollover:      req.Rollover,
+		RolloverStart: req.RolloverStart,
+		IsActive:      req.IsActive,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -355,11 +358,12 @@ func (h *HouseholdHandler) UpdateSharedBudget(c *gin.Context) {
 		return
 	}
 	b, err := h.svc.UpdateSharedBudget(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, budgetID, household.UpdateSharedBudgetInput{
-		CategoryID: req.CategoryID,
-		Period:     req.Period,
-		Amount:     req.Amount,
-		Rollover:   req.Rollover,
-		IsActive:   req.IsActive,
+		CategoryID:    req.CategoryID,
+		Period:        req.Period,
+		Amount:        req.Amount,
+		Rollover:      req.Rollover,
+		RolloverStart: req.RolloverStart,
+		IsActive:      req.IsActive,
 	})
 	if err != nil {
 		h.writeError(c, err)
@@ -575,6 +579,8 @@ func (h *HouseholdHandler) writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error(), "code": "GOAL_NOT_FOUND"})
 	case errors.Is(err, household.ErrUnknownCategory):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "UNKNOWN_CATEGORY"})
+	case errors.Is(err, household.ErrInvalidRolloverStart):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_ROLLOVER_START"})
 	case errors.Is(err, household.ErrInvalidBudgetPeriod),
 		errors.Is(err, household.ErrInvalidBudgetAmount):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_BUDGET"})

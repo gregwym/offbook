@@ -363,8 +363,9 @@ func TestAggregator_InGraceExcludedFromBudgetPace(t *testing.T) {
 }
 
 // TestAggregator_BudgetPace_Rollover: a rollover shared budget carries unspent
-// balance (floored at zero) from completed months into the current month,
-// while a non-rollover budget on the same category stays at its plain limit.
+// balance (floored at zero, seeded by its starting balance) from completed
+// months into the current month, while a non-rollover budget stays at its
+// plain limit.
 func TestAggregator_BudgetPace_Rollover(t *testing.T) {
 	agg, g := newAggregator(t)
 	ctx := context.Background()
@@ -383,20 +384,21 @@ func TestAggregator_BudgetPace_Rollover(t *testing.T) {
 		t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, c.ID) })
 		return c
 	}
-	cat, plainCat := mkCat("ro-dining"), mkCat("ro-plain")
+	cat, plainCat, freshCat := mkCat("ro-dining"), mkCat("ro-plain"), mkCat("ro-fresh")
 
 	now := time.Now().UTC()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 12, 0, 0, 0, time.UTC)
 	hhID := hh.ID
-	mk := func(c *model.Category, rollover bool) *model.Budget {
+	mk := func(c *model.Category, rollover bool, start string, createdAgo int) *model.Budget {
 		b := &model.Budget{
-			HouseholdID: &hhID,
-			CategoryID:  c.ID,
-			Period:      "monthly",
-			Amount:      decimal.NewFromInt(100),
-			Rollover:    rollover,
-			IsActive:    true,
-			CreatedAt:   monthStart.AddDate(0, -2, 0),
+			HouseholdID:   &hhID,
+			CategoryID:    c.ID,
+			Period:        "monthly",
+			Amount:        decimal.NewFromInt(100),
+			Rollover:      rollover,
+			RolloverStart: decimal.RequireFromString(start),
+			IsActive:      true,
+			CreatedAt:     monthStart.AddDate(0, -createdAgo, 0),
 		}
 		if err := g.Create(b).Error; err != nil {
 			t.Fatalf("seed shared budget: %v", err)
@@ -404,7 +406,10 @@ func TestAggregator_BudgetPace_Rollover(t *testing.T) {
 		t.Cleanup(func() { g.Unscoped().Delete(&model.Budget{}, b.ID) })
 		return b
 	}
-	withRoll, plain := mk(cat, true), mk(plainCat, false)
+	// withRoll's 10 starting balance folds: 10+100-30=80, 80+100-120=60.
+	// plain ignores its start (rollover off); fresh was created this month,
+	// so its carry is just the starting balance.
+	withRoll, plain, fresh := mk(cat, true, "10", 2), mk(plainCat, false, "999", 2), mk(freshCat, true, "12.5", 0)
 
 	// month-2 spend 30 → carry 70; month-1 spend 120 → carry 50; current 20.
 	seedTxn(t, g, ownerID, acct.ID, "-30", &cat.ID, monthStart.AddDate(0, -2, 5))
@@ -425,11 +430,14 @@ func TestAggregator_BudgetPace_Rollover(t *testing.T) {
 	if !ok {
 		t.Fatalf("rollover budget missing from %+v", items)
 	}
-	if r.Carryover != "50" || r.Available != "150" || r.Spent != "20" {
-		t.Errorf("rollover item = carry %s available %s spent %s, want 50/150/20", r.Carryover, r.Available, r.Spent)
+	if r.Carryover != "60" || r.Available != "160" || r.Spent != "20" {
+		t.Errorf("rollover item = carry %s available %s spent %s, want 60/160/20", r.Carryover, r.Available, r.Spent)
 	}
-	if got, _ := decimal.NewFromString(r.Pace); !got.Equal(decimal.NewFromInt(20).Div(decimal.NewFromInt(150))) {
-		t.Errorf("rollover pace = %s, want 20/150", r.Pace)
+	if got, _ := decimal.NewFromString(r.Pace); !got.Equal(decimal.NewFromInt(20).Div(decimal.NewFromInt(160))) {
+		t.Errorf("rollover pace = %s, want 20/160", r.Pace)
+	}
+	if f := byID[fresh.ID]; f.Carryover != "12.5" || f.Available != "112.5" {
+		t.Errorf("fresh item = carry %s available %s, want 12.5/112.5", f.Carryover, f.Available)
 	}
 	pl := byID[plain.ID]
 	if pl.Carryover != "0" || pl.Available != "100" || pl.Pace != "0.2" {

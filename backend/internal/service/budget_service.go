@@ -33,6 +33,7 @@ var (
 	ErrInvalidBudgetPeriod   = errors.New("period must be one of: monthly, weekly, annual")
 	ErrInvalidBudgetAmount   = errors.New("amount must be > 0")
 	ErrDuplicateActiveBudget = errors.New("an active budget already exists for this user, category, and period")
+	ErrInvalidRolloverStart  = errors.New("rollover starting balance must be >= 0")
 )
 
 // CreateBudgetInput is the validated payload for budget creation.
@@ -41,16 +42,19 @@ type CreateBudgetInput struct {
 	Period     string
 	Amount     decimal.Decimal
 	Rollover   *bool
-	IsActive   *bool
+	// RolloverStart is the optional starting carryover (nil = 0).
+	RolloverStart *decimal.Decimal
+	IsActive      *bool
 }
 
 // UpdateBudgetInput is a sparse patch.
 type UpdateBudgetInput struct {
-	CategoryID *int64
-	Period     *string
-	Amount     *decimal.Decimal
-	Rollover   *bool
-	IsActive   *bool
+	CategoryID    *int64
+	Period        *string
+	Amount        *decimal.Decimal
+	Rollover      *bool
+	RolloverStart *decimal.Decimal
+	IsActive      *bool
 }
 
 // BudgetSpend is the computed view of a budget against the current period's
@@ -100,6 +104,9 @@ func (s *BudgetService) Create(ctx context.Context, owner repository.PlanOwner, 
 	if !in.Amount.IsPositive() {
 		return nil, ErrInvalidBudgetAmount
 	}
+	if in.RolloverStart != nil && in.RolloverStart.IsNegative() {
+		return nil, ErrInvalidRolloverStart
+	}
 	if _, err := s.catRepo.GetByID(ctx, in.CategoryID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrUnknownCategory
@@ -114,6 +121,9 @@ func (s *BudgetService) Create(ctx context.Context, owner repository.PlanOwner, 
 		Amount:      in.Amount,
 		Rollover:    in.Rollover != nil && *in.Rollover,
 		IsActive:    true,
+	}
+	if in.RolloverStart != nil {
+		b.RolloverStart = *in.RolloverStart
 	}
 	if in.IsActive != nil {
 		b.IsActive = *in.IsActive
@@ -174,6 +184,12 @@ func (s *BudgetService) Update(ctx context.Context, owner repository.PlanOwner, 
 	}
 	if in.Rollover != nil {
 		b.Rollover = *in.Rollover
+	}
+	if in.RolloverStart != nil {
+		if in.RolloverStart.IsNegative() {
+			return nil, ErrInvalidRolloverStart
+		}
+		b.RolloverStart = *in.RolloverStart
 	}
 	if in.IsActive != nil {
 		b.IsActive = *in.IsActive
@@ -243,8 +259,9 @@ func (s *BudgetService) Spend(ctx context.Context, userID, id int64) (*BudgetSpe
 const maxRolloverPeriods = 36
 
 // carryover returns the balance rolled into the period starting at
-// currentFrom. Zero unless b.Rollover. Policy: the balance starts at zero in
-// the period containing the budget's creation; each completed period adds
+// currentFrom. Zero unless b.Rollover. Policy: the balance starts at
+// b.RolloverStart (default zero) in the period containing the budget's
+// creation; each completed period adds
 // (limit - spent) and the running balance never goes below zero, so an
 // overspent period does not penalize later ones. The current limit is applied
 // to every past period (limit history is not stored).
@@ -258,8 +275,14 @@ func (s *BudgetService) carryover(ctx context.Context, userID int64, b *model.Bu
 	for i := 0; i < maxRolloverPeriods && earliest.After(start); i++ {
 		earliest = prevPeriodStart(b.Period, earliest)
 	}
+	// Past the lookback cap the starting balance has aged out with the
+	// history it would have been folded into.
+	carry := decimal.Zero
+	if !earliest.After(start) {
+		carry = b.RolloverStart
+	}
 	if !earliest.Before(currentFrom) {
-		return decimal.Zero, nil
+		return carry, nil
 	}
 	unit := map[string]string{BudgetPeriodWeekly: "week", BudgetPeriodAnnual: "year"}[b.Period]
 	if unit == "" {
@@ -269,7 +292,6 @@ func (s *BudgetService) carryover(ctx context.Context, userID int64, b *model.Bu
 	if err != nil {
 		return decimal.Zero, fmt.Errorf("compute rollover: %w", err)
 	}
-	carry := decimal.Zero
 	for p := earliest; p.Before(currentFrom); p = nextPeriodStart(b.Period, p) {
 		carry = decimal.Max(decimal.Zero, carry.Add(b.Amount).Sub(spend[p]))
 	}
