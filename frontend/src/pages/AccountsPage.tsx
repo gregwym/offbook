@@ -11,6 +11,7 @@ import { SyncStatusPill } from '../components/SyncStatusPill'
 import { TimeAgo } from '../components/TimeAgo'
 import { TradeFormModal } from '../components/TradeFormModal'
 import { UpdateBalanceModal } from '../components/UpdateBalanceModal'
+import { useMinWidth } from '../hooks/useMinWidth'
 import { useAccountsStore } from '../store/accountsStore'
 import { useScopeStore } from '../store/scopeStore'
 import {
@@ -28,6 +29,9 @@ export function AccountsPage() {
   // mode), matching the rule in `.claude/rules/frontend.md`: don't
   // surface a column the user can't act on.
   const householdId = useScopeStore((s) => s.householdId)
+  // The visibility chip fetches and holds state, so it mounts in exactly one
+  // place: its own column from md (768px) up, stacked under the name below.
+  const wide = useMinWidth(768)
   const [editing, setEditing] = useState<Account | null>(null)
   // Trade-entry surface — only available for brokerage-style accounts
   // (matches backend brokerageAccountTypes in service/trade_service.go).
@@ -41,6 +45,12 @@ export function AccountsPage() {
   // Manual "what does the bank say?" balance (#504) — non-Plaid cash accounts.
   const [balancing, setBalancing] = useState<Account | null>(null)
 
+  const confirmRemove = async (a: Account) => {
+    if (window.confirm(`Delete "${a.name}"?`)) {
+      await remove(a.id)
+    }
+  }
+
   useEffect(() => {
     void fetch()
   }, [fetch])
@@ -50,7 +60,7 @@ export function AccountsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Accounts</h1>
-          <p className="mt-1 text-sm text-gray-500">Manage your accounts and PII.</p>
+          <p className="mt-1 text-sm text-gray-500">Balances, sync status and imports for each of your accounts.</p>
         </div>
         {/* New accounts originate from /accounts/add per v6 §03 — keep the
             inline edit modal for changing existing accounts, but route fresh
@@ -75,14 +85,14 @@ export function AccountsPage() {
           <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wider text-gray-500">
             <tr>
               <th className="px-4 py-2 text-left">Name</th>
-              <th className="px-4 py-2 text-left">Institution</th>
-              <th className="px-4 py-2 text-left">Type</th>
-              <th className="px-4 py-2 text-left">Last 4</th>
+              <th className="hidden px-4 py-2 text-left md:table-cell">Institution</th>
+              <th className="hidden px-4 py-2 text-left md:table-cell">Type</th>
+              <th className="hidden px-4 py-2 text-left md:table-cell">Last 4</th>
               <th className="px-4 py-2 text-right">Balance</th>
-              <th className="px-4 py-2 text-center">Active</th>
-              <th className="px-4 py-2 text-left">Sync</th>
-              {householdId != null && <th className="px-4 py-2 text-left">Household visibility</th>}
-              <th className="px-4 py-2"></th>
+              <th className="hidden px-4 py-2 text-center md:table-cell">Active</th>
+              <th className="hidden px-4 py-2 text-left md:table-cell">Sync</th>
+              {householdId != null && <th className="hidden px-4 py-2 text-left md:table-cell">Household visibility</th>}
+              <th className="hidden px-4 py-2 md:table-cell"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -105,7 +115,7 @@ export function AccountsPage() {
             )}
             {accounts.map((a) => (
               <tr key={a.id} className="hover:bg-gray-50">
-                <td className="px-4 py-2 font-medium text-gray-900">
+                <td className="px-4 py-2 align-top font-medium text-gray-900">
                   {a.name}
                   {a.needs_attention && (
                     <Link
@@ -116,11 +126,41 @@ export function AccountsPage() {
                       <AlertTriangle size={10} /> needs attention
                     </Link>
                   )}
+                  {/* Narrow screens drop every column but Name and Balance
+                      (#511); stack the details, sync state and labelled
+                      actions here instead of behind a sideways scroll. */}
+                  <div className="mt-1 space-y-1.5 font-normal md:hidden">
+                    <div className="text-xs text-gray-500">
+                      {[accountTypeLabel(a.account_type), a.last_four ? `••${a.last_four}` : null, a.is_active ? null : 'inactive']
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </div>
+                    <SyncStatusPill account={a} />
+                    {householdId != null && !wide && (
+                      <AccountVisibilityChip accountID={a.id} householdID={householdId} />
+                    )}
+                    <div className="flex flex-wrap gap-x-3 text-xs">
+                      {isBrokerage(a) && (
+                        <button type="button" onClick={() => setTradingOn(a)} aria-label={`Record trade in ${a.name}`} className="min-h-9 text-indigo-700 underline">
+                          Record trade
+                        </button>
+                      )}
+                      <button type="button" onClick={() => setImportingInto(a)} aria-label={`Import transactions into ${a.name}`} className="min-h-9 text-indigo-700 underline">
+                        Import
+                      </button>
+                      <button type="button" onClick={() => setEditing(a)} aria-label={`Edit ${a.name}`} className="min-h-9 text-indigo-700 underline">
+                        Edit
+                      </button>
+                      <button type="button" onClick={() => confirmRemove(a)} aria-label={`Delete ${a.name}`} className="min-h-9 text-red-700 underline">
+                        Delete
+                      </button>
+                    </div>
+                  </div>
                 </td>
-                <td className="px-4 py-2 text-gray-700">{a.institution_slug}</td>
-                <td className="px-4 py-2 text-gray-700">{a.account_type}</td>
-                <td className="px-4 py-2 text-gray-700">{a.last_four ?? '—'}</td>
-                <td className="px-4 py-2 text-right">
+                <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{a.institution_slug}</td>
+                <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{a.account_type}</td>
+                <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{a.last_four ?? '—'}</td>
+                <td className="px-4 py-2 text-right align-top">
                   <AmountDisplay amount={a.balance} currency={a.currency} />
                   {!a.balance_complete && (
                     <>
@@ -150,20 +190,20 @@ export function AccountsPage() {
                     </button>
                   )}
                 </td>
-                <td className="px-4 py-2 text-center">
+                <td className="hidden px-4 py-2 text-center align-top md:table-cell">
                   <span className={a.is_active ? 'text-emerald-700' : 'text-gray-400'}>
                     {a.is_active ? 'yes' : 'no'}
                   </span>
                 </td>
-                <td className="px-4 py-2">
+                <td className="hidden px-4 py-2 align-top md:table-cell">
                   <SyncStatusPill account={a} />
                 </td>
                 {householdId != null && (
-                  <td className="px-4 py-2">
-                    <AccountVisibilityChip accountID={a.id} householdID={householdId} />
+                  <td className="hidden px-4 py-2 align-top md:table-cell">
+                    {wide && <AccountVisibilityChip accountID={a.id} householdID={householdId} />}
                   </td>
                 )}
-                <td className="px-4 py-2 text-right">
+                <td className="hidden whitespace-nowrap px-4 py-2 text-right align-top md:table-cell">
                   {isBrokerage(a) && (
                     <button
                       type="button"
@@ -194,11 +234,7 @@ export function AccountsPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={async () => {
-                      if (window.confirm(`Delete "${a.name}"?`)) {
-                        await remove(a.id)
-                      }
-                    }}
+                    onClick={() => confirmRemove(a)}
                     className="text-gray-500 hover:text-red-700"
                     aria-label="Delete"
                   >
@@ -267,6 +303,13 @@ export function AccountsPage() {
 
 // isBrokerage mirrors backend service.brokerageAccountTypes — only these
 // account shapes accept trades.
+// accountTypeLabel turns the wire enum into the words shown on the stacked
+// mobile row ("credit_card" → "Credit card").
+function accountTypeLabel(t: string): string {
+  const words = t.replace(/_/g, ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
 function isBrokerage(a: Account): boolean {
   return a.account_type === 'investment' || a.account_type === 'crypto'
 }

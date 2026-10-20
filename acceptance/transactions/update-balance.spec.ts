@@ -28,6 +28,15 @@ test.describe('update manual account balance', () => {
     await page.goto('/accounts')
     const row = page.getByRole('row').filter({ hasText: 'Balance Checking' })
     await expect(row).toContainText('1,100.00')
+    // #511: the balance, its action, sync state and row actions are on
+    // screen at every width, not behind a sideways scroll of the table.
+    await expectInViewport(page, row.getByText('1,100.00 USD', { exact: true }))
+    await expectInViewport(page, row.getByRole('button', { name: 'Update balance for Balance Checking' }))
+    await expectInViewport(page, row.getByRole('button', { name: /Import transactions/ }))
+    await expectInViewport(page, row.getByRole('button', { name: /^Edit/ }))
+    await expectInViewport(page, row.getByRole('button', { name: /^Delete/ }))
+    await expect(page.getByText('Manage your accounts and PII.')).toHaveCount(0)
+    await testInfo.attach('accounts-list', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
 
     // First update: no anchor yet, so the difference becomes the opening balance.
     await row.getByRole('button', { name: 'Update balance for Balance Checking' }).click()
@@ -121,4 +130,13 @@ async function signIn(page: Page, email: string, password: string) {
 async function expectNoOverflow(page: Page) {
   const o = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)
   expect(o, 'no horizontal overflow').toBe(false)
+}
+
+async function expectInViewport(page: Page, loc: ReturnType<Page['getByRole']>) {
+  await expect(loc).toBeVisible()
+  const box = await loc.boundingBox()
+  const vw = page.viewportSize()!.width
+  expect(box, 'element rendered').not.toBeNull()
+  expect(box!.x, 'left edge on screen').toBeGreaterThanOrEqual(0)
+  expect(box!.x + box!.width, 'right edge on screen').toBeLessThanOrEqual(vw)
 }
