@@ -31,8 +31,10 @@ type TransactionFilter struct {
 	From     *time.Time // inclusive lower bound on transaction_date
 	To       *time.Time // inclusive upper bound on transaction_date
 	Search   string     // ILIKE %term% across description + merchant_name
-	Limit    int
-	Offset   int
+	// Tag, when non-empty, restricts to rows carrying this exact tag (#544).
+	Tag    string
+	Limit  int
+	Offset int
 }
 
 // TransactionRepository is the data-access contract for transactions.
@@ -41,6 +43,9 @@ type TransactionRepository interface {
 	Create(ctx context.Context, t *model.Transaction) error
 	GetByID(ctx context.Context, userID, id int64) (*model.Transaction, error)
 	List(ctx context.Context, userID int64, f TransactionFilter) ([]model.Transaction, int64, error)
+	// ListTags returns the user's distinct tags on live rows with how many
+	// rows carry each, alphabetical (case-insensitive) (#544).
+	ListTags(ctx context.Context, userID int64) ([]TagCount, error)
 	Update(ctx context.Context, t *model.Transaction) error
 	SoftDelete(ctx context.Context, userID, id int64) error
 	// CreateBatch inserts many transactions in one round-trip, doing
@@ -360,6 +365,9 @@ func (r *transactionRepo) List(ctx context.Context, userID int64, f TransactionF
 		pattern := "%" + s + "%"
 		q = q.Where("description ILIKE ? OR merchant_name ILIKE ?", pattern, pattern)
 	}
+	if f.Tag != "" {
+		q = q.Where("tags @> ARRAY[?]::text[]", f.Tag)
+	}
 
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -386,6 +394,23 @@ func (r *transactionRepo) List(ctx context.Context, userID int64, f TransactionF
 		return nil, 0, err
 	}
 	return out, total, nil
+}
+
+// TagCount is one of a user's tags and how many live rows carry it (#544).
+type TagCount struct {
+	Name  string `json:"name"`
+	Count int64  `json:"count"`
+}
+
+func (r *transactionRepo) ListTags(ctx context.Context, userID int64) ([]TagCount, error) {
+	out := []TagCount{}
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT tag AS name, COUNT(*) AS count
+		FROM transactions t, unnest(t.tags) AS tag
+		WHERE t.user_id = ? AND t.deleted_at IS NULL
+		GROUP BY tag
+		ORDER BY lower(tag), tag`, userID).Scan(&out).Error
+	return out, err
 }
 
 func (r *transactionRepo) Update(ctx context.Context, t *model.Transaction) error {

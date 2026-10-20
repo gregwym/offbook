@@ -67,6 +67,10 @@ type Transaction struct {
 	// `pending`). Bank-owned: sync overwrites it; the pending -> posted
 	// adoption clears it on the same row, keeping the user's edits.
 	Pending bool `gorm:"not null;default:false" json:"pending"`
+	// Tags (#544) are user labels ("vacation", "reimbursable"). Metadata
+	// only — never affects ledger, spending or budgets. User-owned: sync
+	// never touches them.
+	Tags Tags `gorm:"type:text[];not null;default:'{}'" json:"tags"`
 	// ImportJobID links a statement-imported row to the ingestion_jobs audit
 	// row that created it, so the import can be undone as a unit.
 	ImportJobID *int64         `json:"import_job_id,omitempty"`

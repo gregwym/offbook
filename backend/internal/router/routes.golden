@@ -61,6 +61,7 @@ GET /api/v1/savings-goals/:id
 GET /api/v1/setup/status
 GET /api/v1/transactions
 GET /api/v1/transactions/:id
+GET /api/v1/transactions/tags
 GET /api/v1/transfers/candidates
 PATCH /api/v1/accounts/:id
 PATCH /api/v1/budgets/:id

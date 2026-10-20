@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -46,6 +47,8 @@ func (h *TransactionHandler) WithExtractorResolver(r ExtractorResolver) *Transac
 func (h *TransactionHandler) Register(g *gin.RouterGroup) {
 	g.POST("/transactions", h.Create)
 	g.GET("/transactions", h.List)
+	// The user's tags with row counts (#544).
+	g.GET("/transactions/tags", h.ListTags)
 	g.GET("/transactions/:id", h.Get)
 	g.PATCH("/transactions/:id", h.Update)
 	g.DELETE("/transactions/:id", h.Delete)
@@ -74,6 +77,7 @@ func (h *TransactionHandler) Register(g *gin.RouterGroup) {
 //	category_id  — exact match OR the literal "null" to find uncategorized rows
 //	from, to     — inclusive date range on transaction_date, YYYY-MM-DD or RFC3339
 //	search       — case-insensitive substring match on description + merchant_name
+//	tag          — exact tag (#544)
 //	limit        — default 50, clamped to [1, 200]
 //	offset       — default 0, must be non-negative
 func (h *TransactionHandler) List(c *gin.Context) {
@@ -136,6 +140,7 @@ func (h *TransactionHandler) List(c *gin.Context) {
 		f.Reviewed = &b
 	}
 	f.Search = c.Query("search")
+	f.Tag = strings.TrimSpace(c.Query("tag"))
 	if v := c.Query("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {
@@ -164,6 +169,16 @@ func (h *TransactionHandler) List(c *gin.Context) {
 		"limit":  resolvedLimit(f.Limit),
 		"offset": f.Offset,
 	})
+}
+
+// ListTags handles GET /transactions/tags (#544).
+func (h *TransactionHandler) ListTags(c *gin.Context) {
+	tags, err := h.svc.ListTags(c.Request.Context(), auth.MustUserID(c.Request.Context()))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": tags, "total": len(tags)})
 }
 
 // JSON shape for POST /transactions. Per ADR-0013, the transaction's
@@ -252,6 +267,7 @@ type updateTransactionRequest struct {
 	Notes           *string          `json:"notes"`
 	Reviewed        *bool            `json:"reviewed"`
 	Hidden          *bool            `json:"hidden"`
+	Tags            *[]string        `json:"tags"`
 }
 
 func (h *TransactionHandler) Update(c *gin.Context) {
@@ -273,6 +289,7 @@ func (h *TransactionHandler) Update(c *gin.Context) {
 		Notes:         req.Notes,
 		Reviewed:      req.Reviewed,
 		Hidden:        req.Hidden,
+		Tags:          req.Tags,
 	}
 	if req.TransactionDate != nil {
 		td, ok := parseFlexibleDate(c, *req.TransactionDate, "transaction_date")
@@ -612,6 +629,8 @@ func (h *TransactionHandler) writeServiceError(c *gin.Context, err error) {
 		errors.Is(err, service.ErrMissingDate),
 		errors.Is(err, service.ErrInvalidCurrency):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_TRANSACTION"})
+	case errors.Is(err, service.ErrInvalidTags):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_TAGS"})
 	case errors.Is(err, service.ErrInvalidSplits), errors.Is(err, service.ErrSplitAmountLocked):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_SPLITS"})
 	default:

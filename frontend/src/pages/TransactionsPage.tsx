@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ArrowRightLeft, Check, CheckCheck, ChevronDown, ChevronRight, Eye, EyeOff, Plus, Scissors, SlidersHorizontal, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
+import { ArrowRightLeft, Check, CheckCheck, ChevronDown, ChevronRight, Eye, EyeOff, Plus, Scissors, SlidersHorizontal, Sparkles, Tag, Trash2, Undo2, Upload, X } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { DateDisplay } from '../components/DateDisplay'
 import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
 import { SplitTransactionModal } from '../components/SplitTransactionModal'
+import { TagEditorModal } from '../components/TagEditorModal'
 import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
 import { TransferMatchesModal } from '../components/TransferMatchesModal'
-import { listTransactions } from '../api/transactions'
+import { listTransactions, listTransactionTags } from '../api/transactions'
 import { listTransferCandidates, unlinkTransfer } from '../api/transfers'
 import type { TransferCandidate } from '../api/transfers'
 import { useAccountsStore } from '../store/accountsStore'
@@ -20,7 +21,7 @@ import type { Account } from '../types/account'
 import type { Asset } from '../types/asset'
 import type { Category } from '../types/category'
 import type { CreateRuleInput } from '../types/categorizationRule'
-import type { CreateTransactionInput, Transaction, TransactionSource } from '../types/transaction'
+import type { CreateTransactionInput, TagCount, Transaction, TransactionSource } from '../types/transaction'
 import { TRANSACTION_SOURCES } from '../types/transaction'
 
 export function TransactionsPage() {
@@ -40,6 +41,10 @@ export function TransactionsPage() {
   } = useRulesStore()
   const [ruleSeed, setRuleSeed] = useState<RuleFormDefaults | null>(null)
   const [splitting, setSplitting] = useState<Transaction | null>(null)
+  // Tags (#544): the row being tagged, and the user's tags for the filter
+  // and the editor's suggestions.
+  const [tagging, setTagging] = useState<Transaction | null>(null)
+  const [tagOptions, setTagOptions] = useState<TagCount[]>([])
   // After a successful rule create from a txn, surface a toast with two
   // actions: jump to /rules, or re-apply to existing transactions.
   const [createdRuleToast, setCreatedRuleToast] = useState<string | null>(null)
@@ -53,15 +58,16 @@ export function TransactionsPage() {
   const [from, setFrom] = useState<string>(filter.from ?? '')
   const [to, setTo] = useState<string>(filter.to ?? '')
   const [searchInput, setSearchInput] = useState<string>(filter.search ?? '')
+  const [tag, setTag] = useState<string>(filter.tag ?? '')
   const search = useDebounce(searchInput, 300)
   const [adding, setAdding] = useState(false)
   const [importing, setImporting] = useState(false)
-  const filtersActive = Boolean(accountID || categoryID || from || to || searchInput)
+  const filtersActive = Boolean(accountID || categoryID || from || to || searchInput || tag)
   // Below md only Search is shown up front; Account/Category/From/To sit
   // behind a "Filters" toggle so the list isn't pushed below the fold (#518).
   // Starts open when one of them is already set, so a live filter is never
   // hidden. Desktop ignores this and always shows all five inline.
-  const moreFilterCount = [accountID, categoryID, from, to].filter(Boolean).length
+  const moreFilterCount = [accountID, categoryID, from, to, tag].filter(Boolean).length
   const [moreFiltersOpen, setMoreFiltersOpen] = useState(moreFilterCount > 0)
   const moreFilterClass = moreFiltersOpen ? 'block' : 'hidden md:block'
   const clearFilters = () => {
@@ -70,6 +76,7 @@ export function TransactionsPage() {
     setFrom('')
     setTo('')
     setSearchInput('')
+    setTag('')
   }
   // "Needs review" filter chip + banner (#424). needsReview drives the store
   // filter (reviewed=false) — explicit review state, independent of how a row
@@ -118,14 +125,21 @@ export function TransactionsPage() {
       .catch(() => { /* swallow — the banner/modal just won't surface */ })
   }
 
+  const refreshTags = useCallback(() => {
+    void listTransactionTags()
+      .then(setTagOptions)
+      .catch(() => { /* swallow — the tag filter just lists nothing */ })
+  }, [])
+
   useEffect(() => {
+    refreshTags()
     void fetchAccounts()
     void fetchAssets()
     void fetchCategories()
     void fetchRules()
     void fetch()
     refreshTransferCandidates()
-  }, [fetch, fetchAccounts, fetchAssets, fetchCategories, fetchRules])
+  }, [fetch, fetchAccounts, fetchAssets, fetchCategories, fetchRules, refreshTags])
 
   // Same priority heuristic as RulesPage — new rules outrank existing ones
   // by default so the "create from this txn" shortcut wins immediately on
@@ -158,9 +172,10 @@ export function TransactionsPage() {
       from: from === '' ? undefined : from,
       to: to === '' ? undefined : to,
       search: search === '' ? undefined : search,
+      tag: tag === '' ? undefined : tag,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountID, categoryID, from, to, search, needsReview])
+  }, [accountID, categoryID, from, to, search, tag, needsReview])
 
   // Recent-import signal: the most recent last_synced_at across all
   // Plaid-linked accounts. The banner key is built off this so a new
@@ -413,7 +428,7 @@ export function TransactionsPage() {
         </button>
       </div>
 
-      <div id="transaction-filters" className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-5">
+      <div id="transaction-filters" className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-6">
         <Field label="Account" className={moreFilterClass}>
           <select className={inputClass} value={accountID} onChange={(e) => setAccountID(e.target.value)}>
             <option value="">All</option>
@@ -432,6 +447,14 @@ export function TransactionsPage() {
         </Field>
         <Field label="To" className={moreFilterClass}>
           <input type="date" className={inputClass} value={to} onChange={(e) => setTo(e.target.value)} />
+        </Field>
+        <Field label="Tag" className={moreFilterClass}>
+          <select className={inputClass} value={tag} onChange={(e) => setTag(e.target.value)}>
+            <option value="">All</option>
+            {/* Keep a tag picked from a row chip selectable even before the list loads. */}
+            {tag !== '' && !tagOptions.some((o) => o.name === tag) && <option value={tag}>{tag}</option>}
+            {tagOptions.map((o) => <option key={o.name} value={o.name}>{o.name} ({o.count})</option>)}
+          </select>
         </Field>
         <Field label="Search">
           <input className={inputClass} placeholder="description or merchant" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
@@ -590,6 +613,8 @@ export function TransactionsPage() {
                   onCreateRule={() => openRuleFromTxn(t)}
                   onSplit={() => setSplitting(t)}
                   onToggleHidden={() => { update(t.id, { hidden: t.hidden_at == null }).catch(() => {}) }}
+                  onEditTags={() => setTagging(t)}
+                  onTagClick={(name) => { setTag(name); setMoreFiltersOpen(true) }}
                   onDelete={async () => {
                     if (window.confirm('Delete this transaction?')) {
                       await remove(t.id)
@@ -665,6 +690,15 @@ export function TransactionsPage() {
           categories={categories}
           onClose={() => setSplitting(null)}
           onSaved={() => { void fetch() }}
+        />
+      )}
+
+      {tagging && (
+        <TagEditorModal
+          tx={tagging}
+          suggestions={tagOptions}
+          onClose={() => setTagging(null)}
+          onSaved={() => { refreshTags(); void fetch() }}
         />
       )}
 
@@ -769,6 +803,9 @@ type RowProps = {
   onSplit?: () => void
   // Hide/unhide from spending and budgets (#465); absent for non-flow rows.
   onToggleHidden?: () => void
+  // Tags (#544): open the editor / filter the list by a tag chip.
+  onEditTags?: () => void
+  onTagClick?: (tag: string) => void
   onDelete: () => Promise<void>
   // Review state (#424). Absent for rows that don't take part in review
   // (legs of an expanded paired trade).
@@ -785,7 +822,7 @@ type RowProps = {
 
 const PENDING_HINT = 'Your bank hasn’t posted this yet. Your edits will carry over when it posts.'
 
-function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onSplit, onToggleHidden, onDelete, onUnlinkTransfer, indented, selected, onSelect, onToggleReviewed }: RowProps) {
+function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onSplit, onToggleHidden, onEditTags, onTagClick, onDelete, onUnlinkTransfer, indented, selected, onSelect, onToggleReviewed }: RowProps) {
   // Per ADR-0013, the unit on a transaction is asset_id. Display currency
   // = asset.symbol when available; fall back to the parent account's
   // currency for older rows that haven't been backfilled.
@@ -798,6 +835,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
   const unreviewed = reviewable && tx.reviewed_at == null
   const label = tx.description ?? tx.merchant_name ?? 'transaction'
   const splitCount = tx.splits?.length ?? 0
+  const tags = tx.tags ?? []
   const hideable = onToggleHidden != null && tx.kind === 'flow'
   const hidden = hideable && tx.hidden_at != null
   const splittable = onSplit != null && tx.kind === 'flow' && !tx.is_transfer
@@ -894,6 +932,23 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             not in spending
           </span>
         )}
+        {tags.length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {tags.map((name) => (
+              <button
+                key={name}
+                type="button"
+                onClick={() => onTagClick?.(name)}
+                aria-label={`Show transactions tagged ${name}`}
+                title={`Show transactions tagged ${name}`}
+                className="inline-flex max-w-full items-center gap-1 truncate rounded-full border border-violet-200 bg-violet-50 px-2 py-px text-[11px] font-medium leading-4 text-violet-800 hover:bg-violet-100"
+              >
+                <Tag size={10} aria-hidden="true" />
+                {name}
+              </button>
+            ))}
+          </div>
+        )}
         {/* Narrow screens drop the Merchant/Account/Category columns; show
             them stacked under the description instead of a squeezed table. */}
         <div className="mt-1 space-y-1.5 md:hidden">
@@ -922,6 +977,11 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             {splittable && splitCount === 0 && (
               <button type="button" onClick={onSplit} aria-label={`Split ${label}`} className="min-h-9 text-indigo-700 underline">
                 Split
+              </button>
+            )}
+            {onEditTags && (
+              <button type="button" onClick={onEditTags} aria-label={`Tags for ${label}`} className="min-h-9 text-indigo-700 underline">
+                Tags
               </button>
             )}
             {hideable && (
@@ -966,6 +1026,17 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             title="Split across categories"
           >
             <Scissors size={16} />
+          </button>
+        )}
+        {onEditTags && (
+          <button
+            type="button"
+            onClick={onEditTags}
+            className="mr-1 hidden min-h-9 min-w-9 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-indigo-700 md:inline-flex"
+            aria-label={`Tags for ${label}`}
+            title="Add or remove tags"
+          >
+            <Tag size={16} />
           </button>
         )}
         {hideable && (

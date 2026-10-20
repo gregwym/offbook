@@ -320,3 +320,54 @@ describe('TransactionsPage mobile filter toggle (#518)', () => {
     expect(screen.getByRole('button', { name: /^filters/i })).toHaveAttribute('aria-expanded', 'true')
   })
 })
+
+// #544: tags show as chips; a chip filters the list by ?tag=, and the row's
+// Tags action opens the editor and refreshes the list after saving.
+describe('TransactionsPage tags (#544)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('filters by a tag chip and edits a row’s tags', async () => {
+    const rows = [
+      { ...fx.transaction1, id: 41, description: 'HOTEL ROMA', tags: ['vacation'] },
+      { ...fx.transaction1, id: 42, description: 'GROCER', tags: [] },
+    ]
+    const seenTags: (string | null)[] = []
+    let patched: unknown = null
+    server.use(
+      http.get(`${API}/transactions`, ({ request }) => {
+        const tag = new URL(request.url).searchParams.get('tag')
+        seenTags.push(tag)
+        const data = tag ? rows.filter((r) => r.tags.includes(tag)) : rows
+        return HttpResponse.json({ data, total: data.length })
+      }),
+      http.patch(`${API}/transactions/42`, async ({ request }) => {
+        patched = await request.json()
+        return HttpResponse.json({ data: { ...rows[1], tags: ['Work trip'] } })
+      }),
+    )
+
+    renderPage(<TransactionsPage />)
+    await expectHealthySmoke()
+    await screen.findByText('GROCER')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show transactions tagged vacation' }))
+    await waitFor(() => expect(screen.queryByText('GROCER')).toBeNull())
+    expect(seenTags).toContain('vacation')
+    const tagSelect = screen.getByText('Tag', { selector: 'span' }).closest('label')!.querySelector('select')!
+    expect(tagSelect).toHaveValue('vacation')
+    expect(screen.getByRole('button', { name: /^filters/i })).toHaveTextContent('· 1')
+
+    fireEvent.change(tagSelect, { target: { value: '' } })
+    await screen.findByText('GROCER')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Tags for GROCER' })[0])
+    const dialog = await screen.findByRole('dialog', { name: 'Tags for GROCER' })
+    expect(dialog).toHaveTextContent('No tags yet.')
+    fireEvent.click(screen.getByRole('button', { name: 'Add tag Work trip' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save tags' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(patched).toEqual({ tags: ['Work trip'] })
+  })
+})
