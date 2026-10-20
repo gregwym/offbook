@@ -177,7 +177,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   }
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       {/* Capped to the viewport with only the body scrolling, so Create/Save
           stay reachable on a phone however long the form gets. */}
       <div className="flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col rounded-lg bg-white shadow-xl">
