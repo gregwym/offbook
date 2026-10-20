@@ -19,6 +19,9 @@ type Budget struct {
 	Period      string          `gorm:"not null" json:"period"`
 	Amount      decimal.Decimal `gorm:"type:numeric(30,18);not null" json:"amount"`
 	Rollover    bool            `gorm:"not null;default:false" json:"rollover"`
+	// RolloverStart seeds the carryover in the creation period (#508); >= 0,
+	// ignored unless Rollover.
+	RolloverStart decimal.Decimal `gorm:"type:numeric(30,18);not null" json:"rollover_start"`
 	// IsActive: the DB column has DEFAULT TRUE (migration 000001), but we
 	// deliberately leave the GORM tag without `default:true` so explicit
 	// `false` from the service layer survives INSERT — gorm omits zero-

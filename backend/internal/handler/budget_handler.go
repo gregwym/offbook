@@ -37,11 +37,12 @@ func (h *BudgetHandler) Register(g *gin.RouterGroup) {
 }
 
 type createBudgetRequest struct {
-	CategoryID int64           `json:"category_id"`
-	Period     string          `json:"period"`
-	Amount     decimal.Decimal `json:"amount"`
-	Rollover   *bool           `json:"rollover"`
-	IsActive   *bool           `json:"is_active"`
+	CategoryID    int64            `json:"category_id"`
+	Period        string           `json:"period"`
+	Amount        decimal.Decimal  `json:"amount"`
+	Rollover      *bool            `json:"rollover"`
+	RolloverStart *decimal.Decimal `json:"rollover_start"`
+	IsActive      *bool            `json:"is_active"`
 }
 
 func (h *BudgetHandler) Create(c *gin.Context) {
@@ -51,11 +52,12 @@ func (h *BudgetHandler) Create(c *gin.Context) {
 		return
 	}
 	b, err := h.svc.Create(c.Request.Context(), personalOwner(c), service.CreateBudgetInput{
-		CategoryID: req.CategoryID,
-		Period:     req.Period,
-		Amount:     req.Amount,
-		Rollover:   req.Rollover,
-		IsActive:   req.IsActive,
+		CategoryID:    req.CategoryID,
+		Period:        req.Period,
+		Amount:        req.Amount,
+		Rollover:      req.Rollover,
+		RolloverStart: req.RolloverStart,
+		IsActive:      req.IsActive,
 	})
 	if err != nil {
 		h.writeServiceError(c, err)
@@ -87,11 +89,12 @@ func (h *BudgetHandler) List(c *gin.Context) {
 }
 
 type updateBudgetRequest struct {
-	CategoryID *int64           `json:"category_id"`
-	Period     *string          `json:"period"`
-	Amount     *decimal.Decimal `json:"amount"`
-	Rollover   *bool            `json:"rollover"`
-	IsActive   *bool            `json:"is_active"`
+	CategoryID    *int64           `json:"category_id"`
+	Period        *string          `json:"period"`
+	Amount        *decimal.Decimal `json:"amount"`
+	Rollover      *bool            `json:"rollover"`
+	RolloverStart *decimal.Decimal `json:"rollover_start"`
+	IsActive      *bool            `json:"is_active"`
 }
 
 func (h *BudgetHandler) Update(c *gin.Context) {
@@ -153,6 +156,8 @@ func (h *BudgetHandler) writeServiceError(c *gin.Context, err error) {
 		})
 	case errors.Is(err, service.ErrInvalidBudgetAmount):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_BUDGET_AMOUNT"})
+	case errors.Is(err, service.ErrInvalidRolloverStart):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_ROLLOVER_START"})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
 	}

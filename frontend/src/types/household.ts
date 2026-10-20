@@ -65,6 +65,7 @@ export type SharedBudget = {
   period: 'monthly' | 'weekly' | 'annual'
   amount: string
   rollover: boolean
+  rollover_start: string
   is_active: boolean
   created_at: string
   updated_at: string
@@ -75,6 +76,7 @@ export type CreateSharedBudgetInput = {
   period: 'monthly' | 'weekly' | 'annual'
   amount: string
   rollover?: boolean
+  rollover_start?: string
   is_active?: boolean
 }
 
@@ -83,6 +85,7 @@ export type UpdateSharedBudgetInput = {
   period?: 'monthly' | 'weekly' | 'annual'
   amount?: string
   rollover?: boolean
+  rollover_start?: string
   is_active?: boolean
 }
 

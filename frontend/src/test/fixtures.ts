@@ -94,6 +94,7 @@ export const budget1: Budget = {
   period: 'monthly',
   amount: '500.000000000000000000',
   rollover: false,
+  rollover_start: '0.000000000000000000',
   is_active: true,
   created_at: now,
   updated_at: now,

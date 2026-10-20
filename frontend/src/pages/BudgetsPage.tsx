@@ -194,7 +194,8 @@ function BudgetCard({ row, category, canMutate, onEdit, onDelete }: CardProps) {
       </div>
       {row.rollover && row.carryover != null && Number(row.carryover) > 0 && (
         <p className="mt-1 text-xs text-emerald-700">
-          Includes <AmountDisplay amount={row.carryover} currency="USD" /> rolled over from earlier periods
+          Includes <AmountDisplay amount={row.carryover} currency="USD" /> rolled over
+          {Number(row.rollover_start) > 0 ? ' (starting balance plus unspent from earlier periods)' : ' from earlier periods'}
         </p>
       )}
       <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100">
@@ -236,6 +237,8 @@ function BudgetFormModal({ mode, isHousehold, categories, budget, onClose, onSub
   const [period, setPeriod] = useState<BudgetPeriod>(budget?.period ?? 'monthly')
   const [amount, setAmount] = useState<string>(budget?.amount ?? '0')
   const [rollover, setRollover] = useState<boolean>(budget?.rollover ?? false)
+  const [rolloverStart, setRolloverStart] = useState<string>(trimZeros(budget?.rollover_start ?? '0'))
+  const [startError, setStartError] = useState<string | null>(null)
   const [isActive, setIsActive] = useState<boolean>(budget?.is_active ?? true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -246,12 +249,18 @@ function BudgetFormModal({ mode, isHousehold, categories, budget, onClose, onSub
     setError(null)
     setCategoryError(null)
     setAmountError(null)
+    setStartError(null)
     if (categoryID === '' || !Number.isInteger(categoryID) || categoryID <= 0) {
       setCategoryError('Pick a category.')
       return
     }
     if (!amount.trim()) {
       setAmountError('Amount is required.')
+      return
+    }
+    const start = rolloverStart.trim() === '' ? '0' : rolloverStart.trim()
+    if (rollover && !/^\d+(\.\d+)?$/.test(start)) {
+      setStartError('Enter a starting balance of 0 or more, like 40.00.')
       return
     }
     setSubmitting(true)
@@ -261,6 +270,9 @@ function BudgetFormModal({ mode, isHousehold, categories, budget, onClose, onSub
         period,
         amount,
         rollover,
+        // Kept while rollover is off so re-enabling restores it; the backend
+        // ignores it until rollover is on.
+        rollover_start: rollover ? start : (budget?.rollover_start ?? '0'),
         is_active: isActive,
       })
     } catch (err) {
@@ -269,6 +281,8 @@ function BudgetFormModal({ mode, isHousehold, categories, budget, onClose, onSub
         setCategoryError(message)
       } else if (code === 'INVALID_BUDGET_AMOUNT') {
         setAmountError(message)
+      } else if (code === 'INVALID_ROLLOVER_START') {
+        setStartError(message)
       } else {
         setError(message)
       }
@@ -314,10 +328,27 @@ function BudgetFormModal({ mode, isHousehold, categories, budget, onClose, onSub
               <span className="block text-xs text-gray-500">
                 {isHousehold
                   ? 'Shared budgets are tracked per calendar month; unspent balance carries month to month, and an overspent month resets it to zero.'
-                  : 'Starts from this budget’s creation; an overspent period resets the balance to zero.'}
+                  : 'Starts from the balance below in the period you create it; an overspent period resets the balance to zero.'}
               </span>
             </span>
           </label>
+          {rollover && (
+            <div>
+              <Field label="Starting balance" error={startError}>
+                <input
+                  className={inputClass}
+                  value={rolloverStart}
+                  onChange={(e) => setRolloverStart(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  aria-describedby="rollover-start-help"
+                />
+              </Field>
+              <p id="rollover-start-help" className="mt-1 text-xs text-gray-500">
+                Already have money set aside for this category? Enter it to carry it in now.
+              </p>
+            </div>
+          )}
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
             Active
@@ -362,4 +393,10 @@ function extractErr(err: unknown): { code: string | null; message: string } {
 
 function errMsg(err: unknown): string {
   return extractErr(err).message
+}
+
+// trimZeros renders a NUMERIC(30,18) string ("40.000000000000000000") as a
+// short editable value ("40"), without float conversion.
+function trimZeros(v: string): string {
+  return v.includes('.') ? v.replace(/0+$/, '').replace(/\.$/, '') : v
 }
