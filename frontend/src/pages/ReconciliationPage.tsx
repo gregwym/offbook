@@ -184,14 +184,14 @@ function CheckpointRow(props: CheckpointProps) {
         <td className="whitespace-nowrap px-4 py-2">
           <TimeAgo when={cp.as_of} />
         </td>
-        <td className="px-4 py-2 text-gray-500">{sourceLabel(cp.source)}</td>
-        <td className="px-4 py-2 text-right">
+        <td className="whitespace-nowrap px-4 py-2 text-gray-500">{sourceLabel(cp.source)}</td>
+        <td className="whitespace-nowrap px-4 py-2 text-right">
           <AmountDisplay amount={cp.observed_quantity} fractionDigits={2} />
         </td>
-        <td className="px-4 py-2 text-right text-gray-500">
+        <td className="whitespace-nowrap px-4 py-2 text-right text-gray-500">
           <AmountDisplay amount={cp.prior_fold} fractionDigits={2} />
         </td>
-        <td className="px-4 py-2 text-right">
+        <td className="whitespace-nowrap px-4 py-2 text-right">
           <AmountDisplay amount={cp.delta} fractionDigits={2} signed />
         </td>
         <td className="px-4 py-2">
@@ -261,7 +261,7 @@ function explain(cp: ReconciliationCheckpoint): string {
 function KindChip({ kind }: { kind?: string }) {
   if (!kind) return <span className="text-xs text-gray-400">{recordedAsLabel(kind)}</span>
   return (
-    <span className="inline-flex items-center rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-xs font-medium text-gray-600">
+    <span className="inline-flex items-center whitespace-nowrap rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-xs font-medium text-gray-600">
       {recordedAsLabel(kind)}
     </span>
   )
@@ -280,7 +280,7 @@ function Status({ cp, acknowledging, onStartAcknowledge }: CheckpointProps) {
   }
   if (!cp.needs_attention && cp.kind === 'adjustment' && cp.acknowledged) {
     return (
-      <span title={cp.acknowledged_note ?? undefined} className="inline-flex items-center gap-1 text-xs text-emerald-700">
+      <span title={cp.acknowledged_note ?? undefined} className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-emerald-700">
         <CheckCircle2 size={12} /> Reviewed
         {cp.acknowledged_at && (
           <>
@@ -302,7 +302,7 @@ function AcknowledgeForm({ note, onNoteChange, onSubmitAcknowledge, onCancelAckn
         value={note}
         onChange={(e) => onNoteChange(e.target.value)}
         aria-label="Note"
-        placeholder="Optional note (e.g. confirmed with bank statement)"
+        placeholder="Optional note, e.g. bank fee"
         className="min-w-0 flex-1 basis-full rounded-md border border-gray-300 px-2 py-1 text-sm sm:basis-auto"
       />
       <button
