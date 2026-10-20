@@ -344,13 +344,14 @@ export function TransactionsPage() {
             <ArrowRightLeft size={16} className="mt-0.5 shrink-0" />
             <span>
               {transferCandidates.length} possible transfer{transferCandidates.length === 1 ? '' : 's'} found between
-              your own accounts —{' '}
+              your own accounts. {transferCandidates.length === 1 ? "It isn't" : "They aren't"} counted in income or
+              spending until you{' '}
               <button
                 type="button"
                 onClick={() => setReviewingTransfers(true)}
                 className="underline hover:text-indigo-700"
               >
-                review matches
+                review {transferCandidates.length === 1 ? 'it' : 'them'}
               </button>
               .
             </span>

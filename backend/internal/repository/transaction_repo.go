@@ -207,6 +207,11 @@ type TransactionRepository interface {
 	// Returns ErrNotFound if transactionID doesn't exist or isn't currently
 	// linked as a transfer.
 	UnlinkTransferPair(ctx context.Context, userID, transactionID int64) error
+	// DismissTransferPair records that idA and idB are "not a transfer"
+	// (#510): ListTransferCandidates and spend_lines stop proposing the pair.
+	// Both rows must be live and owned by userID (else ErrNotFound); the
+	// ownership check and insert share one DB transaction. Idempotent.
+	DismissTransferPair(ctx context.Context, userID, idA, idB int64) error
 }
 
 // TransferCandidate pairs two live, unmatched kind=flow transactions proposed

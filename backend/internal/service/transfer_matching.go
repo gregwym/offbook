@@ -26,8 +26,8 @@ var (
 
 // TransferMatchingService implements #371: a deterministic pass proposing
 // is_transfer pairs across a user's own accounts, plus the confirm/unlink
-// actions that actually link or unlink them. Nothing is linked silently —
-// ProposeMatches is a pure read; only Confirm writes.
+// actions that actually link or unlink them, and Dismiss for a wrong guess
+// (#510). Nothing is linked silently — ProposeMatches is a pure read.
 type TransferMatchingService struct {
 	repo repository.TransactionRepository
 }
@@ -81,6 +81,23 @@ func (s *TransferMatchingService) Confirm(ctx context.Context, userID, idA, idB 
 		return nil, nil, fmt.Errorf("link transfer pair: %w", err)
 	}
 	return linkedA, linkedB, nil
+}
+
+// Dismiss records that a proposed pair is "not a transfer" (#510). The
+// matcher stops proposing it and both rows count normally again in income,
+// spending and budgets. Only ownership is checked: dismissing a pair that is
+// no longer proposed is harmless and keeps the call idempotent.
+func (s *TransferMatchingService) Dismiss(ctx context.Context, userID, idA, idB int64) error {
+	if idA == idB {
+		return ErrTransferSameAccount
+	}
+	if err := s.repo.DismissTransferPair(ctx, userID, idA, idB); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrTransactionNotFound
+		}
+		return fmt.Errorf("dismiss transfer pair: %w", err)
+	}
+	return nil
 }
 
 // Unlink clears is_transfer+transfer_pair_id on transactionID and its

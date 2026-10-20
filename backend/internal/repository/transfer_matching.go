@@ -40,6 +40,19 @@ func (r *transactionRepo) ListTransferCandidates(ctx context.Context, userID int
 		return nil, err
 	}
 
+	// Pairs the user already said are "not a transfer" (#510) are never
+	// proposed again. Mirrors the NOT EXISTS in txn_is_proposed_transfer.
+	var dismissals []model.TransferMatchDismissal
+	if err := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Find(&dismissals).Error; err != nil {
+		return nil, err
+	}
+	dismissed := make(map[[2]int64]bool, len(dismissals))
+	for _, d := range dismissals {
+		dismissed[[2]int64{d.TransactionLowID, d.TransactionHighID}] = true
+	}
+
 	var candidates []transferCandidateRow
 	for i := range txns {
 		for j := i + 1; j < len(txns); j++ {
@@ -55,6 +68,9 @@ func (r *transactionRepo) ListTransferCandidates(ctx context.Context, userID int
 				continue
 			}
 			if !a.Amount.Equal(b.Amount.Neg()) {
+				continue
+			}
+			if dismissed[orderedPair(a.ID, b.ID)] {
 				continue
 			}
 			candidates = append(candidates, transferCandidateRow{i: i, j: j, dateDiff: diff})
@@ -158,5 +174,36 @@ func (r *transactionRepo) UnlinkTransferPair(ctx context.Context, userID, transa
 			return err
 		}
 		return nil
+	})
+}
+
+// orderedPair is the (low, high) key a TransferMatchDismissal is stored under.
+func orderedPair(a, b int64) [2]int64 {
+	if a > b {
+		a, b = b, a
+	}
+	return [2]int64{a, b}
+}
+
+func (r *transactionRepo) DismissTransferPair(ctx context.Context, userID, idA, idB int64) error {
+	if idA == idB {
+		return errors.New("transfer dismissal requires two distinct transactions")
+	}
+	pair := orderedPair(idA, idB)
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var n int64
+		if err := tx.Model(&model.Transaction{}).
+			Where("user_id = ? AND id IN ?", userID, []int64{idA, idB}).
+			Count(&n).Error; err != nil {
+			return err
+		}
+		if n != 2 {
+			return ErrNotFound
+		}
+		return tx.Exec(`
+			INSERT INTO transfer_match_dismissals (user_id, transaction_low_id, transaction_high_id)
+			VALUES (?, ?, ?)
+			ON CONFLICT (user_id, transaction_low_id, transaction_high_id) WHERE deleted_at IS NULL DO NOTHING`,
+			userID, pair[0], pair[1]).Error
 	})
 }

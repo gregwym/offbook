@@ -12,7 +12,7 @@ import (
 )
 
 // TransferHandler serves the #371 transfer-matching surface: proposed
-// candidate pairs, confirming a match, and unlinking one.
+// candidate pairs, confirming or dismissing a match, and unlinking one.
 type TransferHandler struct {
 	svc *service.TransferMatchingService
 }
@@ -24,6 +24,7 @@ func NewTransferHandler(s *service.TransferMatchingService) *TransferHandler {
 func (h *TransferHandler) Register(g *gin.RouterGroup) {
 	g.GET("/transfers/candidates", h.Candidates)
 	g.POST("/transfers/confirm", h.Confirm)
+	g.POST("/transfers/dismiss", h.Dismiss)
 	g.POST("/transactions/:id/unlink-transfer", h.Unlink)
 }
 
@@ -48,7 +49,7 @@ func (h *TransferHandler) Candidates(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": wire, "total": int64(len(wire))})
 }
 
-type confirmTransferRequest struct {
+type transferPairRequest struct {
 	TransactionIDA int64 `json:"transaction_id_a"`
 	TransactionIDB int64 `json:"transaction_id_b"`
 }
@@ -57,7 +58,7 @@ type confirmTransferRequest struct {
 // path in this handler. Nothing auto-links; the user must explicitly POST
 // the pair they reviewed in the candidates list.
 func (h *TransferHandler) Confirm(c *gin.Context) {
-	var req confirmTransferRequest
+	var req transferPairRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
 		return
@@ -75,6 +76,28 @@ func (h *TransferHandler) Confirm(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": transferCandidateWire{TransactionA: a, TransactionB: b}})
+}
+
+// Dismiss marks a proposed pair as "not a transfer" (#510) so it stops being
+// proposed and both rows count in income/spending again.
+func (h *TransferHandler) Dismiss(c *gin.Context) {
+	var req transferPairRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	if req.TransactionIDA <= 0 || req.TransactionIDB <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "transaction_id_a and transaction_id_b are required",
+			"code":  "INVALID_REQUEST",
+		})
+		return
+	}
+	if err := h.svc.Dismiss(c.Request.Context(), auth.MustUserID(c.Request.Context()), req.TransactionIDA, req.TransactionIDB); err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // Unlink restores a confirmed transfer pair to two ordinary transactions.
