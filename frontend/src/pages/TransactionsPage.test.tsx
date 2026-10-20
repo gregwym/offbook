@@ -228,6 +228,25 @@ describe('TransactionsPage unpaired transfer chip (#463)', () => {
     expect(screen.getByText('CARD PAYMENT').parentElement).toHaveTextContent('not in spending')
   })
 
+  // #513: a pending row is marked, and says its edits carry over on posting.
+  it('marks only pending rows and explains that edits carry over', async () => {
+    const rows = [
+      { ...fx.transaction1, id: 31, description: 'CORNER CAFE', source: 'plaid', pending: true },
+      { ...fx.transaction1, id: 32, description: 'POSTED GROCER', source: 'plaid', pending: false },
+    ]
+    server.use(http.get(`${API}/transactions`, () => HttpResponse.json({ data: rows, total: rows.length })))
+
+    renderPage(<TransactionsPage />)
+    await expectHealthySmoke()
+    await screen.findByText('CORNER CAFE')
+
+    const chips = screen.getAllByText('pending', { exact: true })
+    expect(chips).toHaveLength(1)
+    expect(screen.getByText('CORNER CAFE').parentElement).toContainElement(chips[0])
+    expect(chips[0]).toHaveAttribute('title', 'Your bank hasn’t posted this yet. Your edits will carry over when it posts.')
+    expect(screen.getByText('POSTED GROCER').parentElement).not.toHaveTextContent(/pending/i)
+  })
+
   it('hides and unhides a flow row via PATCH and shows a hidden chip', async () => {
     const rows = [{ ...fx.transaction1, id: 21, description: 'ONE OFF', is_transfer: false, hidden_at: null }]
     let body: unknown = null

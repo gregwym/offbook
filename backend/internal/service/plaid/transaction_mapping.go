@@ -81,6 +81,7 @@ func MapPlaidTransaction(p PlaidTransaction, userID, accountID, assetID int64, m
 		Source:             source,
 		ExternalID:         &externalID,
 		PlaidTransactionID: &plaidID,
+		Pending:            p.Pending,
 	}
 
 	// Rules first — a matching rule overrides the Plaid PFC default.
@@ -96,7 +97,7 @@ func MapPlaidTransaction(p PlaidTransaction, userID, accountID, assetID int64, m
 
 // MergePlaidUpdate overlays an incoming /transactions/sync `modified` entry
 // onto the existing row. Plaid-controlled fields (amount, description,
-// merchant_name, posted_date, transaction_date) are taken from the new
+// merchant_name, posted_date, transaction_date, pending) are taken from the new
 // payload; user-edited fields (notes, category_id, is_transfer, transfer
 // pairing) are preserved untouched.
 //
@@ -121,6 +122,7 @@ func MergePlaidUpdate(existing model.Transaction, incoming PlaidTransaction, acc
 	merged.MerchantName = mapped.MerchantName
 	merged.TransactionDate = mapped.TransactionDate
 	merged.PostedDate = mapped.PostedDate
+	merged.Pending = mapped.Pending
 	// Category: a non-null existing CategoryID is sacred — that's either
 	// the user's manual pick, a previously-fired rule, or a prior
 	// plaid_default that the user has implicitly accepted. Only fill from

@@ -760,6 +760,8 @@ type RowProps = {
   indented?: boolean
 }
 
+const PENDING_HINT = 'Your bank hasn’t posted this yet. Your edits will carry over when it posts.'
+
 function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onSplit, onToggleHidden, onDelete, onUnlinkTransfer, indented, selected, onSelect, onToggleReviewed }: RowProps) {
   // Per ADR-0013, the unit on a transaction is asset_id. Display currency
   // = asset.symbol when available; fall back to the parent account's
@@ -845,6 +847,14 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             transfer
           </button>
         )}
+        {tx.pending && (
+          <span
+            title={PENDING_HINT}
+            className="ml-1.5 inline-flex items-center rounded border border-sky-200 bg-sky-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-sky-700"
+          >
+            pending
+          </span>
+        )}
         {hidden && (
           <span
             title="You hid this transaction. It still counts toward the account balance but not spending, income or budgets."
@@ -868,6 +878,8 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             <DateDisplay value={tx.transaction_date} />
             {[tx.merchant_name, account?.name].filter(Boolean).map((x) => ` · ${x}`).join('')}
           </div>
+          {/* No hover on touch screens: spell out what the chip's tooltip says. */}
+          {tx.pending && <div className="text-xs text-sky-700">{PENDING_HINT}</div>}
           {categorySelect}
           <div className="flex flex-wrap gap-x-3 text-xs">
             {reviewable && (
