@@ -1,5 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { previewDraftRule } from '../api/categorizationRules'
+import { listTransactionTags } from '../api/transactions'
+import { MAX_TAG_LENGTH, mergeTags } from '../lib/tags'
+import type { TagCount } from '../types/transaction'
 import type { Category } from '../types/category'
 import {
   MATCH_TYPES,
@@ -24,6 +27,7 @@ export type RuleFormDefaults = {
   rename_merchant?: string
   hide_matches?: boolean
   mark_reviewed?: boolean
+  add_tags?: string[]
 }
 
 // Mirrors the backend's maxRenameMerchant.
@@ -56,6 +60,23 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   const rename = renameMerchant.trim()
   const [hideMatches, setHideMatches] = useState(rule?.hide_matches ?? defaults?.hide_matches ?? false)
   const [markReviewed, setMarkReviewed] = useState(rule?.mark_reviewed ?? defaults?.mark_reviewed ?? false)
+  // Tags the rule adds (#546), typed comma-separated and normalized like the
+  // transaction tag editor; the user's existing tags are one-tap suggestions.
+  const [tagsText, setTagsText] = useState((rule?.add_tags ?? defaults?.add_tags ?? []).join(', '))
+  const [knownTags, setKnownTags] = useState<TagCount[]>([])
+  useEffect(() => {
+    let live = true
+    listTransactionTags()
+      .then((t) => { if (live) setKnownTags(t) })
+      .catch(() => {})
+    return () => { live = false }
+  }, [])
+  const parsedTags = mergeTags([], tagsText, knownTags)
+  const ruleTags = parsedTags.next ?? []
+  // Stable string form of ruleTags for the preview effect's dependencies.
+  const tagsKey = ruleTags.join('\n')
+  const tagSuggestions = knownTags.filter((k) => !ruleTags.some((t) => t.toLowerCase() === k.name.toLowerCase())).slice(0, 8)
+  const addSuggestion = (name: string) => setTagsText((cur) => (cur.trim() ? `${cur.trim().replace(/,$/, '')}, ${name}` : name))
   const [submitting, setSubmitting] = useState(false)
   // We split form errors by field when the backend gives us a code; otherwise
   // surface as a generic banner above the form.
@@ -63,13 +84,14 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   const [patternError, setPatternError] = useState<string | null>(null)
   const [categoryError, setCategoryError] = useState<string | null>(null)
   const [renameError, setRenameError] = useState<string | null>(null)
+  const tagsError = parsedTags.error
 
   // Live impact of the draft rule: debounced, cancels stale requests, and
   // never blocks saving. Results are keyed by the draft they describe, so a
   // result for an older draft reads as "loading" rather than stale.
   const cat = Number(categoryID)
   const draftReady = pattern.trim() !== '' && Number.isInteger(cat) && cat > 0 && priority >= 0
-  const draftKey = JSON.stringify([pattern.trim(), matchType, cat, priority, isActive, rename, hideMatches, markReviewed, rule?.id ?? null])
+  const draftKey = JSON.stringify([pattern.trim(), matchType, cat, priority, isActive, rename, hideMatches, markReviewed, tagsKey, rule?.id ?? null])
   const [impact, setImpact] = useState<{ key: string; data: DraftPreview | null } | null>(null)
   useEffect(() => {
     if (!draftReady) return
@@ -85,6 +107,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
           ...(rename ? { rename_merchant: rename } : {}),
           ...(hideMatches ? { hide_matches: true } : {}),
           ...(markReviewed ? { mark_reviewed: true } : {}),
+          ...(tagsKey ? { add_tags: tagsKey.split('\n') } : {}),
         },
         rule?.id,
         ctrl.signal,
@@ -98,7 +121,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
       clearTimeout(timer)
       ctrl.abort()
     }
-  }, [draftKey, draftReady, pattern, matchType, cat, priority, isActive, rename, hideMatches, markReviewed, rule?.id])
+  }, [draftKey, draftReady, pattern, matchType, cat, priority, isActive, rename, hideMatches, markReviewed, tagsKey, rule?.id])
   const current = draftReady && impact?.key === draftKey ? impact : null
   const impactData = current?.data ?? null
   const impactLoading = draftReady && isActive && current === null
@@ -124,6 +147,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
       setRenameError(`Keep the merchant name to ${MAX_RENAME} characters or fewer.`)
       return
     }
+    if (tagsError) return
     setSubmitting(true)
     try {
       await onSubmit({
@@ -136,6 +160,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
         ...(rename || rule?.rename_merchant ? { rename_merchant: rename } : {}),
         hide_matches: hideMatches,
         mark_reviewed: markReviewed,
+        add_tags: ruleTags,
       })
     } catch (err) {
       const { code, message } = extractErr(err)
@@ -231,6 +256,37 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
               For merchants you trust, like rent or payroll: matches skip Needs review. You can send any one back to review later; the rule won&rsquo;t mark it again on the next sync.
             </p>
           </div>
+          <div>
+            <label htmlFor="rule-add-tags" className="mb-1 block text-xs font-medium text-gray-600">Also add tags (optional)</label>
+            <input
+              id="rule-add-tags"
+              className={inputClass}
+              value={tagsText}
+              onChange={(e) => setTagsText(e.target.value)}
+              placeholder="e.g. work travel, reimbursable"
+              maxLength={MAX_TAG_LENGTH * 12}
+              aria-describedby="rule-add-tags-help"
+            />
+            {tagsError && <span role="alert" className="mt-1 block text-xs text-red-600">{tagsError}</span>}
+            {tagSuggestions.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {tagSuggestions.map((s) => (
+                  <button
+                    key={s.name}
+                    type="button"
+                    onClick={() => addSuggestion(s.name)}
+                    aria-label={`Add tag ${s.name} to this rule`}
+                    className="min-h-7 rounded-full border border-gray-300 px-2 text-xs text-gray-700 hover:bg-gray-50"
+                  >
+                    + {s.name}
+                  </button>
+                ))}
+              </div>
+            )}
+            <p id="rule-add-tags-help" className="mt-1 text-xs text-gray-500">
+              Separate tags with commas. Matches gain these tags; tags they already have stay as they are. You can remove a tag from any one later; the rule won&rsquo;t add it back on the next sync.
+            </p>
+          </div>
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
             Active
@@ -252,6 +308,8 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
                     ` ${impactData.would_hide} would be hidden from spending and budgets.`}
                   {markReviewed && impactData.would_mark_reviewed > 0 &&
                     ` ${impactData.would_mark_reviewed} would be marked reviewed.`}
+                  {ruleTags.length > 0 && impactData.would_tag > 0 &&
+                    ` ${impactData.would_tag} would be tagged ${ruleTags.join(', ')}.`}
                   {impactData.skipped_manual > 0 && ` ${impactData.skipped_manual} manual picks are never overridden.`}
                 </p>
                 {impactData.samples.length > 0 && (

@@ -53,8 +53,10 @@ type CreateRuleInput struct {
 	HideMatches bool
 	// MarkReviewed marks the flow rows the rule wins reviewed (#538).
 	MarkReviewed bool
-	Priority     int
-	IsActive     *bool
+	// AddTags are added to the flow rows the rule wins (#546).
+	AddTags  []string
+	Priority int
+	IsActive *bool
 }
 
 // UpdateRuleInput is a sparse patch. Nil pointer = leave alone.
@@ -74,8 +76,11 @@ type UpdateRuleInput struct {
 	// MarkReviewed turns review marking on or off (#538). Turning it off
 	// leaves already-reviewed rows reviewed.
 	MarkReviewed *bool
-	Priority     *int
-	IsActive     *bool
+	// AddTags replaces the rule's tags (#546); nil leaves them alone, an
+	// empty list clears them. Rows keep tags the rule already added.
+	AddTags  *[]string
+	Priority *int
+	IsActive *bool
 }
 
 // normRename trims a rename and maps blank to nil (no rename).
@@ -138,6 +143,9 @@ func (s *CategorizationRuleService) Create(ctx context.Context, userID int64, in
 	if in.IsActive != nil {
 		r.IsActive = *in.IsActive
 	}
+	if err := s.setAddTags(ctx, r, in.AddTags); err != nil {
+		return nil, err
+	}
 	if err := s.validate(ctx, r); err != nil {
 		return nil, err
 	}
@@ -194,6 +202,11 @@ func (s *CategorizationRuleService) Update(ctx context.Context, userID, id int64
 	if in.MarkReviewed != nil {
 		r.MarkReviewed = *in.MarkReviewed
 	}
+	if in.AddTags != nil {
+		if err := s.setAddTags(ctx, r, *in.AddTags); err != nil {
+			return nil, err
+		}
+	}
 	if in.Priority != nil {
 		r.Priority = *in.Priority
 	}
@@ -210,6 +223,22 @@ func (s *CategorizationRuleService) Update(ctx context.Context, userID, id int64
 		return nil, fmt.Errorf("update rule: %w", err)
 	}
 	return r, nil
+}
+
+// setAddTags normalizes tags like transaction tags (#544) and, when the
+// transaction repository is wired, reuses the user's existing spelling.
+func (s *CategorizationRuleService) setAddTags(ctx context.Context, r *model.CategorizationRule, tags []string) error {
+	norm, err := NormalizeTags(tags)
+	if err != nil {
+		return err
+	}
+	if s.txRepo != nil {
+		if norm, err = canonicalizeTags(ctx, s.txRepo, r.UserID, norm); err != nil {
+			return fmt.Errorf("canonical tags: %w", err)
+		}
+	}
+	r.AddTags = norm
+	return nil
 }
 
 func (s *CategorizationRuleService) SoftDelete(ctx context.Context, userID, id int64) error {
@@ -400,8 +429,10 @@ type DraftRuleInput struct {
 	HideMatches bool
 	// MarkReviewed as on CreateRuleInput (#538).
 	MarkReviewed bool
-	Priority     int
-	IsActive     bool
+	// AddTags as on CreateRuleInput (#546).
+	AddTags  []string
+	Priority int
+	IsActive bool
 }
 
 // DraftPreview reports a draft rule's impact against the user's existing
@@ -412,8 +443,8 @@ type DraftPreview struct {
 	// ordering against the user's other rules), manual picks excluded.
 	Matched int `json:"matched"`
 	// WouldChange is the subset of Matched whose stored category, rule,
-	// merchant (when the draft renames), hidden state (when it hides) or
-	// review state (when it marks reviewed) differs.
+	// merchant (when the draft renames), hidden state (when it hides),
+	// review state (when it marks reviewed) or tags (when it tags) differ.
 	WouldChange int `json:"would_change"`
 	// WouldRename is the subset of Matched whose merchant the draft's rename
 	// would change (#534).
@@ -423,7 +454,10 @@ type DraftPreview struct {
 	// WouldMarkReviewed is the subset of Matched the draft would mark
 	// reviewed (#538).
 	WouldMarkReviewed int `json:"would_mark_reviewed"`
-	SkippedManual     int `json:"skipped_manual"`
+	// WouldTag is the subset of Matched that would gain at least one of the
+	// draft's tags (#546).
+	WouldTag      int `json:"would_tag"`
+	SkippedManual int `json:"skipped_manual"`
 	// Samples are up to draftSampleLimit descriptions of matched rows.
 	Samples []string `json:"samples"`
 }
@@ -458,6 +492,9 @@ func (s *CategorizationRuleService) PreviewDraft(ctx context.Context, userID int
 			return DraftPreview{}, err
 		}
 		draft.ID = *in.RuleID
+	}
+	if err := s.setAddTags(ctx, draft, in.AddTags); err != nil {
+		return DraftPreview{}, err
 	}
 	if err := s.validate(ctx, draft); err != nil {
 		return DraftPreview{}, err
@@ -514,6 +551,9 @@ func (s *CategorizationRuleService) PreviewDraft(ctx context.Context, userID int
 			}
 			if d.ReviewChanged(row) {
 				out.WouldMarkReviewed++
+			}
+			if d.TagsChanged(row) {
+				out.WouldTag++
 			}
 			if d.SameAs(row) {
 				continue

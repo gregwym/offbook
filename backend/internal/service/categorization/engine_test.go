@@ -1,6 +1,8 @@
 package categorization_test
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -308,6 +310,75 @@ func TestApply_MarkReviewed(t *testing.T) {
 		tx.ReviewedAt = nil
 		if d.SameAs(tx) {
 			t.Error("SameAs = true on an unreviewed row, want false")
+		}
+	})
+}
+
+func TestApply_AddTags(t *testing.T) {
+	rules := categorization.Compile([]model.CategorizationRule{
+		{ID: 1, CategoryID: 10, MatchType: "contains", Pattern: "UBER", IsActive: true, AddTags: model.Tags{"work-travel", "Reimbursable"}},
+		{ID: 2, CategoryID: 20, MatchType: "contains", Pattern: "SHELL", IsActive: true},
+	})
+
+	t.Run("winning rule adds its tags to a flow row", func(t *testing.T) {
+		tx := &model.Transaction{Kind: model.KindFlow, Description: ptr("UBER TRIP"), Tags: model.Tags{"nyc"}}
+		d, ok := categorization.Apply(tx, rules)
+		if !ok || d.RuleID != 1 {
+			t.Fatalf("Apply: ok=%v rule=%d, want rule 1", ok, d.RuleID)
+		}
+		want := []string{"nyc", "work-travel", "Reimbursable"}
+		if strings.Join(tx.Tags, ",") != strings.Join(want, ",") {
+			t.Errorf("Tags = %v, want %v", tx.Tags, want)
+		}
+		if !d.SameAs(tx) {
+			t.Error("SameAs after Apply = false, want true (re-apply is a no-op)")
+		}
+	})
+	t.Run("tags already present in any case are not duplicated", func(t *testing.T) {
+		tx := &model.Transaction{Description: ptr("UBER"), Tags: model.Tags{"Work-Travel"}}
+		categorization.Apply(tx, rules)
+		want := []string{"Work-Travel", "Reimbursable"}
+		if strings.Join(tx.Tags, ",") != strings.Join(want, ",") {
+			t.Errorf("Tags = %v, want %v", tx.Tags, want)
+		}
+	})
+	t.Run("row stays within the tag limit", func(t *testing.T) {
+		full := model.Tags{}
+		for i := 0; i < model.MaxTagsPerRow-1; i++ {
+			full = append(full, fmt.Sprintf("t%d", i))
+		}
+		tx := &model.Transaction{Description: ptr("UBER"), Tags: full}
+		d, _ := categorization.Apply(tx, rules)
+		if len(tx.Tags) != model.MaxTagsPerRow || tx.Tags[len(tx.Tags)-1] != "work-travel" {
+			t.Errorf("Tags = %v, want %d tags ending in work-travel", tx.Tags, model.MaxTagsPerRow)
+		}
+		if d.TagsChanged(tx) || !d.SameAs(tx) {
+			t.Error("a full row still reads as changed, want idempotent")
+		}
+	})
+	t.Run("non-flow rows are never tagged", func(t *testing.T) {
+		tx := &model.Transaction{Kind: model.KindTradeLeg, Description: ptr("UBER")}
+		d, ok := categorization.Apply(tx, rules)
+		if !ok {
+			t.Fatal("Apply: no match, want rule 1")
+		}
+		if len(tx.Tags) != 0 || d.TagsChanged(tx) {
+			t.Errorf("trade leg tagged: %v", tx.Tags)
+		}
+	})
+	t.Run("rule without tags leaves tags alone", func(t *testing.T) {
+		tx := &model.Transaction{Description: ptr("SHELL OIL"), Tags: model.Tags{"car"}}
+		categorization.Apply(tx, rules)
+		if strings.Join(tx.Tags, ",") != "car" {
+			t.Errorf("Tags = %v, want [car]", tx.Tags)
+		}
+	})
+	t.Run("SameAs sees a tag the user removed", func(t *testing.T) {
+		tx := &model.Transaction{Description: ptr("UBER")}
+		d, _ := categorization.Apply(tx, rules)
+		tx.Tags = model.Tags{"work-travel"}
+		if d.SameAs(tx) {
+			t.Error("SameAs = true with a rule tag missing, want false")
 		}
 	})
 }

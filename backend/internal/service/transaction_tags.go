@@ -14,7 +14,7 @@ import (
 // Tag limits (#544).
 const (
 	MaxTagLength = 40
-	MaxTags      = 10
+	MaxTags      = model.MaxTagsPerRow
 )
 
 // ErrInvalidTags is returned when a tag is too long or a row has too many.
@@ -50,10 +50,16 @@ func NormalizeTags(in []string) (model.Tags, error) {
 // canonicalTags rewrites each tag to the spelling the user already uses for
 // it, so "vacation" and "Vacation" never split into two tags.
 func (s *TransactionService) canonicalTags(ctx context.Context, userID int64, tags model.Tags) (model.Tags, error) {
+	return canonicalizeTags(ctx, s.repo, userID, tags)
+}
+
+// canonicalizeTags is canonicalTags for any caller holding a transaction
+// repository (rules reuse it for their add_tags, #546).
+func canonicalizeTags(ctx context.Context, repo repository.TransactionRepository, userID int64, tags model.Tags) (model.Tags, error) {
 	if len(tags) == 0 {
 		return tags, nil
 	}
-	existing, err := s.repo.ListTags(ctx, userID)
+	existing, err := repo.ListTags(ctx, userID)
 	if err != nil {
 		return nil, err
 	}

@@ -38,7 +38,7 @@ export const handlers = [
   http.get(`${API}/transactions/tags`, () => list([{ name: 'vacation', count: 2 }, { name: 'Work trip', count: 1 }])),
   http.get(`${API}/categorization-rules`, () => list(fx.rules)),
   http.post(`${API}/categorization-rules/preview`, () =>
-    HttpResponse.json({ data: { scanned: 0, matched: 0, would_change: 0, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, skipped_manual: 0, samples: [] } }),
+    HttpResponse.json({ data: { scanned: 0, matched: 0, would_change: 0, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, would_tag: 0, skipped_manual: 0, samples: [] } }),
   ),
   http.get(`${API}/categorization-verdicts`, () => list(fx.categorizationVerdicts)),
 

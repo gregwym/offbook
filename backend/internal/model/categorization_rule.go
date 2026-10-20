@@ -26,10 +26,13 @@ type CategorizationRule struct {
 	HideMatches bool `gorm:"not null;default:false" json:"hide_matches"`
 	// MarkReviewed marks the flow rows this rule wins reviewed, so they skip
 	// the Needs review inbox (#538). A rule never un-reviews.
-	MarkReviewed bool           `gorm:"not null;default:false" json:"mark_reviewed"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+	MarkReviewed bool `gorm:"not null;default:false" json:"mark_reviewed"`
+	// AddTags are added to the flow rows this rule wins, skipping tags the
+	// row already has (#546). A rule never removes a tag.
+	AddTags   Tags           `gorm:"type:text[];not null;default:'{}'" json:"add_tags"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Category *Category `gorm:"foreignKey:CategoryID" json:"-"`
 	Asset    *Asset    `gorm:"foreignKey:AssetID" json:"-"`

@@ -7,6 +7,9 @@ import (
 	"github.com/lib/pq"
 )
 
+// MaxTagsPerRow is how many tags one transaction can carry (#544).
+const MaxTagsPerRow = 10
+
 // Tags is a transaction's user tag list (#544), stored as Postgres TEXT[].
 // It never encodes as SQL NULL or JSON null: an untagged row is '{}' / [].
 type Tags []string

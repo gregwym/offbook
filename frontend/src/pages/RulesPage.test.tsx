@@ -103,7 +103,7 @@ describe('RulesPage smoke', () => {
       http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
         bodies.push((await request.json()) as Record<string, unknown>)
         return HttpResponse.json({
-          data: { scanned: 40, matched: 3, would_change: 2, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, skipped_manual: 1, samples: ['WHOLEFDS #1', 'WHOLEFDS #2'] },
+          data: { scanned: 40, matched: 3, would_change: 2, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, would_tag: 0, skipped_manual: 1, samples: ['WHOLEFDS #1', 'WHOLEFDS #2'] },
         })
       }),
     )
@@ -136,7 +136,7 @@ describe('RulesPage smoke', () => {
       http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
         previews.push((await request.json()) as Record<string, unknown>)
         return HttpResponse.json({
-          data: { scanned: 10, matched: 2, would_change: 2, would_rename: 2, would_hide: 0, would_mark_reviewed: 0, skipped_manual: 0, samples: ['AMZN MKTP US*2K4'] },
+          data: { scanned: 10, matched: 2, would_change: 2, would_rename: 2, would_hide: 0, would_mark_reviewed: 0, would_tag: 0, skipped_manual: 0, samples: ['AMZN MKTP US*2K4'] },
         })
       }),
       http.post(`${API}/categorization-rules`, async ({ request }) => {
@@ -191,7 +191,7 @@ describe('RulesPage smoke', () => {
         const body = (await request.json()) as Record<string, unknown>
         previews.push(body)
         return HttpResponse.json({
-          data: { scanned: 10, matched: 3, would_change: 3, would_rename: 0, would_hide: body.hide_matches ? 3 : 0, would_mark_reviewed: 0, skipped_manual: 0, samples: ['CASH SWEEP'] },
+          data: { scanned: 10, matched: 3, would_change: 3, would_rename: 0, would_hide: body.hide_matches ? 3 : 0, would_mark_reviewed: 0, would_tag: 0, skipped_manual: 0, samples: ['CASH SWEEP'] },
         })
       }),
       http.post(`${API}/categorization-rules`, async ({ request }) => {
@@ -246,7 +246,7 @@ describe('RulesPage smoke', () => {
         const body = (await request.json()) as Record<string, unknown>
         previews.push(body)
         return HttpResponse.json({
-          data: { scanned: 10, matched: 2, would_change: 2, would_rename: 0, would_hide: 0, would_mark_reviewed: body.mark_reviewed ? 2 : 0, skipped_manual: 0, samples: ['ACME PAYROLL'] },
+          data: { scanned: 10, matched: 2, would_change: 2, would_rename: 0, would_hide: 0, would_mark_reviewed: body.mark_reviewed ? 2 : 0, would_tag: 0, skipped_manual: 0, samples: ['ACME PAYROLL'] },
         })
       }),
       http.post(`${API}/categorization-rules`, async ({ request }) => {
@@ -333,5 +333,67 @@ describe('RulesPage smoke', () => {
       expect(await screen.findByText(/rule order must list each of your rules exactly once/)).toBeTruthy()
       expect(order()).toEqual(['AMAZON', 'AMAZON PRIME'])
     })
+  })
+  // #546: a rule can also add tags. Typed tags are normalized (dedupe, the
+  // user's spelling), a suggestion chip appends one, the preview counts the
+  // rows it would tag, the list shows them, and clearing on edit sends [].
+  it('adds tags from a rule, previews them, and clears them on edit', async () => {
+    const previews: Record<string, unknown>[] = []
+    const creates: Record<string, unknown>[] = []
+    const patches: Record<string, unknown>[] = []
+    let stored = [...fx.rules]
+    server.use(
+      http.get(`${API}/categorization-rules`, () => HttpResponse.json({ data: stored, total: stored.length })),
+      http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        previews.push(body)
+        return HttpResponse.json({
+          data: { scanned: 10, matched: 3, would_change: 3, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, would_tag: body.add_tags ? 3 : 0, skipped_manual: 0, samples: ['UBER TRIP'] },
+        })
+      }),
+      http.post(`${API}/categorization-rules`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        creates.push(body)
+        const r = { ...fx.rule1, id: 5, pattern: 'UBER', add_tags: body.add_tags as string[] }
+        stored = [...stored, r]
+        return HttpResponse.json({ data: r }, { status: 201 })
+      }),
+      http.patch(`${API}/categorization-rules/:id`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        patches.push(body)
+        stored = stored.map((r) => (r.id === 5 ? { ...r, add_tags: body.add_tags as string[] } : r))
+        return HttpResponse.json({ data: stored.find((r) => r.id === 5) })
+      }),
+    )
+    renderPage(<RulesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
+    fireEvent.change(screen.getByPlaceholderText('e.g. WHOLEFDS'), { target: { value: 'UBER' } })
+    const select = screen.getAllByRole('combobox').find((el) => el.textContent?.includes('pick one'))!
+    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[1].value) } })
+    fireEvent.change(screen.getByLabelText(/Also add tags/), { target: { value: 'work trip, reimbursable, Reimbursable' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Add tag vacation to this rule' }))
+
+    expect(await screen.findByText(/3 would be tagged Work trip, reimbursable, vacation/)).toBeTruthy()
+    expect(previews.at(-1)).toMatchObject({ pattern: 'UBER', add_tags: ['Work trip', 'reimbursable', 'vacation'] })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText('Adds tags: Work trip, reimbursable, vacation')).toBeTruthy()
+    expect(creates[0]).toMatchObject({ pattern: 'UBER', add_tags: ['Work trip', 'reimbursable', 'vacation'] })
+
+    const row = screen.getByText(/Adds tags:/).closest('tr')!
+    fireEvent.click(within(row).getByRole('button', { name: /edit/i }))
+    const input = screen.getByLabelText(/Also add tags/) as HTMLInputElement
+    expect(input.value).toBe('Work trip, reimbursable, vacation')
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(screen.queryByText(/Adds tags:/)).toBeNull())
+    expect(patches[0]).toMatchObject({ add_tags: [] })
+  })
+
+  it('blocks saving a rule tag that is too long', async () => {
+    renderPage(<RulesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
+    fireEvent.change(screen.getByLabelText(/Also add tags/), { target: { value: 'x'.repeat(41) } })
+    expect(await screen.findByText(/Keep each tag to 40 characters or fewer/)).toBeTruthy()
   })
 })

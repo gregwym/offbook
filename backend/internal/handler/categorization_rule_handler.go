@@ -87,9 +87,11 @@ type previewDraftRequest struct {
 	// HideMatches: hide matching transactions (#536).
 	HideMatches bool `json:"hide_matches"`
 	// MarkReviewed: mark matching transactions reviewed (#538).
-	MarkReviewed bool  `json:"mark_reviewed"`
-	Priority     int   `json:"priority"`
-	IsActive     *bool `json:"is_active"`
+	MarkReviewed bool `json:"mark_reviewed"`
+	// AddTags: tags to add to matching transactions (#546).
+	AddTags  []string `json:"add_tags"`
+	Priority int      `json:"priority"`
+	IsActive *bool    `json:"is_active"`
 }
 
 // PreviewDraft reports the impact of an unsaved rule (create or edit)
@@ -110,6 +112,7 @@ func (h *CategorizationRuleHandler) PreviewDraft(c *gin.Context) {
 		RenameMerchant: req.RenameMerchant,
 		HideMatches:    req.HideMatches,
 		MarkReviewed:   req.MarkReviewed,
+		AddTags:        req.AddTags,
 		Priority:       req.Priority,
 		IsActive:       active,
 	})
@@ -130,9 +133,11 @@ type createRuleRequest struct {
 	// HideMatches: hide matching transactions (#536).
 	HideMatches bool `json:"hide_matches"`
 	// MarkReviewed: mark matching transactions reviewed (#538).
-	MarkReviewed bool  `json:"mark_reviewed"`
-	Priority     int   `json:"priority"`
-	IsActive     *bool `json:"is_active"`
+	MarkReviewed bool `json:"mark_reviewed"`
+	// AddTags: tags to add to matching transactions (#546).
+	AddTags  []string `json:"add_tags"`
+	Priority int      `json:"priority"`
+	IsActive *bool    `json:"is_active"`
 }
 
 func (h *CategorizationRuleHandler) Create(c *gin.Context) {
@@ -149,6 +154,7 @@ func (h *CategorizationRuleHandler) Create(c *gin.Context) {
 		RenameMerchant: req.RenameMerchant,
 		HideMatches:    req.HideMatches,
 		MarkReviewed:   req.MarkReviewed,
+		AddTags:        req.AddTags,
 		Priority:       req.Priority,
 		IsActive:       req.IsActive,
 	})
@@ -193,8 +199,10 @@ type updateRuleRequest struct {
 	HideMatches *bool `json:"hide_matches"`
 	// MarkReviewed: turn review marking on or off (#538).
 	MarkReviewed *bool `json:"mark_reviewed"`
-	Priority     *int  `json:"priority"`
-	IsActive     *bool `json:"is_active"`
+	// AddTags: replace the rule's tags; [] clears them (#546).
+	AddTags  *[]string `json:"add_tags"`
+	Priority *int      `json:"priority"`
+	IsActive *bool     `json:"is_active"`
 }
 
 func (h *CategorizationRuleHandler) Update(c *gin.Context) {
@@ -216,6 +224,7 @@ func (h *CategorizationRuleHandler) Update(c *gin.Context) {
 		RenameMerchant: req.RenameMerchant,
 		HideMatches:    req.HideMatches,
 		MarkReviewed:   req.MarkReviewed,
+		AddTags:        req.AddTags,
 		Priority:       req.Priority,
 		IsActive:       req.IsActive,
 	})
@@ -248,6 +257,8 @@ func (h *CategorizationRuleHandler) writeServiceError(c *gin.Context, err error)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "UNKNOWN_CATEGORY"})
 	case errors.Is(err, service.ErrInvalidRuleOrder):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_RULE_ORDER"})
+	case errors.Is(err, service.ErrInvalidTags):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_TAGS"})
 	case errors.Is(err, service.ErrInvalidApplyScope):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_SCOPE"})
 	case errors.Is(err, service.ErrEmptyPattern),
