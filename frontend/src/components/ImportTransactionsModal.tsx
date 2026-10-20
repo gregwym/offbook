@@ -152,11 +152,11 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
   // CSV: deterministic preview / commit. Commit re-sends the mapping the
   // server resolved for the preview, so it parses exactly what was shown.
   // override re-previews with a changed mapping (the flip-signs toggle).
-  const runCSV = async (commit: boolean, override?: Partial<ColumnMapping>) => {
-    if (!guard()) return
+  const runCSV = async (commit: boolean, override?: Partial<ColumnMapping>): Promise<boolean> => {
+    if (!guard()) return false
     if (!commit && !override && needsManualMapping && !mappingComplete) {
       setError('Map the date, amount and description columns first.')
-      return
+      return false
     }
     setError(null)
     setBusy(commit ? 'commit' : 'preview')
@@ -168,10 +168,11 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
       if (commit) {
         onImported(result)
         onClose()
-        return
+        return true
       }
       setPreview(result)
       setHeaders(null)
+      return true
     } catch (err) {
       if (err instanceof ImportUnmappableError) {
         setHeaders(err.headers)
@@ -180,6 +181,7 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
       } else {
         setError(errMsg(err))
       }
+      return false
     } finally {
       setBusy(false)
     }
@@ -360,10 +362,13 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
               result={preview}
               currency={account?.currency}
               liability={!!account && isLiabilityType(account.account_type)}
+              flipped={flipSign}
               disabled={busy !== false}
               onFlip={(flip) => {
                 setFlipSign(flip)
-                void runCSV(false, { ...preview.mapping, flip_sign: flip })
+                void runCSV(false, { ...preview.mapping, flip_sign: flip }).then((ok) => {
+                  if (!ok) setFlipSign(!flip)
+                })
               }}
             />
           )}
@@ -453,12 +458,16 @@ function SignCheck({
   result,
   currency,
   liability,
+  flipped,
   disabled,
   onFlip,
 }: {
   result: ImportResult
   currency?: string
   liability: boolean
+  // flipped is the user's choice, shown at once while the re-preview loads;
+  // the totals and warning follow the preview the server actually parsed.
+  flipped: boolean
   disabled: boolean
   onFlip: (flip: boolean) => void
 }) {
@@ -476,8 +485,7 @@ function SignCheck({
       inCount++
     }
   }
-  const flipped = !!result.mapping.flip_sign
-  const suspicious = liability && !flipped && inCount > outCount
+  const suspicious = liability && !result.mapping.flip_sign && inCount > outCount
   const split = !!(result.mapping.debit || result.mapping.credit)
 
   return (

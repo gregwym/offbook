@@ -68,10 +68,10 @@ test.describe('CSV amount signs', () => {
     await page.getByRole('button', { name: 'Preview' }).click()
     await expect(page.getByText('Map your columns')).toBeVisible()
     await page.getByRole('radio', { name: 'Separate debit & credit columns' }).check()
-    await page.getByLabel('Date', { exact: true }).selectOption('When')
-    await page.getByLabel('Money out (debit)').selectOption('Out')
-    await page.getByLabel('Money in (credit)').selectOption('In')
-    await page.getByLabel('Description', { exact: true }).selectOption('Who')
+    await page.getByRole('combobox', { name: /^Date/ }).selectOption('When')
+    await page.getByRole('combobox', { name: /^Money out \(debit\)/ }).selectOption('Out')
+    await page.getByRole('combobox', { name: /^Money in \(credit\)/ }).selectOption('In')
+    await page.getByRole('combobox', { name: /^Description/ }).selectOption('Who')
     await expectNoOverflow(page)
     await testInfo.attach(`${testInfo.project.name}-split-mapping`, {
       body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
