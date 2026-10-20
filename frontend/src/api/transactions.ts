@@ -176,6 +176,9 @@ export async function importTransactions(
   if (opts.mapping?.date) form.append('date_col', opts.mapping.date)
   if (opts.mapping?.amount) form.append('amount_col', opts.mapping.amount)
   if (opts.mapping?.description) form.append('description_col', opts.mapping.description)
+  if (opts.mapping?.debit) form.append('debit_col', opts.mapping.debit)
+  if (opts.mapping?.credit) form.append('credit_col', opts.mapping.credit)
+  if (opts.mapping?.flip_sign) form.append('flip_sign', 'true')
 
   try {
     const res = await apiClient.post<ApiItem<ImportResult>>(

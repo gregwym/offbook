@@ -213,3 +213,114 @@ describe('ImportTransactionsModal import history (#376)', () => {
     expect(section).toHaveTextContent('unparseable quantity "lots" — skipped')
   })
 })
+
+describe('ImportTransactionsModal CSV amount signs (#542)', () => {
+  const card = { ...fx.account1, id: 77, name: 'Visa', account_type: 'credit_card' as const }
+  type Seen = Record<string, string>
+
+  // csvImport echoes the form fields it received and returns rows whose sign
+  // follows flip_sign, like the backend parser.
+  async function respond(request: Request, seen: Seen[]) {
+      const form = await request.formData()
+      const f: Seen = {}
+      form.forEach((v, k) => { if (k !== 'file') f[k] = String(v) })
+      seen.push(f)
+      const split = !!f.debit_col
+      const flip = f.flip_sign === 'true'
+      const sign = (v: string) => (flip ? (v.startsWith('-') ? v.slice(1) : `-${v}`) : v)
+      const rows = [
+        { line: 2, date: '2026-05-15', description: 'Restaurant', amount: sign('54.2'), status: 'new', confidence: 1, needs_review: false },
+        { line: 3, date: '2026-05-16', description: 'Groceries', amount: sign('120.35'), status: 'new', confidence: 1, needs_review: false },
+        { line: 4, date: '2026-05-20', description: 'Payment thank you', amount: sign('-500'), status: 'new', confidence: 1, needs_review: false },
+      ]
+      return HttpResponse.json({
+        data: {
+          committed: f.commit === 'true', source: 'csv',
+          mapping: split
+            ? { date: f.date_col, amount: '', debit: f.debit_col, credit: f.credit_col, description: f.description_col, flip_sign: flip || undefined }
+            : { date: 'Date', amount: 'Amount', description: 'Description', flip_sign: flip || undefined },
+          headers: ['Date', 'Description', 'Amount'],
+          total_rows: 3, new_count: 3, duplicate_count: 0, error_count: 0, review_count: 0,
+          inserted_count: f.commit === 'true' ? 3 : 0, rows,
+        },
+      })
+  }
+  const csvImport = (seen: Seen[]) =>
+    http.post(`${API}/accounts/:id/transactions/import`, ({ request }) => respond(request, seen))
+
+  function pickCSV(container: HTMLElement) {
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['Date,Description,Amount\n'], 'visa.csv', { type: 'text/csv' })] } })
+  }
+
+  it('warns when a card statement reads as money in, and flipping re-previews and commits flipped', async () => {
+    const seen: Seen[] = []
+    server.use(csvImport(seen))
+    const onImported = vi.fn()
+    const { container } = render(
+      <ImportTransactionsModal accounts={[card]} initialAccountID={card.id} onClose={vi.fn()} onImported={onImported} />,
+    )
+    pickCSV(container)
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Most rows are money in')
+    expect(alert).toHaveTextContent('Money in 174.55 USD (2)')
+    expect(alert).toHaveTextContent('Money out 500.00 USD (1)')
+    expect(seen[0].flip_sign).toBeUndefined()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Flip signs' }))
+    await waitFor(() => expect(seen).toHaveLength(2))
+    expect(seen[1].flip_sign).toBe('true')
+    expect(seen[1].commit).toBe('false')
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    expect(screen.getByText(/Money in/)).toHaveTextContent('Money in 500.00 USD (1) · Money out 174.55 USD (2)')
+    expect(screen.getByRole('checkbox', { name: 'Flip signs' })).toBeChecked()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Import 3 new' }))
+    await waitFor(() => expect(onImported).toHaveBeenCalled())
+    expect(seen[2]).toMatchObject({ commit: 'true', flip_sign: 'true', date_col: 'Date', amount_col: 'Amount' })
+  })
+
+  it('maps separate debit and credit columns and commits with the same mapping', async () => {
+    const seen: Seen[] = []
+    let first = true
+    server.use(
+      http.post(`${API}/accounts/:id/transactions/import`, async ({ request }) => {
+        if (first) {
+          first = false
+          return HttpResponse.json(
+            { error: 'could not auto-detect', code: 'IMPORT_UNMAPPABLE', headers: ['Posted', 'Payee', 'Out', 'In'], missing: ['amount'] },
+            { status: 400 },
+          )
+        }
+        return respond(request, seen)
+      }),
+    )
+    const onImported = vi.fn()
+    const { container } = render(
+      <ImportTransactionsModal accounts={fx.accounts} initialAccountID={fx.account1.id} onClose={vi.fn()} onImported={onImported} />,
+    )
+    pickCSV(container)
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    expect(await screen.findByText('Map your columns')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Separate debit & credit columns' }))
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: 'Posted' } })
+    fireEvent.change(screen.getByLabelText('Money out (debit)'), { target: { value: 'Out' } })
+    fireEvent.change(screen.getByLabelText('Money in (credit)'), { target: { value: 'In' } })
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Payee' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+
+    await waitFor(() => expect(seen).toHaveLength(1))
+    expect(seen[0]).toMatchObject({ date_col: 'Posted', debit_col: 'Out', credit_col: 'In', description_col: 'Payee' })
+    expect(seen[0].amount_col).toBeUndefined()
+    expect(await screen.findByText(/“Out” as money out and “In” as money in/)).toBeInTheDocument()
+    // A checking account with a money-in majority isn't flagged.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Import 3 new' }))
+    await waitFor(() => expect(onImported).toHaveBeenCalled())
+    expect(seen[1]).toMatchObject({ commit: 'true', date_col: 'Posted', debit_col: 'Out', credit_col: 'In', description_col: 'Payee' })
+  })
+})

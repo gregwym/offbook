@@ -23,20 +23,32 @@ const (
 	FieldDate        = "date"
 	FieldAmount      = "amount"
 	FieldDescription = "description"
+	// FieldDebit / FieldCredit are the split-column alternative to FieldAmount
+	// (#542): many exports put money out and money in in separate unsigned
+	// columns. Signed amount = |credit| − |debit|.
+	FieldDebit  = "debit"
+	FieldCredit = "credit"
 )
 
 // ColumnMapping ties logical fields to source-CSV header names (matched
 // case-insensitively, surrounding whitespace ignored). Empty values trigger
 // auto-detection from a list of common aliases.
+//
+// The money comes from either Amount (one signed column) or the Debit +
+// Credit pair. A requested Debit or Credit picks split mode; otherwise a
+// single Amount column wins and the pair is the fallback. FlipSign negates
+// every parsed amount, for exports that list purchases as positive (#542).
 type ColumnMapping struct {
 	Date        string `json:"date"`
 	Amount      string `json:"amount"`
+	Debit       string `json:"debit,omitempty"`
+	Credit      string `json:"credit,omitempty"`
 	Description string `json:"description"`
+	FlipSign    bool   `json:"flip_sign,omitempty"`
 }
 
-func (m ColumnMapping) complete() bool {
-	return m.Date != "" && m.Amount != "" && m.Description != ""
-}
+// split reports whether the mapping reads money from Debit/Credit columns.
+func (m ColumnMapping) split() bool { return m.Debit != "" || m.Credit != "" }
 
 // headerAliases maps each logical field to header names commonly emitted by
 // banks and brokerages. Lowercased; matched on trimmed, lowercased headers.
@@ -44,6 +56,8 @@ var headerAliases = map[string][]string{
 	FieldDate:        {"date", "transaction date", "trans date", "posted date", "post date", "posting date"},
 	FieldAmount:      {"amount", "transaction amount", "value", "amount (usd)"},
 	FieldDescription: {"description", "name", "merchant", "merchant name", "payee", "memo", "details", "narrative"},
+	FieldDebit:       {"debit", "debits", "debit amount", "withdrawal", "withdrawals", "withdrawal amount", "money out", "paid out"},
+	FieldCredit:      {"credit", "credits", "credit amount", "deposit", "deposits", "deposit amount", "money in", "paid in"},
 }
 
 // dateLayouts are tried in order. Slash-separated dates are assumed US-style
@@ -148,7 +162,11 @@ func Parse(r io.Reader, requested ColumnMapping) (*ParseResult, error) {
 		if isBlank(rec) {
 			continue // skip empty trailing lines silently
 		}
-		res.Rows = append(res.Rows, parseRecord(line, rec, idx))
+		row := parseRecord(line, rec, idx)
+		if mapping.FlipSign && row.Valid() {
+			row.Amount = row.Amount.Neg()
+		}
+		res.Rows = append(res.Rows, row)
 	}
 
 	if len(res.Rows) == 0 {
@@ -158,7 +176,9 @@ func Parse(r io.Reader, requested ColumnMapping) (*ParseResult, error) {
 }
 
 // fieldIndex holds the resolved column positions for each logical field.
-type fieldIndex struct{ date, amount, description int }
+// amount is -1 in split mode, where debit/credit hold the positions instead
+// (either may be -1 when only one side was mapped).
+type fieldIndex struct{ date, amount, debit, credit, description int }
 
 func resolveMapping(header []string, requested ColumnMapping) (ColumnMapping, fieldIndex, error) {
 	lower := make(map[string]int, len(header))
@@ -181,8 +201,8 @@ func resolveMapping(header []string, requested ColumnMapping) (ColumnMapping, fi
 		return "", -1
 	}
 
-	var out ColumnMapping
-	var idx fieldIndex
+	out := ColumnMapping{FlipSign: requested.FlipSign}
+	idx := fieldIndex{amount: -1, debit: -1, credit: -1}
 	var missing []string
 
 	if name, i := resolve(FieldDate, requested.Date); i >= 0 {
@@ -190,10 +210,34 @@ func resolveMapping(header []string, requested ColumnMapping) (ColumnMapping, fi
 	} else {
 		missing = append(missing, FieldDate)
 	}
-	if name, i := resolve(FieldAmount, requested.Amount); i >= 0 {
-		out.Amount, idx.amount = name, i
-	} else {
-		missing = append(missing, FieldAmount)
+	// Money: an explicit Debit/Credit request means split mode. Otherwise try
+	// one Amount column, then fall back to an auto-detected Debit + Credit pair.
+	splitMode := requested.split()
+	if !splitMode {
+		if name, i := resolve(FieldAmount, requested.Amount); i >= 0 {
+			out.Amount, idx.amount = name, i
+		} else if requested.Amount == "" {
+			_, di := resolve(FieldDebit, "")
+			_, ci := resolve(FieldCredit, "")
+			splitMode = di >= 0 && ci >= 0
+		}
+		if !splitMode && idx.amount < 0 {
+			missing = append(missing, FieldAmount)
+		}
+	}
+	if splitMode {
+		// In split mode an explicitly requested side must exist; an omitted side
+		// is auto-detected, and may be absent only if the other one resolved.
+		dn, di := resolve(FieldDebit, requested.Debit)
+		cn, ci := resolve(FieldCredit, requested.Credit)
+		out.Debit, idx.debit = dn, di
+		out.Credit, idx.credit = cn, ci
+		if (requested.Debit != "" && di < 0) || (di < 0 && ci < 0) {
+			missing = append(missing, FieldDebit)
+		}
+		if requested.Credit != "" && ci < 0 {
+			missing = append(missing, FieldCredit)
+		}
 	}
 	if name, i := resolve(FieldDescription, requested.Description); i >= 0 {
 		out.Description, idx.description = name, i
@@ -204,7 +248,6 @@ func resolveMapping(header []string, requested ColumnMapping) (ColumnMapping, fi
 	if len(missing) > 0 {
 		return out, idx, &UnmappableError{Missing: missing, Headers: header}
 	}
-	_ = out.complete()
 	return out, idx, nil
 }
 
@@ -219,11 +262,19 @@ func parseRecord(line int, rec []string, idx fieldIndex) ParsedRow {
 	}
 	row.Date = d
 
-	amtStr := field(rec, idx.amount)
-	amt, err := parseAmount(amtStr)
-	if err != nil {
-		row.Err = fmt.Sprintf("unparseable amount %q", amtStr)
-		return row
+	var amt decimal.Decimal
+	if idx.amount >= 0 {
+		amtStr := field(rec, idx.amount)
+		amt, err = parseAmount(amtStr)
+		if err != nil {
+			row.Err = fmt.Sprintf("unparseable amount %q", amtStr)
+			return row
+		}
+	} else {
+		amt, row.Err = splitAmount(field(rec, idx.debit), field(rec, idx.credit))
+		if row.Err != "" {
+			return row
+		}
 	}
 	if amt.IsZero() {
 		row.Err = "amount is zero"
@@ -276,6 +327,32 @@ func parseDate(s string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("no layout matched")
+}
+
+// splitAmount combines a Debit/Credit pair into one signed amount: money in
+// minus money out. Signs inside the columns are ignored (some banks print
+// debits as negatives, most as unsigned), so a debit always reduces the
+// balance. An empty side counts as zero; both empty is an error.
+func splitAmount(debitStr, creditStr string) (decimal.Decimal, string) {
+	if debitStr == "" && creditStr == "" {
+		return decimal.Zero, "no debit or credit amount"
+	}
+	out, in := decimal.Zero, decimal.Zero
+	if debitStr != "" {
+		d, err := parseAmount(debitStr)
+		if err != nil {
+			return decimal.Zero, fmt.Sprintf("unparseable debit %q", debitStr)
+		}
+		out = d.Abs()
+	}
+	if creditStr != "" {
+		c, err := parseAmount(creditStr)
+		if err != nil {
+			return decimal.Zero, fmt.Sprintf("unparseable credit %q", creditStr)
+		}
+		in = c.Abs()
+	}
+	return in.Sub(out), ""
 }
 
 // parseAmount strips currency symbols, thousands separators, and surrounding

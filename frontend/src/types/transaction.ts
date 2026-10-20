@@ -82,10 +82,17 @@ export type CreateTransactionInput = {
 // ── CSV import (#330) — mirrors backend service.ImportResult ──
 
 // ColumnMapping ties the three logical fields to source-CSV header names.
+// ColumnMapping mirrors ingestion.ColumnMapping. Money comes from either one
+// signed `amount` column or a `debit` (money out) + `credit` (money in) pair;
+// flip_sign negates every amount, for exports that list purchases as positive
+// (#542). The backend echoes the resolved mapping on every preview.
 export type ColumnMapping = {
   date: string
   amount: string
+  debit?: string
+  credit?: string
   description: string
+  flip_sign?: boolean
 }
 
 export type ImportRowStatus = 'new' | 'duplicate' | 'error'

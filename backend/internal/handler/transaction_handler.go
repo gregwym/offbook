@@ -372,6 +372,10 @@ func (h *TransactionHandler) Delete(c *gin.Context) {
 //	date_col        — optional header-name override for the date column (CSV)
 //	amount_col      — optional header-name override for the amount column (CSV)
 //	description_col — optional header-name override for the description (CSV)
+//	debit_col       — optional money-out column, with credit_col: split-column
+//	credit_col        statements instead of one signed amount (CSV, #542)
+//	flip_sign       — "true" negates every amount, for exports that list
+//	                  purchases as positive (CSV, #542)
 //
 // The registry selects an extractor by the upload's MIME type (CSV-only in
 // phase 1). Omitted *_col fields are auto-detected from common header aliases.
@@ -406,7 +410,10 @@ func (h *TransactionHandler) Import(c *gin.Context) {
 		CSVMapping: ingestion.ColumnMapping{
 			Date:        c.PostForm("date_col"),
 			Amount:      c.PostForm("amount_col"),
+			Debit:       c.PostForm("debit_col"),
+			Credit:      c.PostForm("credit_col"),
 			Description: c.PostForm("description_col"),
+			FlipSign:    c.PostForm("flip_sign") == "true",
 		},
 	}
 	ext, err := h.registry.For(doc.MIME).Extract(c.Request.Context(), doc)
