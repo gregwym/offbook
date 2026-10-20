@@ -13,6 +13,7 @@ import {
 } from '../hooks/useScopedGoals'
 import { useAccountsStore } from '../store/accountsStore'
 import type { Account } from '../types/account'
+import { ModalShell } from '../components/ModalShell'
 
 export function SavingsGoalsPage() {
   const {
@@ -348,15 +349,13 @@ function ContributionModal({ goal, onClose, onSubmit }: ContribProps) {
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
-          <span>{title}</span>
-          <button type="button" onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700">×</button>
-        </div>
-        <div className="px-5 py-4">{children}</div>
+    <ModalShell aria-label={title}>
+      <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
+        <span>{title}</span>
+        <button type="button" onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700">×</button>
       </div>
-    </div>
+      <div className="px-5 py-4">{children}</div>
+    </ModalShell>
   )
 }
 

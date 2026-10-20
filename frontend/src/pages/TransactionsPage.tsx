@@ -23,6 +23,7 @@ import type { Category } from '../types/category'
 import type { CreateRuleInput } from '../types/categorizationRule'
 import type { CreateTransactionInput, TagCount, Transaction, TransactionSource } from '../types/transaction'
 import { TRANSACTION_SOURCES } from '../types/transaction'
+import { ModalShell } from '../components/ModalShell'
 
 export function TransactionsPage() {
   const {
@@ -1245,56 +1246,54 @@ function AddTransactionModal({ accounts, categories, onClose, onSubmit }: AddPro
   }
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
-        <div className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">Add transaction</div>
-        <div className="space-y-3 px-5 py-4">
-          {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
-          <Field label="Account">
-            <select className={inputClass} value={accountID} onChange={(e) => setAccountID(e.target.value)}>
-              <option value="">(none)</option>
-              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+    <ModalShell aria-label="Add transaction">
+      <div className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">Add transaction</div>
+      <div className="space-y-3 px-5 py-4">
+        {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+        <Field label="Account">
+          <select className={inputClass} value={accountID} onChange={(e) => setAccountID(e.target.value)}>
+            <option value="">(none)</option>
+            {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Category">
+          <select className={inputClass} value={categoryID} onChange={(e) => setCategoryID(e.target.value)}>
+            <option value="">Uncategorized</option>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Amount (negative = spending)">
+          <input className={inputClass} value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
+        </Field>
+        <Field label="Description">
+          <input className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} />
+        </Field>
+        <Field label="Merchant">
+          <input className={inputClass} value={merchant} onChange={(e) => setMerchant(e.target.value)} />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Date">
+            <input type="date" className={inputClass} value={date} onChange={(e) => setDate(e.target.value)} />
+          </Field>
+          <Field label="Source">
+            <select className={inputClass} value={source} onChange={(e) => setSource(e.target.value as TransactionSource)}>
+              {TRANSACTION_SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </Field>
-          <Field label="Category">
-            <select className={inputClass} value={categoryID} onChange={(e) => setCategoryID(e.target.value)}>
-              <option value="">Uncategorized</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Amount (negative = spending)">
-            <input className={inputClass} value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
-          </Field>
-          <Field label="Description">
-            <input className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} />
-          </Field>
-          <Field label="Merchant">
-            <input className={inputClass} value={merchant} onChange={(e) => setMerchant(e.target.value)} />
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Date">
-              <input type="date" className={inputClass} value={date} onChange={(e) => setDate(e.target.value)} />
-            </Field>
-            <Field label="Source">
-              <select className={inputClass} value={source} onChange={(e) => setSource(e.target.value as TransactionSource)}>
-                {TRANSACTION_SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </Field>
-          </div>
-        </div>
-        <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
-          <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">Cancel</button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={submitting}
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {submitting ? 'Saving…' : 'Create'}
-          </button>
         </div>
       </div>
-    </div>
+      <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
+        <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">Cancel</button>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={submitting}
+          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {submitting ? 'Saving…' : 'Create'}
+        </button>
+      </div>
+    </ModalShell>
   )
 }
 

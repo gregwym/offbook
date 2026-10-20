@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { setManualPrice } from '../api/prices'
 import { useAssetsStore } from '../store/assetsStore'
 import { assetKindLabel, type Asset, type AssetKind } from '../types/asset'
+import { ModalShell } from './ModalShell'
 
 type Props = {
   // initial pre-fills the asset when the caller already knows which holding
@@ -87,89 +88,82 @@ export function SetPriceModal({ initial, onClose, onSet }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="set-price-title"
-        className="w-full max-w-md rounded-lg bg-white shadow-xl"
-      >
-        <div id="set-price-title" className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
-          {initial ? `Set price for ${initial.symbol}` : 'Set price'}
-        </div>
-        <div className="space-y-3 px-5 py-4">
-          <p className="text-xs text-gray-500">
-            {initial
-              ? `${initial.symbol} has no price from the last 7 days, so balances leave it out. Enter what one unit is worth today.`
-              : 'For an asset no price provider covers — a private fund, obscure ticker, or collectible. Priced in your primary currency.'}
-          </p>
-          {error && (
-            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {error}
-            </div>
-          )}
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Symbol">
-              <input
-                className={inputClass}
-                value={symbol}
-                onChange={(e) => handleSymbolChange(e.target.value)}
-                placeholder="e.g. MYFUND"
-                list="set-price-asset-symbols"
-                autoComplete="off"
-              />
-              <datalist id="set-price-asset-symbols">
-                {priceableAssets.map((a) => (
-                  <option key={a.id} value={a.symbol}>
-                    {a.display_name ? `${a.display_name} · ${assetKindLabel(a.kind)}` : assetKindLabel(a.kind)}
-                  </option>
-                ))}
-              </datalist>
-              {!loaded && <p className="mt-1 text-[11px] text-gray-400">Loading known assets…</p>}
-            </Field>
-            <Field label="Kind">
-              <select
-                className={inputClass}
-                value={assetKind}
-                onChange={(e) => setAssetKind(e.target.value as AssetKind)}
-              >
-                {PRICEABLE_KINDS.map((k) => (
-                  <option key={k} value={k}>
-                    {assetKindLabel(k)}
-                  </option>
-                ))}
-              </select>
-            </Field>
+    <ModalShell size="md" aria-labelledby="set-price-title">
+      <div id="set-price-title" className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
+        {initial ? `Set price for ${initial.symbol}` : 'Set price'}
+      </div>
+      <div className="space-y-3 px-5 py-4">
+        <p className="text-xs text-gray-500">
+          {initial
+            ? `${initial.symbol} has no price from the last 7 days, so balances leave it out. Enter what one unit is worth today.`
+            : 'For an asset no price provider covers — a private fund, obscure ticker, or collectible. Priced in your primary currency.'}
+        </p>
+        {error && (
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
           </div>
-          <Field label="Price (per unit)">
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Symbol">
             <input
               className={inputClass}
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              inputMode="decimal"
-              placeholder="100.00"
-              autoFocus={initial != null}
+              value={symbol}
+              onChange={(e) => handleSymbolChange(e.target.value)}
+              placeholder="e.g. MYFUND"
+              list="set-price-asset-symbols"
+              autoComplete="off"
             />
+            <datalist id="set-price-asset-symbols">
+              {priceableAssets.map((a) => (
+                <option key={a.id} value={a.symbol}>
+                  {a.display_name ? `${a.display_name} · ${assetKindLabel(a.kind)}` : assetKindLabel(a.kind)}
+                </option>
+              ))}
+            </datalist>
+            {!loaded && <p className="mt-1 text-[11px] text-gray-400">Loading known assets…</p>}
           </Field>
-          <Field label="As of">
-            <input type="date" className={inputClass} value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+          <Field label="Kind">
+            <select
+              className={inputClass}
+              value={assetKind}
+              onChange={(e) => setAssetKind(e.target.value as AssetKind)}
+            >
+              {PRICEABLE_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {assetKindLabel(k)}
+                </option>
+              ))}
+            </select>
           </Field>
         </div>
-        <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
-          <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={submitting}
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {submitting ? 'Saving…' : 'Set price'}
-          </button>
-        </div>
+        <Field label="Price (per unit)">
+          <input
+            className={inputClass}
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            inputMode="decimal"
+            placeholder="100.00"
+            autoFocus={initial != null}
+          />
+        </Field>
+        <Field label="As of">
+          <input type="date" className={inputClass} value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+        </Field>
       </div>
-    </div>
+      <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
+        <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={submitting}
+          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {submitting ? 'Saving…' : 'Set price'}
+        </button>
+      </div>
+    </ModalShell>
   )
 }
 

@@ -14,6 +14,7 @@ import {
 import { useCategoriesStore } from '../store/categoriesStore'
 import type { Category } from '../types/category'
 import { BUDGET_PERIODS, type BudgetPeriod } from '../types/budget'
+import { ModalShell } from '../components/ModalShell'
 
 export function BudgetsPage() {
   const {
@@ -294,79 +295,77 @@ function BudgetFormModal({ mode, isHousehold, categories, budget, onClose, onSub
   const noun = isHousehold ? 'shared budget' : 'budget'
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
-        <div className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
-          {mode === 'create' ? `New ${noun}` : `Edit ${noun}`}
-        </div>
-        <div className="space-y-3 px-5 py-4">
-          {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
-          <Field label="Category" error={categoryError}>
-            <select
-              className={inputClass}
-              value={categoryID === '' ? '' : String(categoryID)}
-              onChange={(e) => setCategoryID(e.target.value === '' ? '' : Number(e.target.value))}
-            >
-              <option value="">— pick one —</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+    <ModalShell aria-label={mode === 'create' ? `New ${noun}` : `Edit ${noun}`}>
+      <div className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
+        {mode === 'create' ? `New ${noun}` : `Edit ${noun}`}
+      </div>
+      <div className="space-y-3 px-5 py-4">
+        {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+        <Field label="Category" error={categoryError}>
+          <select
+            className={inputClass}
+            value={categoryID === '' ? '' : String(categoryID)}
+            onChange={(e) => setCategoryID(e.target.value === '' ? '' : Number(e.target.value))}
+          >
+            <option value="">— pick one —</option>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Period">
+            <select className={inputClass} value={period} onChange={(e) => setPeriod(e.target.value as BudgetPeriod)}>
+              {BUDGET_PERIODS.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Period">
-              <select className={inputClass} value={period} onChange={(e) => setPeriod(e.target.value as BudgetPeriod)}>
-                {BUDGET_PERIODS.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </Field>
-            <Field label="Amount" error={amountError}>
-              <input className={inputClass} value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
-            </Field>
-          </div>
-          <label className="flex items-start gap-2 text-sm text-gray-700">
-            <input type="checkbox" className="mt-1" checked={rollover} onChange={(e) => setRollover(e.target.checked)} />
-            <span>
-              Roll unspent balance into the next {period === 'monthly' ? 'month' : period === 'weekly' ? 'week' : 'year'}
-              <span className="block text-xs text-gray-500">
-                {isHousehold
-                  ? 'Shared budgets are tracked per calendar month; unspent balance carries month to month, and an overspent month resets it to zero.'
-                  : 'Starts from the balance below in the period you create it; an overspent period resets the balance to zero.'}
-              </span>
+          <Field label="Amount" error={amountError}>
+            <input className={inputClass} value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
+          </Field>
+        </div>
+        <label className="flex items-start gap-2 text-sm text-gray-700">
+          <input type="checkbox" className="mt-1" checked={rollover} onChange={(e) => setRollover(e.target.checked)} />
+          <span>
+            Roll unspent balance into the next {period === 'monthly' ? 'month' : period === 'weekly' ? 'week' : 'year'}
+            <span className="block text-xs text-gray-500">
+              {isHousehold
+                ? 'Shared budgets are tracked per calendar month; unspent balance carries month to month, and an overspent month resets it to zero.'
+                : 'Starts from the balance below in the period you create it; an overspent period resets the balance to zero.'}
             </span>
-          </label>
-          {rollover && (
-            <div>
-              <Field label="Starting balance" error={startError}>
-                <input
-                  className={inputClass}
-                  value={rolloverStart}
-                  onChange={(e) => setRolloverStart(e.target.value)}
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  aria-describedby="rollover-start-help"
-                />
-              </Field>
-              <p id="rollover-start-help" className="mt-1 text-xs text-gray-500">
-                Already have money set aside for this category? Enter it to carry it in now.
-              </p>
-            </div>
-          )}
-          <label className="flex items-center gap-2 text-sm text-gray-700">
-            <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
-            Active
-          </label>
-        </div>
-        <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
-          <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">Cancel</button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={submitting}
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {submitting ? 'Saving…' : mode === 'create' ? 'Create' : 'Save'}
-          </button>
-        </div>
+          </span>
+        </label>
+        {rollover && (
+          <div>
+            <Field label="Starting balance" error={startError}>
+              <input
+                className={inputClass}
+                value={rolloverStart}
+                onChange={(e) => setRolloverStart(e.target.value)}
+                inputMode="decimal"
+                placeholder="0.00"
+                aria-describedby="rollover-start-help"
+              />
+            </Field>
+            <p id="rollover-start-help" className="mt-1 text-xs text-gray-500">
+              Already have money set aside for this category? Enter it to carry it in now.
+            </p>
+          </div>
+        )}
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
+          Active
+        </label>
       </div>
-    </div>
+      <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
+        <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">Cancel</button>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={submitting}
+          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+        >
+          {submitting ? 'Saving…' : mode === 'create' ? 'Create' : 'Save'}
+        </button>
+      </div>
+    </ModalShell>
   )
 }
 
