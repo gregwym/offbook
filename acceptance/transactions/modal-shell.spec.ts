@@ -21,16 +21,19 @@ test.describe('modals stay above the app bar and reachable', () => {
     // A short phone screen makes every form taller than the viewport.
     if (mobile) await page.setViewportSize({ width: 390, height: 560 })
 
-    const cases: { path: string; open: RegExp; dialog: RegExp; title: RegExp; primary: RegExp | null }[] = [
-      { path: '/accounts', open: /^Add account$/, dialog: /^Add account$/, title: /^Add account$/, primary: /^Create$/ },
-      { path: '/transactions', open: /^Add transaction$/, dialog: /^Add transaction$/, title: /^Add transaction$/, primary: /^Create$/ },
-      { path: '/transactions', open: /^Import$/, dialog: /^Import transactions$/, title: /^Import transactions$/, primary: null },
-      { path: '/budgets', open: /^New budget$/, dialog: /^New budget$/, title: /^New budget$/, primary: /^Create$/ },
-      { path: '/savings-goals', open: /^New goal$/, dialog: /^New goal$/, title: /^New goal$/, primary: /^Create$/ },
+    // New accounts go through the /accounts/add page, so the account cases
+    // use the row's Edit and Update balance modals.
+    const cases: { path: string; open: (p: Page) => Locator; dialog: RegExp; title: RegExp; primary: RegExp | null }[] = [
+      { path: '/accounts', open: (p) => p.getByRole('button', { name: /^Edit( Modal Checking)?$/ }).first(), dialog: /^Edit "Modal Checking"$/, title: /^Edit "Modal Checking"$/, primary: /^Save$/ },
+      { path: '/accounts', open: (p) => p.getByRole('button', { name: 'Update balance for Modal Checking' }), dialog: /^Update balance: Modal Checking$/, title: /^Update balance: Modal Checking$/, primary: /^Save balance$/ },
+      { path: '/transactions', open: (p) => p.getByRole('button', { name: /^Add transaction$/ }), dialog: /^Add transaction$/, title: /^Add transaction$/, primary: /^Create$/ },
+      { path: '/transactions', open: (p) => p.getByRole('button', { name: /^Import$/ }), dialog: /^Import transactions$/, title: /^Import transactions$/, primary: null },
+      { path: '/budgets', open: (p) => p.getByRole('button', { name: /^New budget$/ }).first(), dialog: /^New budget$/, title: /^New budget$/, primary: /^Create$/ },
+      { path: '/savings-goals', open: (p) => p.getByRole('button', { name: /^New goal$/ }).first(), dialog: /^New goal$/, title: /^New goal$/, primary: /^Create$/ },
     ]
     for (const c of cases) {
       await page.goto(c.path)
-      await page.getByRole('button', { name: c.open }).first().click()
+      await c.open(page).click()
       const dialog = page.getByRole('dialog', { name: c.dialog })
       await expect(dialog).toBeVisible()
       await expectWithinViewport(page, dialog, `${c.dialog} panel`)

@@ -322,7 +322,12 @@ test.describe('rule run order', () => {
     await expect.poll(categoryOf).toBe(shopping.id)
 
     // Move the specific rule above the broad one; the order sticks.
-    await up.click()
+    // Wait for the save itself: the list moves optimistically, and a reload
+    // that races the request cancels it.
+    await Promise.all([
+      page.waitForResponse((r) => r.url().endsWith('/categorization-rules/reorder') && r.ok()),
+      up.click(),
+    ])
     await expect.poll(patterns).toEqual(['AMAZON PRIME', 'AMAZON'])
     await page.reload()
     await expect.poll(patterns).toEqual(['AMAZON PRIME', 'AMAZON'])
