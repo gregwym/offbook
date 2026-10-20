@@ -22,6 +22,7 @@ export type RuleFormDefaults = {
   priority?: number
   is_active?: boolean
   rename_merchant?: string
+  hide_matches?: boolean
 }
 
 // Mirrors the backend's maxRenameMerchant.
@@ -52,6 +53,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
     rule?.rename_merchant ?? defaults?.rename_merchant ?? '',
   )
   const rename = renameMerchant.trim()
+  const [hideMatches, setHideMatches] = useState(rule?.hide_matches ?? defaults?.hide_matches ?? false)
   const [submitting, setSubmitting] = useState(false)
   // We split form errors by field when the backend gives us a code; otherwise
   // surface as a generic banner above the form.
@@ -65,7 +67,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   // result for an older draft reads as "loading" rather than stale.
   const cat = Number(categoryID)
   const draftReady = pattern.trim() !== '' && Number.isInteger(cat) && cat > 0 && priority >= 0
-  const draftKey = JSON.stringify([pattern.trim(), matchType, cat, priority, isActive, rename, rule?.id ?? null])
+  const draftKey = JSON.stringify([pattern.trim(), matchType, cat, priority, isActive, rename, hideMatches, rule?.id ?? null])
   const [impact, setImpact] = useState<{ key: string; data: DraftPreview | null } | null>(null)
   useEffect(() => {
     if (!draftReady) return
@@ -79,6 +81,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
           priority,
           is_active: isActive,
           ...(rename ? { rename_merchant: rename } : {}),
+          ...(hideMatches ? { hide_matches: true } : {}),
         },
         rule?.id,
         ctrl.signal,
@@ -92,7 +95,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
       clearTimeout(timer)
       ctrl.abort()
     }
-  }, [draftKey, draftReady, pattern, matchType, cat, priority, isActive, rename, rule?.id])
+  }, [draftKey, draftReady, pattern, matchType, cat, priority, isActive, rename, hideMatches, rule?.id])
   const current = draftReady && impact?.key === draftKey ? impact : null
   const impactData = current?.data ?? null
   const impactLoading = draftReady && isActive && current === null
@@ -128,6 +131,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
         is_active: isActive,
         // Editing sends '' to clear a rename; creating omits a blank one.
         ...(rename || rule?.rename_merchant ? { rename_merchant: rename } : {}),
+        hide_matches: hideMatches,
       })
     } catch (err) {
       const { code, message } = extractErr(err)
@@ -205,6 +209,15 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
               Matching transactions show this merchant in the list, Top merchants and Recurring. Leave blank to keep the bank&rsquo;s name.
             </p>
           </Field>
+          <div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input type="checkbox" checked={hideMatches} onChange={(e) => setHideMatches(e.target.checked)} />
+              Also hide matching transactions
+            </label>
+            <p className="mt-1 text-xs text-gray-500">
+              Hidden transactions stay in the list and account balance but leave spending, budgets and Top merchants. You can unhide any one later; the rule won&rsquo;t hide it again on the next sync.
+            </p>
+          </div>
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
             Active
@@ -222,6 +235,8 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
                     : `Would categorize ${impactData.matched} of ${impactData.scanned} existing transactions (${impactData.would_change} would change).`}
                   {rename && impactData.would_rename > 0 &&
                     ` ${impactData.would_rename} would show merchant “${rename}”.`}
+                  {hideMatches && impactData.would_hide > 0 &&
+                    ` ${impactData.would_hide} would be hidden from spending and budgets.`}
                   {impactData.skipped_manual > 0 && ` ${impactData.skipped_manual} manual picks are never overridden.`}
                 </p>
                 {impactData.samples.length > 0 && (

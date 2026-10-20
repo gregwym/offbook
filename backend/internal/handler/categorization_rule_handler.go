@@ -63,8 +63,10 @@ type previewDraftRequest struct {
 	AssetID    *int64 `json:"asset_id"`
 	// RenameMerchant: optional merchant rename on match (#534).
 	RenameMerchant *string `json:"rename_merchant"`
-	Priority       int     `json:"priority"`
-	IsActive       *bool   `json:"is_active"`
+	// HideMatches: hide matching transactions (#536).
+	HideMatches bool  `json:"hide_matches"`
+	Priority    int   `json:"priority"`
+	IsActive    *bool `json:"is_active"`
 }
 
 // PreviewDraft reports the impact of an unsaved rule (create or edit)
@@ -83,6 +85,7 @@ func (h *CategorizationRuleHandler) PreviewDraft(c *gin.Context) {
 		CategoryID:     req.CategoryID,
 		AssetID:        req.AssetID,
 		RenameMerchant: req.RenameMerchant,
+		HideMatches:    req.HideMatches,
 		Priority:       req.Priority,
 		IsActive:       active,
 	})
@@ -100,8 +103,10 @@ type createRuleRequest struct {
 	AssetID    *int64 `json:"asset_id"`
 	// RenameMerchant: optional merchant rename on match (#534).
 	RenameMerchant *string `json:"rename_merchant"`
-	Priority       int     `json:"priority"`
-	IsActive       *bool   `json:"is_active"`
+	// HideMatches: hide matching transactions (#536).
+	HideMatches bool  `json:"hide_matches"`
+	Priority    int   `json:"priority"`
+	IsActive    *bool `json:"is_active"`
 }
 
 func (h *CategorizationRuleHandler) Create(c *gin.Context) {
@@ -116,6 +121,7 @@ func (h *CategorizationRuleHandler) Create(c *gin.Context) {
 		CategoryID:     req.CategoryID,
 		AssetID:        req.AssetID,
 		RenameMerchant: req.RenameMerchant,
+		HideMatches:    req.HideMatches,
 		Priority:       req.Priority,
 		IsActive:       req.IsActive,
 	})
@@ -156,8 +162,10 @@ type updateRuleRequest struct {
 	ClearAssetID bool    `json:"clear_asset_id"`
 	// RenameMerchant: a blank string clears the rename (#534).
 	RenameMerchant *string `json:"rename_merchant"`
-	Priority       *int    `json:"priority"`
-	IsActive       *bool   `json:"is_active"`
+	// HideMatches: turn hiding on or off (#536).
+	HideMatches *bool `json:"hide_matches"`
+	Priority    *int  `json:"priority"`
+	IsActive    *bool `json:"is_active"`
 }
 
 func (h *CategorizationRuleHandler) Update(c *gin.Context) {
@@ -177,6 +185,7 @@ func (h *CategorizationRuleHandler) Update(c *gin.Context) {
 		AssetID:        req.AssetID,
 		ClearAssetID:   req.ClearAssetID,
 		RenameMerchant: req.RenameMerchant,
+		HideMatches:    req.HideMatches,
 		Priority:       req.Priority,
 		IsActive:       req.IsActive,
 	})

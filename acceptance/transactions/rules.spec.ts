@@ -144,6 +144,76 @@ test.describe('rule renames the merchant', () => {
   })
 })
 
+test.describe('rule hides matches', () => {
+  test('one rule hides recurring noise from spending; new rows arrive hidden; unhide is respected', async ({ page }, testInfo) => {
+    process.env.OFFBOOK_ROLE = process.env.OFFBOOK_ROLE ?? 'qa'
+    const user = await createThrowawayUser({ suite: `rules-hide-${testInfo.project.name}` })
+    const cookie = await apiSignin(user.email, user.password)
+    const cats = await get(cookie, '/categories')
+    const shopping = (cats.data.find((x: { slug: string }) => x.slug === 'shopping') ?? cats.data[0]) as { id: number; name: string }
+    const acct = (await api(cookie, '/accounts', {
+      name: 'Hide Checking', institution_slug: 'manual', account_type: 'checking', currency: 'USD',
+    })).data.id
+    const today = new Date().toISOString().slice(0, 10)
+    const tx = (description: string, amount: string, category_id?: number) =>
+      api(cookie, '/transactions', { account_id: acct, amount, description, transaction_date: today, source: 'csv', ...(category_id ? { category_id } : {}) })
+    await tx('QAHIDE SWEEP TO MMF', '-500.00')
+    await tx('QAHIDE SWEEP TO MMF 2', '-300.00')
+    await tx('QAHIDE Corner shop', '-40.00', shopping.id)
+    // Spending counts all three before the rule (840).
+    expect(await totalSpend(cookie)).toBe(840)
+
+    await signIn(page, user.email, user.password)
+    await page.goto('/rules')
+    await page.getByRole('button', { name: 'New rule' }).click()
+    const dialog = page.locator('div.fixed.inset-0')
+    await dialog.getByPlaceholder('e.g. WHOLEFDS').fill('SWEEP')
+    await dialog.getByLabel('Category').selectOption({ label: shopping.name })
+    const hide = dialog.getByLabel('Also hide matching transactions')
+    await expectInViewport(page, hide)
+    await hide.check()
+    await expect(dialog).toContainText('2 would be hidden from spending and budgets')
+    await testInfo.attach(`${testInfo.project.name}-hide-draft`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+    await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(page.getByText('Hides matches')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Preview changes' }).click()
+    await page.getByRole('button', { name: 'Apply now' }).click()
+    await expect.poll(() => totalSpend(cookie)).toBe(40)
+    await expectNoOverflow(page)
+    await testInfo.attach(`${testInfo.project.name}-hide-rules-list`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+    const again = await api(cookie, '/categorization-rules/apply', {})
+    expect(again.data.updated).toBe(0)
+
+    // A new matching row arrives hidden; the ledger still lists it.
+    const fresh = (await tx('QAHIDE SWEEP TO MMF 3', '-200.00')).data
+    expect(fresh.hidden_at).toBeTruthy()
+    expect(await totalSpend(cookie)).toBe(40)
+
+    await page.goto('/transactions')
+    await expect(page.getByText('QAHIDE SWEEP TO MMF 3').locator('visible=true').first()).toBeVisible()
+    await expect(page.locator('span:visible', { hasText: /^hidden$/ })).toHaveCount(3)
+    await expectNoOverflow(page)
+    await testInfo.attach(`${testInfo.project.name}-hide-transactions`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+
+    // Unhiding one row counts it again.
+    await page.getByRole('button', { name: 'Unhide QAHIDE SWEEP TO MMF 3' }).click()
+    await expect.poll(() => totalSpend(cookie)).toBe(240)
+    await expect(page.locator('span:visible', { hasText: /^hidden$/ })).toHaveCount(2)
+  })
+})
+
+async function totalSpend(cookie: string) {
+  const res = await get(cookie, '/dashboard/spend-by-category?period=current_month')
+  return (res.data ?? []).reduce((acc: number, c: { amount: string }) => acc + Math.abs(Number(c.amount)), 0)
+}
+
 async function apiSignin(email: string, password: string) {
   const res = await fetch(`${acceptanceAPIURL()}/auth/signin`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }),

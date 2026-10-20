@@ -2,6 +2,7 @@ package categorization_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/service/categorization"
@@ -196,6 +197,60 @@ func TestApply_RenameMerchant(t *testing.T) {
 		tx.MerchantName = ptr("AMZN Mktp")
 		if d.SameAs(tx) {
 			t.Error("SameAs = true with a different merchant, want false")
+		}
+	})
+}
+
+func TestApply_HideMatches(t *testing.T) {
+	rules := categorization.Compile([]model.CategorizationRule{
+		{ID: 1, CategoryID: 10, MatchType: "contains", Pattern: "SWEEP", IsActive: true, HideMatches: true},
+		{ID: 2, CategoryID: 20, MatchType: "contains", Pattern: "SHELL", IsActive: true},
+	})
+
+	t.Run("winning rule hides a flow row", func(t *testing.T) {
+		tx := &model.Transaction{Kind: model.KindFlow, Description: ptr("CASH SWEEP TO MMF")}
+		d, ok := categorization.Apply(tx, rules)
+		if !ok || d.RuleID != 1 || !d.Hide {
+			t.Fatalf("Apply: ok=%v rule=%d hide=%v, want rule 1 hiding", ok, d.RuleID, d.Hide)
+		}
+		if tx.HiddenAt == nil {
+			t.Fatal("HiddenAt = nil, want set")
+		}
+		if !d.SameAs(tx) {
+			t.Error("SameAs after Apply = false, want true (re-apply is a no-op)")
+		}
+	})
+	t.Run("already hidden keeps its timestamp", func(t *testing.T) {
+		at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+		tx := &model.Transaction{Description: ptr("SWEEP"), HiddenAt: &at}
+		categorization.Apply(tx, rules)
+		if tx.HiddenAt == nil || !tx.HiddenAt.Equal(at) {
+			t.Errorf("HiddenAt = %v, want %v kept", tx.HiddenAt, at)
+		}
+	})
+	t.Run("non-flow rows are never hidden", func(t *testing.T) {
+		tx := &model.Transaction{Kind: model.KindTradeLeg, Description: ptr("SWEEP")}
+		d, ok := categorization.Apply(tx, rules)
+		if !ok {
+			t.Fatal("Apply: no match, want rule 1")
+		}
+		if tx.HiddenAt != nil || d.HideChanged(tx) {
+			t.Errorf("trade leg hidden: HiddenAt=%v", tx.HiddenAt)
+		}
+	})
+	t.Run("rule without hide leaves the row visible", func(t *testing.T) {
+		tx := &model.Transaction{Description: ptr("SHELL OIL")}
+		categorization.Apply(tx, rules)
+		if tx.HiddenAt != nil {
+			t.Errorf("HiddenAt = %v, want nil", tx.HiddenAt)
+		}
+	})
+	t.Run("SameAs sees a row the user unhid", func(t *testing.T) {
+		tx := &model.Transaction{Description: ptr("SWEEP")}
+		d, _ := categorization.Apply(tx, rules)
+		tx.HiddenAt = nil
+		if d.SameAs(tx) {
+			t.Error("SameAs = true on a visible row, want false")
 		}
 	})
 }
