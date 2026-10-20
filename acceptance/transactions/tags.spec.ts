@@ -32,7 +32,8 @@ test.describe('tags journey', () => {
 
     // First tag: typed and added, with the explainer copy visible.
     const tagsFor = (label: string) => page.getByRole('button', { name: `Tags for ${label}` })
-    await expect(tagsFor('QATAG Hotel Roma')).toBeInViewport()
+    // The newest row's Tags action is on the first screen at both widths.
+    await expect(tagsFor('QATAG Corner grocer')).toBeInViewport()
     await tagsFor('QATAG Hotel Roma').click()
     let dlg = page.getByRole('dialog', { name: 'Tags for QATAG Hotel Roma' })
     await expect(dlg).toContainText('They don’t change spending, budgets or balances.')

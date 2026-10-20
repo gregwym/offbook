@@ -68,7 +68,7 @@ export function TagEditorModal({ tx, suggestions, onClose, onSaved }: Props) {
         <div className="space-y-3 px-5 py-4">
           <p className="text-sm text-gray-600">
             Tags group transactions across categories, like <em>vacation</em> or <em>reimbursable</em>.
-            They don&apos;t change spending, budgets or balances.
+            They don’t change spending, budgets or balances.
           </p>
           <ul aria-label="Current tags" className="flex flex-wrap gap-2">
             {tags.length === 0 && <li className="text-sm text-gray-500">No tags yet.</li>}
