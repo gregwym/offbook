@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router-dom'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
+import * as fx from '../test/fixtures'
 import { server } from '../test/server'
 import { expectHealthySmoke, renderPage, resetStores } from '../test/testUtils'
 import { AccountsPage } from './AccountsPage'
@@ -49,5 +50,40 @@ describe('AccountsPage smoke', () => {
     renderPage(<AccountsPage />)
     expect((await screen.findAllByText('Checking')).length).toBeGreaterThan(0)
     expect(screen.queryByText('credit_card')).toBeNull()
+  })
+
+  // #530: a partial balance names the holding missing a price, and Set price
+  // opens pre-filled with it so the user only types the price.
+  it('names the unpriced holding and pre-fills Set price with it', async () => {
+    const vti = { id: 7, symbol: 'VTI', kind: 'equity' as const, display_name: null, quote_currency_asset_id: 1 }
+    let posted: { assetID: string; body: unknown } | null = null
+    server.use(
+      http.get('/api/v1/accounts', () =>
+        HttpResponse.json({
+          data: [{
+            ...fx.account1, id: 2, name: 'Brokerage', account_type: 'investment',
+            balance: '50.000000000000000000', balance_complete: false,
+            unpriced_assets: [{ asset_id: 7, symbol: 'VTI', kind: 'equity' }],
+          }],
+          total: 1,
+        })),
+      http.get('/api/v1/assets', () => HttpResponse.json({ data: [fx.assetUSD, vti], total: 2 })),
+      http.post('/api/v1/assets/:id/prices', async ({ params, request }) => {
+        posted = { assetID: String(params.id), body: await request.json() }
+        return HttpResponse.json({ data: { id: 1, asset_id: 7, quote_asset_id: 1, price: '250', as_of: '2026-10-20', source: 'manual' } }, { status: 201 })
+      }),
+    )
+    renderPage(<AccountsPage />)
+    expect(await screen.findByText('Needs a price:')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Set price for VTI' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Set price for VTI' })
+    expect(within(dialog).getByPlaceholderText('e.g. MYFUND')).toHaveValue('VTI')
+    const priceInput = within(dialog).getByPlaceholderText('100.00')
+    expect(priceInput).toHaveFocus()
+    fireEvent.change(priceInput, { target: { value: '250' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Set price' }))
+    await waitFor(() => expect(posted?.assetID).toBe('7'))
+    expect(posted!.body).toMatchObject({ price: '250' })
   })
 })

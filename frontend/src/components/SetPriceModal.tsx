@@ -11,6 +11,9 @@ import { useAssetsStore } from '../store/assetsStore'
 import { assetKindLabel, type Asset, type AssetKind } from '../types/asset'
 
 type Props = {
+  // initial pre-fills the asset when the caller already knows which holding
+  // needs a price (#530) — the user then only types the price.
+  initial?: { symbol: string; kind: string }
   onClose: () => void
   // Fires after a successful set so the host page can refetch its data.
   onSet?: () => void
@@ -21,10 +24,12 @@ type Props = {
 // crypto, bonds, commodities, or an uncategorized ticker).
 const PRICEABLE_KINDS: AssetKind[] = ['equity', 'fund', 'crypto', 'bond', 'commodity', 'other']
 
-export function SetPriceModal({ onClose, onSet }: Props) {
+export function SetPriceModal({ initial, onClose, onSet }: Props) {
   const { assets, loaded, fetch, ensure } = useAssetsStore()
-  const [symbol, setSymbol] = useState('')
-  const [assetKind, setAssetKind] = useState<AssetKind>('equity')
+  const [symbol, setSymbol] = useState(initial?.symbol ?? '')
+  const [assetKind, setAssetKind] = useState<AssetKind>(
+    initial && PRICEABLE_KINDS.includes(initial.kind as AssetKind) ? (initial.kind as AssetKind) : 'equity',
+  )
   const [price, setPrice] = useState('')
   const [asOf, setAsOf] = useState(todayISO())
   const [submitting, setSubmitting] = useState(false)
@@ -83,14 +88,20 @@ export function SetPriceModal({ onClose, onSet }: Props) {
 
   return (
     <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-lg bg-white shadow-xl">
-        <div className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
-          Set price
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="set-price-title"
+        className="w-full max-w-md rounded-lg bg-white shadow-xl"
+      >
+        <div id="set-price-title" className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
+          {initial ? `Set price for ${initial.symbol}` : 'Set price'}
         </div>
         <div className="space-y-3 px-5 py-4">
           <p className="text-xs text-gray-500">
-            For an asset no price provider covers — a private fund, obscure ticker, or
-            collectible. Priced in your primary currency.
+            {initial
+              ? `${initial.symbol} has no price from the last 7 days, so balances leave it out. Enter what one unit is worth today.`
+              : 'For an asset no price provider covers — a private fund, obscure ticker, or collectible. Priced in your primary currency.'}
           </p>
           {error && (
             <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -137,6 +148,7 @@ export function SetPriceModal({ onClose, onSet }: Props) {
               onChange={(e) => setPrice(e.target.value)}
               inputMode="decimal"
               placeholder="100.00"
+              autoFocus={initial != null}
             />
           </Field>
           <Field label="As of">

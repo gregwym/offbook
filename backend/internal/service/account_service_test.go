@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -384,6 +385,9 @@ func TestListResponse_DerivedBalance(t *testing.T) {
 		if !r.BalanceComplete {
 			t.Error("balance_complete = false, want true (same-asset cash needs no price)")
 		}
+		if r.UnpricedAssets == nil || len(r.UnpricedAssets) != 0 {
+			t.Errorf("unpriced_assets = %#v, want [] (non-nil) when complete", r.UnpricedAssets)
+		}
 	})
 
 	t.Run("unpriced position flips balance_complete", func(t *testing.T) {
@@ -409,6 +413,10 @@ func TestListResponse_DerivedBalance(t *testing.T) {
 		if r.BalanceComplete {
 			t.Error("balance_complete = true, want false (BTC has no price chain)")
 		}
+		if len(r.UnpricedAssets) != 1 || r.UnpricedAssets[0].AssetID != btc.ID ||
+			r.UnpricedAssets[0].Symbol != "BTC" || r.UnpricedAssets[0].Kind != model.AssetKindCrypto {
+			t.Errorf("unpriced_assets = %+v, want exactly BTC/crypto (#530)", r.UnpricedAssets)
+		}
 
 		single, err := svc.GetResponse(ctx, userID, acct.ID)
 		if err != nil {
@@ -419,4 +427,86 @@ func TestListResponse_DerivedBalance(t *testing.T) {
 				single.Balance, single.BalanceComplete, r.Balance, r.BalanceComplete)
 		}
 	})
+}
+
+// TestListResponse_UnpricedAssets verifies the accounts API names the holding
+// behind a partial balance (#530): a price older than the stale window lists
+// the asset, a fresh manual price clears it, and the balance then includes it.
+func TestListResponse_UnpricedAssets(t *testing.T) {
+	svc, userID, g := newAccountSvc(t)
+	svc.WithValuation(valuation.NewService(
+		repository.NewPositionRepository(g),
+		repository.NewPriceRepository(g),
+		repository.NewAssetRepository(g),
+		repository.NewAccountRepository(g),
+	))
+	ctx := context.Background()
+
+	in := validInput(tcSuffix(9))
+	in.OpeningBalance = decimal.RequireFromString("100")
+	acct, err := svc.Create(ctx, userID, in)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	symbol := "U530" + strings.ReplaceAll(tcSuffix(10), ".", "")
+	asset, err := repository.NewAssetRepository(g).EnsureBySymbolKind(ctx, symbol, model.AssetKindEquity, "")
+	if err != nil {
+		t.Fatalf("ensure asset: %v", err)
+	}
+	if err := repository.NewPositionRepository(g).Upsert(ctx, &model.Position{
+		UserID: userID, AccountID: acct.ID, AssetID: asset.ID, Quantity: decimal.RequireFromString("2"),
+	}); err != nil {
+		t.Fatalf("upsert position: %v", err)
+	}
+	prices := repository.NewPriceRepository(g)
+	addPrice := func(t *testing.T, asOf time.Time, px string) {
+		t.Helper()
+		if err := prices.Insert(ctx, &model.Price{
+			AssetID: asset.ID, QuoteAssetID: acct.PrimaryQuoteAssetID, AsOf: asOf,
+			Price: decimal.RequireFromString(px), Source: "manual",
+		}); err != nil {
+			t.Fatalf("insert price: %v", err)
+		}
+	}
+	get := func(t *testing.T) *service.AccountResponse {
+		t.Helper()
+		r, err := svc.GetResponse(ctx, userID, acct.ID)
+		if err != nil {
+			t.Fatalf("get response: %v", err)
+		}
+		return r
+	}
+
+	tests := []struct {
+		name         string
+		priceAge     time.Duration
+		price        string
+		wantBalance  string
+		wantUnpriced []string
+	}{
+		{"stale price names the holding", 30 * 24 * time.Hour, "40", "100", []string{symbol}},
+		{"fresh price clears it", time.Hour, "50.25", "200.5", nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			addPrice(t, time.Now().UTC().Add(-tc.priceAge), tc.price)
+			r := get(t)
+			if !r.Balance.Equal(decimal.RequireFromString(tc.wantBalance)) {
+				t.Errorf("balance = %s, want %s", r.Balance, tc.wantBalance)
+			}
+			got := []string{}
+			for _, u := range r.UnpricedAssets {
+				got = append(got, u.Symbol)
+				if u.Kind != model.AssetKindEquity || u.AssetID != asset.ID {
+					t.Errorf("unpriced asset = %+v, want id %d kind equity", u, asset.ID)
+				}
+			}
+			if len(got) != len(tc.wantUnpriced) || (len(got) == 1 && got[0] != tc.wantUnpriced[0]) {
+				t.Errorf("unpriced symbols = %v, want %v", got, tc.wantUnpriced)
+			}
+			if r.BalanceComplete != (len(tc.wantUnpriced) == 0) {
+				t.Errorf("balance_complete = %v, want %v", r.BalanceComplete, len(tc.wantUnpriced) == 0)
+			}
+		})
+	}
 }

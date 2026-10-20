@@ -42,7 +42,9 @@ export function AccountsPage() {
   const [importingInto, setImportingInto] = useState<Account | null>(null)
   // Tier-1 manual price entry (#373) — asset-agnostic, so a single modal
   // instance serves every row's "partial" badge.
-  const [settingPrice, setSettingPrice] = useState(false)
+  // settingPrice: null = closed; 'blank' = empty form; a symbol/kind pre-fills
+  // the holding the balance is missing a price for (#530).
+  const [settingPrice, setSettingPrice] = useState<{ symbol: string; kind: string } | 'blank' | null>(null)
   // Manual "what does the bank say?" balance (#504) — non-Plaid cash accounts.
   const [balancing, setBalancing] = useState<Account | null>(null)
   // A manual account just created on /accounts/add (#520): confirm it and
@@ -208,13 +210,28 @@ export function AccountsPage() {
                   {!a.balance_complete && (
                     <>
                       <PartialBadge />
-                      <button
-                        type="button"
-                        onClick={() => setSettingPrice(true)}
-                        className="ml-1.5 align-middle text-[11px] font-medium text-indigo-600 hover:text-indigo-800"
-                      >
-                        Set price
-                      </button>
+                      {(a.unpriced_assets ?? []).length === 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSettingPrice('blank')}
+                          className="ml-1.5 align-middle text-[11px] font-medium text-indigo-600 hover:text-indigo-800"
+                        >
+                          Set price
+                        </button>
+                      )}
+                      {(a.unpriced_assets ?? []).map((u) => (
+                        <div key={u.asset_id} className="mt-0.5 text-xs text-amber-700">
+                          Needs a price: <span className="font-medium">{u.symbol}</span>
+                          <button
+                            type="button"
+                            onClick={() => setSettingPrice({ symbol: u.symbol, kind: u.kind })}
+                            aria-label={`Set price for ${u.symbol}`}
+                            className="ml-1.5 min-h-9 font-medium text-indigo-600 underline hover:text-indigo-800 md:min-h-0"
+                          >
+                            Set price
+                          </button>
+                        </div>
+                      ))}
                     </>
                   )}
                   {a.last_observed_at && (
@@ -337,7 +354,8 @@ export function AccountsPage() {
 
       {settingPrice && (
         <SetPriceModal
-          onClose={() => setSettingPrice(false)}
+          initial={settingPrice === 'blank' ? undefined : settingPrice}
+          onClose={() => setSettingPrice(null)}
           onSet={() => {
             void fetch()
           }}
