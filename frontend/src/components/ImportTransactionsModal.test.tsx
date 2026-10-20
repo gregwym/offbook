@@ -64,11 +64,14 @@ describe('ImportTransactionsModal import history (#376)', () => {
       rows_total: 4, rows_imported: 4, rows_duplicate: 0, rows_error: 0, reconciled: null, can_undo: true,
     }
     const undone = vi.fn()
+    const after = { ...entry, can_undo: false, undone_at: '2026-08-02T00:00:00Z', rows_undone: 4 }
+    let current = entry
     server.use(
-      http.get(`${API}/accounts/:id/imports`, () => HttpResponse.json({ total: 1, data: [entry] })),
-      http.post(`${API}/accounts/:id/imports/3/undo`, () =>
-        HttpResponse.json({ data: { ...entry, can_undo: false, undone_at: '2026-08-02T00:00:00Z', rows_undone: 4 } }),
-      ),
+      http.get(`${API}/accounts/:id/imports`, () => HttpResponse.json({ total: 1, data: [current] })),
+      http.post(`${API}/accounts/:id/imports/3/undo`, () => {
+        current = after
+        return HttpResponse.json({ data: after })
+      }),
     )
     render(
       <ImportTransactionsModal accounts={fx.accounts} initialAccountID={fx.account1.id} onClose={vi.fn()} onImported={vi.fn()} onUndone={undone} />,
@@ -95,8 +98,47 @@ describe('ImportTransactionsModal import history (#376)', () => {
     renderModal()
     fireEvent.click(await screen.findByRole('button', { name: 'Undo import' }))
     fireEvent.click(screen.getByRole('button', { name: 'Yes, undo import' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(/cannot be undone/)
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/newer import into this account has to be undone first/)
+    expect(alert).not.toHaveTextContent(/cannot be undone/)
     expect(screen.getByRole('button', { name: 'Yes, undo import' })).toBeEnabled()
+  })
+
+  it('names the newer import that must be undone first, then unblocks the older one (#522)', async () => {
+    const newer = {
+      job_id: 6, source: 'pdf', file_name: 'june.pdf', imported_at: '2026-07-02T00:00:00Z',
+      rows_total: 1, rows_imported: 1, rows_duplicate: 0, rows_error: 0, reconciled: null, can_undo: true,
+    }
+    const older = {
+      job_id: 5, source: 'pdf', file_name: 'may.pdf', imported_at: '2026-06-02T00:00:00Z',
+      rows_total: 2, rows_imported: 2, rows_duplicate: 0, rows_error: 0, reconciled: null,
+      can_undo: false, undo_blocked_by: 6,
+    }
+    let undoneNewer = false
+    server.use(
+      http.get(`${API}/accounts/:id/imports`, () =>
+        HttpResponse.json({
+          total: 2,
+          data: undoneNewer
+            ? [{ ...newer, can_undo: false, undone_at: '2026-08-01T00:00:00Z', rows_undone: 1 }, { ...older, can_undo: true, undo_blocked_by: undefined }]
+            : [newer, older],
+        }),
+      ),
+      http.post(`${API}/accounts/:id/imports/6/undo`, () => {
+        undoneNewer = true
+        return HttpResponse.json({ data: { ...newer, can_undo: false, undone_at: '2026-08-01T00:00:00Z', rows_undone: 1 } })
+      }),
+    )
+    renderModal()
+    expect(await screen.findByText(/To undo this one, first undo/)).toHaveTextContent(/“june\.pdf”/)
+    // Only the newer import offers Undo; the older one explains instead.
+    expect(screen.getAllByRole('button', { name: 'Undo import' })).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo import' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, undo import' }))
+    expect(await screen.findByText(/1 transaction removed/)).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText(/To undo this one, first undo/)).not.toBeInTheDocument())
+    expect(screen.getAllByRole('button', { name: 'Undo import' })).toHaveLength(1)
   })
 
   it('degrades to a quiet message when history fails to load', async () => {

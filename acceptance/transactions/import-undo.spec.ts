@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { acceptanceAPIURL } from '../fixtures/env.mjs'
-import { createThrowawayUser } from '../fixtures/state.mjs'
+import { createThrowawayUser, withQAClient } from '../fixtures/state.mjs'
 
 // Journey for Undo Import (IMP-01 / #477): a committed CSV import appears in the
 // account's import history, can be undone after an explicit confirmation, its
@@ -58,11 +58,65 @@ test.describe('undo statement import', () => {
     await page.reload()
     await expect(page.getByText('Undo Coffee')).toBeVisible()
   })
+
+  // #522: an older statement can't be undone while a newer import that set the
+  // account's balance still stands (#489). The history says so before any
+  // click, names the import to undo first, and unblocks once it's undone.
+  test('names the newer statement to undo first, then unblocks the older one', async ({ page }, testInfo) => {
+    process.env.OFFBOOK_ROLE = process.env.OFFBOOK_ROLE ?? 'qa'
+    const user = await createThrowawayUser({ suite: `undo-order-${testInfo.project.name}` })
+    const cookie = await apiSignin(user.email, user.password)
+    const acct = await apiPost(cookie, '/accounts', {
+      name: 'Order Checking', institution_slug: 'manual', account_type: 'checking', currency: 'USD',
+    })
+    const accountID = acct.data.id as number
+    await importCSV(cookie, accountID, 'may-statement.csv', [
+      'Date,Description,Amount', '2026-05-01,Order Payroll,1000.00', '2026-05-10,Order Rent,-400.00',
+    ].join('\n'))
+    const june = await importCSV(cookie, accountID, 'june-statement.csv', [
+      'Date,Description,Amount', '2026-06-05,Order Grocer,-50.00',
+    ].join('\n'))
+    // CSV imports carry no closing balance, so stand in for a statement that
+    // did: the June import records the (ledger-consistent) 550.00 balance.
+    await withQAClient((client) => client.query(
+      `INSERT INTO account_balance_observations (user_id, account_id, asset_id, observed_quantity, as_of, source, import_job_id)
+       SELECT a.user_id, a.id, a.primary_quote_asset_id, 550, '2026-06-30T00:00:00Z', 'pdf', $2 FROM accounts a WHERE a.id = $1`,
+      [accountID, june.data.job_id],
+    ))
+
+    await signIn(page, user.email, user.password)
+    await page.goto('/accounts')
+    await page.getByRole('button', { name: 'Import transactions' }).first().click()
+    const history = page.getByRole('region', { name: 'Import history' })
+    const mayEntry = history.getByRole('listitem').filter({ hasText: 'may-statement.csv' })
+    const juneEntry = history.getByRole('listitem').filter({ hasText: 'june-statement.csv' })
+    await expect(mayEntry).toContainText('To undo this one, first undo “june-statement.csv”')
+    await expect(mayEntry.getByRole('button', { name: 'Undo import' })).toHaveCount(0)
+    await expect(juneEntry.getByRole('button', { name: 'Undo import' })).toBeVisible()
+    await expectInViewport(page, mayEntry.getByText('To undo this one'))
+    await expectNoOverflow(page)
+    await page.screenshot({ path: testInfo.outputPath('undo-blocked.png'), fullPage: true })
+
+    await juneEntry.getByRole('button', { name: 'Undo import' }).click()
+    await juneEntry.getByRole('button', { name: 'Yes, undo import' }).click()
+    await expect(juneEntry).toContainText(/Undone .* 1 transaction removed/)
+    // The older statement unblocks without a reload.
+    await expect(mayEntry).not.toContainText('To undo this one')
+    await mayEntry.getByRole('button', { name: 'Undo import' }).click()
+    await mayEntry.getByRole('button', { name: 'Yes, undo import' }).click()
+    await expect(mayEntry).toContainText(/Undone .* 2 transactions removed/)
+    await expectNoOverflow(page)
+    await page.screenshot({ path: testInfo.outputPath('undo-unwound.png'), fullPage: true })
+
+    await page.goto('/transactions')
+    await expect(page.getByText('Order Rent')).toHaveCount(0)
+    await expect(page.getByText('Order Grocer')).toHaveCount(0)
+  })
 })
 
-async function importCSV(cookie: string, accountID: number) {
+async function importCSV(cookie: string, accountID: number, fileName = 'undo-statement.csv', body = csv) {
   const form = new FormData()
-  form.append('file', new Blob([csv], { type: 'text/csv' }), 'undo-statement.csv')
+  form.append('file', new Blob([body], { type: 'text/csv' }), fileName)
   form.append('commit', 'true')
   const res = await fetch(`${acceptanceAPIURL()}/accounts/${accountID}/transactions/import`, {
     method: 'POST', headers: { cookie }, body: form,
@@ -93,6 +147,15 @@ async function signIn(page: Page, email: string, password: string) {
   await page.getByLabel(/password/i).fill(password)
   await page.getByRole('button', { name: /sign in/i }).click()
   await page.waitForURL(/\/insights|\/h\/insights|\/accounts/)
+}
+
+async function expectInViewport(page: Page, locator: ReturnType<Page['locator']>) {
+  await locator.scrollIntoViewIfNeeded()
+  const box = await locator.boundingBox()
+  const width = page.viewportSize()!.width
+  expect(box, 'element rendered').not.toBeNull()
+  expect(box!.x, 'starts inside the viewport').toBeGreaterThanOrEqual(0)
+  expect(box!.x + box!.width, 'ends inside the viewport').toBeLessThanOrEqual(width + 1)
 }
 
 async function expectNoOverflow(page: Page) {
