@@ -279,8 +279,8 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
             />
             <p className="mt-1 text-xs text-gray-500">
               CSV is parsed locally. PDF or photo statements are read by your configured AI provider. Money out should
-              show as negative; you can flip the signs after previewing. Re-importing the same file won't create
-              duplicates.
+              show as negative; if purchases come in positive, you can flip the signs before importing. Re-importing
+              the same file won't create duplicates.
             </p>
           </Field>
 
