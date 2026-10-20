@@ -51,6 +51,9 @@ export type Transaction = {
   // splits_need_attention (#445): the bank revised the amount so splits no
   // longer sum to it; reporting uses the parent row until re-split.
   splits_need_attention?: boolean
+  // pending (#513): the bank hasn't posted this yet. The user's edits carry
+  // over when it posts (the posted row adopts this one).
+  pending?: boolean
   created_at: string
   updated_at: string
 }

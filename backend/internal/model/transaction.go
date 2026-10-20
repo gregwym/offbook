@@ -63,6 +63,10 @@ type Transaction struct {
 	// HiddenAt (#465) marks a flow row the user excluded from spending, income,
 	// budgets and merchant reports. The ledger/balances are unaffected.
 	HiddenAt *time.Time `json:"hidden_at,omitempty"`
+	// Pending (#513) is true while the bank hasn't posted the row yet (Plaid
+	// `pending`). Bank-owned: sync overwrites it; the pending -> posted
+	// adoption clears it on the same row, keeping the user's edits.
+	Pending bool `gorm:"not null;default:false" json:"pending"`
 	// ImportJobID links a statement-imported row to the ingestion_jobs audit
 	// row that created it, so the import can be undone as a unit.
 	ImportJobID *int64         `json:"import_job_id,omitempty"`

@@ -85,15 +85,26 @@ func TestService_SyncTransactions_PostedAdoptsPendingRow(t *testing.T) {
 		t.Fatalf("sync #1: %v", err)
 	}
 
-	// User edits the pending row: note, reviewed, and a two-way split.
+	// User edits the pending row: category, note, reviewed, hidden, and a
+	// two-way split.
 	var pending model.Transaction
 	if err := g.Where("user_id = ? AND plaid_transaction_id = ?", userID, "ptx-pending").First(&pending).Error; err != nil {
 		t.Fatalf("fetch pending: %v", err)
 	}
+	if !pending.Pending {
+		t.Fatal("pending = false after syncing a Plaid pending row (#513)")
+	}
+	var cat model.Category
+	if err := g.Where("slug = ?", "groceries").First(&cat).Error; err != nil {
+		t.Fatalf("seeded category: %v", err)
+	}
 	now := time.Now().UTC()
 	note := "team lunch"
 	if err := g.Model(&model.Transaction{}).Where("id = ?", pending.ID).
-		Updates(map[string]any{"notes": note, "reviewed_at": now}).Error; err != nil {
+		Updates(map[string]any{
+			"notes": note, "reviewed_at": now, "hidden_at": now,
+			"category_id": cat.ID, "categorization_method": "manual",
+		}).Error; err != nil {
 		t.Fatalf("edit pending: %v", err)
 	}
 	for _, amt := range []string{"-25", "-15"} {
@@ -129,6 +140,24 @@ func TestService_SyncTransactions_PostedAdoptsPendingRow(t *testing.T) {
 	}
 	if got.ReviewedAt == nil {
 		t.Error("reviewed_at lost across pending→posted")
+	}
+	if got.Pending {
+		t.Error("pending still true after the posted replacement adopted the row (#513)")
+	}
+	if got.CategoryID == nil || *got.CategoryID != cat.ID {
+		t.Errorf("category_id = %v, want user's pick %d preserved", got.CategoryID, cat.ID)
+	}
+	if got.HiddenAt == nil {
+		t.Error("hidden_at lost across pending→posted")
+	}
+	// Exactly-once financial effect: the ledger holds the posted amount once.
+	var sum decimal.Decimal
+	if err := g.Model(&model.Transaction{}).Where("user_id = ? AND account_id = ?", userID, acct.ID).
+		Select("COALESCE(SUM(amount), 0)").Scan(&sum).Error; err != nil {
+		t.Fatalf("sum: %v", err)
+	}
+	if !sum.Equal(decimal.RequireFromString("-46")) {
+		t.Errorf("ledger sum = %s, want exactly -46 (no pending+posted double count)", sum)
 	}
 	var nSplits int64
 	g.Model(&model.TransactionSplit{}).Where("transaction_id = ?", got.ID).Count(&nSplits)
