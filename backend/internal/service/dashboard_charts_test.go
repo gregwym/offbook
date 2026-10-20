@@ -329,6 +329,57 @@ func TestDashboard_NetWorth_TradeStepsWithFlatPrices(t *testing.T) {
 	}
 }
 
+// TestDashboard_NetWorth_OpeningBalanceAnchorsDayZero (#528): a bank linked
+// (or statement imported) on May 10 brings in March and April history. The
+// opening_balance is written on May 10 as balance − Σ flows, but it is the
+// day-0 anchor, so earlier month-ends must include it — not just the flows.
+// An adjustment keeps its own date, and an account whose only row is its
+// anchor counts from that date.
+func TestDashboard_NetWorth_OpeningBalanceAnchorsDayZero(t *testing.T) {
+	svc, userID, accountID, g := newDashboardSvc(t)
+	ctx := context.Background()
+	usdID := testutil.LookupUSDAssetID(t, g)
+
+	// Reported balance on May 10 is 5,000.00 after −400.25 in March and
+	// −799.75 in April, so the anchor is 6,200.00.
+	seedNetWorthTxn(t, g, userID, accountID, usdID, model.KindFlow, time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC), "-400.25")
+	seedNetWorthTxn(t, g, userID, accountID, usdID, model.KindFlow, time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC), "-799.75")
+	seedNetWorthTxn(t, g, userID, accountID, usdID, model.KindOpeningBalance, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC), "6200.00")
+	// A later observation drifted +100.10; the adjustment stays in May.
+	seedNetWorthTxn(t, g, userID, accountID, usdID, model.KindAdjustment, time.Date(2026, 5, 12, 0, 0, 0, 0, time.UTC), "100.10")
+
+	// A manual account opened in April with no older rows starts in April.
+	other := &model.Account{
+		UserID: userID, Name: "DashOther-" + time.Now().Format("150405.000000"),
+		InstitutionSlug: "manual", AccountType: "savings", Currency: "USD",
+	}
+	if err := g.Create(other).Error; err != nil {
+		t.Fatalf("seed account: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("account_id = ?", other.ID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, other.ID)
+	})
+	seedNetWorthTxn(t, g, userID, other.ID, usdID, model.KindOpeningBalance, time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC), "250.50")
+
+	rows, err := svc.NetWorth(ctx, userID, 4) // Feb, Mar, Apr, May
+	if err != nil {
+		t.Fatalf("NetWorth: %v", err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("got %d rows, want 4", len(rows))
+	}
+	// Feb: nothing yet. Mar: 6200 − 400.25. Apr: + other's 250.50 − 799.75.
+	// May: + 100.10 adjustment = 5,000.00 + 100.10 + 250.50.
+	want := []string{"0", "5799.75", "5250.5", "5350.6"}
+	for i, w := range want {
+		got := decimal.RequireFromString(rows[i].Total)
+		if !got.Equal(decimal.RequireFromString(w)) {
+			t.Errorf("row[%d] (%s) total = %s, want %s", i, rows[i].Date, rows[i].Total, w)
+		}
+	}
+}
+
 // TestDashboard_NetWorth_PriceMovesWithNoTrades: holding a constant quantity of
 // a non-primary asset, the trend moves purely with that asset's price — and a
 // month-end before any price exists is reported incomplete, not silently $0.

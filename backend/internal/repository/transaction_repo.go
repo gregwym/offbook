@@ -147,6 +147,11 @@ type TransactionRepository interface {
 	// omitted. Used by the unified net-worth trend (#282) to reconstruct the
 	// quantity held at a past instant from the ledger. AccountID is left zero
 	// — the caller values per asset in a single quote currency.
+	//
+	// An opening_balance row is the day-0 anchor (ADR-0017): it counts from the
+	// earliest dated row of its own (account, asset), not from the day it was
+	// written, so months before a link/statement date include the starting
+	// balance instead of just the flows (#528).
 	FoldByUserAsOf(ctx context.Context, userID int64, asOf time.Time) ([]model.Position, error)
 	// ListForCategorizationScope returns a chunk of non-deleted transactions
 	// for the user, ordered by id ASC for cursor-style pagination. Callers
@@ -695,15 +700,22 @@ func (r *transactionRepo) FoldByUserAsOf(ctx context.Context, userID int64, asOf
 	}
 	var rows []row
 	if err := r.db.WithContext(ctx).Raw(`
-		SELECT asset_id, COALESCE(SUM(amount), 0)::text AS qty
-		FROM transactions
-		WHERE deleted_at IS NULL
-		  AND user_id = ?
-		  AND transaction_date <= ?
-		GROUP BY asset_id
-		HAVING COALESCE(SUM(amount), 0) <> 0
-		ORDER BY asset_id
-	`, userID, asOf).Scan(&rows).Error; err != nil {
+		WITH day0 AS (
+			SELECT account_id, asset_id, MIN(transaction_date) AS first_date
+			FROM transactions
+			WHERE deleted_at IS NULL AND user_id = ?
+			GROUP BY account_id, asset_id
+		)
+		SELECT t.asset_id, COALESCE(SUM(t.amount), 0)::text AS qty
+		FROM transactions t
+		JOIN day0 d ON d.account_id = t.account_id AND d.asset_id = t.asset_id
+		WHERE t.deleted_at IS NULL
+		  AND t.user_id = ?
+		  AND CASE WHEN t.kind = ? THEN d.first_date ELSE t.transaction_date END <= ?
+		GROUP BY t.asset_id
+		HAVING COALESCE(SUM(t.amount), 0) <> 0
+		ORDER BY t.asset_id
+	`, userID, userID, model.KindOpeningBalance, asOf).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make([]model.Position, 0, len(rows))

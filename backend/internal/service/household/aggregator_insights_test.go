@@ -318,6 +318,41 @@ func TestAggregator_NetWorthTrend(t *testing.T) {
 	}
 }
 
+// TestAggregator_NetWorthTrend_OpeningBalanceAnchorsDayZero (#528): the
+// household trend uses the same day-0 anchor semantics as personal — an
+// opening_balance written at link time counts from the account's earliest
+// row, so the shared account's March point is balance-before-April-spend,
+// not just the March flow.
+func TestAggregator_NetWorthTrend_OpeningBalanceAnchorsDayZero(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	usd := testutil.LookupUSDAssetID(t, g)
+	ownerID := seedUser(t, g, "nwt-day0-owner")
+	hh := seedHouseholdRow(t, g, ownerID, "NWTDay0", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+
+	acct := seedAccount(t, g, ownerID, "linked")
+	seedHoldingTxn(t, g, ownerID, acct.ID, usd, model.KindFlow, time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC), "-400.25")
+	seedHoldingTxn(t, g, ownerID, acct.ID, usd, model.KindFlow, time.Date(2026, 4, 10, 0, 0, 0, 0, time.UTC), "-799.75")
+	seedHoldingTxn(t, g, ownerID, acct.ID, usd, model.KindOpeningBalance, time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC), "6200.00")
+	setShare(t, g, acct.ID, hh.ID, model.VisibilityBalanceOnly)
+
+	agg.SetClock(func() time.Time { return time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) })
+	out, err := agg.NetWorthTrend(ctx, hh.ID, 3) // Mar, Apr, May
+	if err != nil {
+		t.Fatalf("NetWorthTrend: %v", err)
+	}
+	if len(out) != 3 {
+		t.Fatalf("len(out) = %d, want 3", len(out))
+	}
+	want := []string{"5799.75", "5000", "5000"}
+	for i, w := range want {
+		if !decimal.RequireFromString(out[i].Value).Equal(decimal.RequireFromString(w)) {
+			t.Errorf("point[%d] = %s, want %s", i, out[i].Value, w)
+		}
+	}
+}
+
 // TestAggregator_NetWorthTrend_InGraceExcluded covers (c) on the trend.
 func TestAggregator_NetWorthTrend_InGraceExcluded(t *testing.T) {
 	agg, g := newAggregator(t)
