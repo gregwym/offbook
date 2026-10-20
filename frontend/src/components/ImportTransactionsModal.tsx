@@ -65,6 +65,9 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
   const [duplicateBlocked, setDuplicateBlocked] = useState(false)
   // Per-account import history (#376), keyed by the account it was fetched for
   // so a stale response never shows under another account (loading = no match).
+  // Bumped after an undo so the history refetches: undoing one import can
+  // unblock an older one (#522).
+  const [historyVersion, setHistoryVersion] = useState(0)
   const [historyState, setHistoryState] = useState<{
     accountID: string
     entries: ImportHistoryEntry[]
@@ -89,7 +92,7 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
       .then((entries) => { if (!cancelled) setHistoryState({ accountID, entries, failed: false }) })
       .catch(() => { if (!cancelled) setHistoryState({ accountID, entries: [], failed: true }) })
     return () => { cancelled = true }
-  }, [accountID])
+  }, [accountID, historyVersion])
   const handleUndone = (entry: ImportHistoryEntry) => {
     setHistoryState((h) => h && {
       ...h,
@@ -97,6 +100,7 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
     })
     // The statement is importable again, so drop any stale duplicate warning.
     setPreview((p) => (p ? { ...p, duplicate_of: undefined } : p))
+    setHistoryVersion((v) => v + 1)
     onUndone?.()
   }
   const historyReady = historyState?.accountID === accountID ? historyState : null
@@ -600,7 +604,7 @@ function ImportHistoryList({
       onUndone(await undoImport(accountID, jobID))
       setConfirming(null)
     } catch (err) {
-      setUndoError({ jobID, message: errMsg(err) })
+      setUndoError({ jobID, message: undoErrMsg(err) })
     } finally {
       setUndoing(null)
     }
@@ -663,6 +667,8 @@ function ImportHistoryList({
                   Undo import
                 </button>
               )
+            ) : e.undo_blocked_by ? (
+              <BlockedUndoNote blocker={entries.find((b) => b.job_id === e.undo_blocked_by)} />
             ) : e.rows_imported > 0 ? (
               <p className="mt-0.5 text-xs text-gray-500">Imported before undo was available, so it can’t be undone here.</p>
             ) : null}
@@ -683,6 +689,20 @@ function ImportHistoryList({
         ))}
       </ul>
     </section>
+  )
+}
+
+// BlockedUndoNote explains, before any click, why an older statement can't be
+// undone yet: a newer import set the account's balance after it (#489, #522).
+function BlockedUndoNote({ blocker }: { blocker?: ImportHistoryEntry }) {
+  const name = blocker ? (blocker.file_name || `${blocker.source.toUpperCase()} import`) : 'the newer import'
+  return (
+    <p className="mt-0.5 text-xs text-gray-600">
+      To undo this one, first undo{' '}
+      <span className="font-medium text-gray-800 break-words">{blocker ? `“${name}”` : name}</span>
+      {blocker && <> ({new Date(blocker.imported_at).toLocaleDateString()})</>} — it set this account’s balance
+      after this statement.
+    </p>
   )
 }
 
@@ -709,6 +729,16 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 const inputClass = 'w-full rounded border border-gray-300 px-2 py-1 text-sm'
+
+// undoErrMsg keeps a refused undo in plain language; the server's message for
+// IMPORT_NOT_UNDOABLE chains internal reasons.
+function undoErrMsg(err: unknown): string {
+  const body = (err as { response?: { data?: { code?: string } } })?.response?.data
+  if (body?.code === 'IMPORT_NOT_UNDOABLE') {
+    return 'a newer import into this account has to be undone first. Close and reopen this window to see which one.'
+  }
+  return errMsg(err)
+}
 
 function errMsg(err: unknown): string {
   const body = (err as { response?: { data?: { error?: string } } })?.response?.data

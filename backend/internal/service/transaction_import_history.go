@@ -59,6 +59,9 @@ type ImportHistoryEntry struct {
 	UndoneAt   *time.Time `json:"undone_at,omitempty"`
 	RowsUndone int        `json:"rows_undone,omitempty"`
 	CanUndo    bool       `json:"can_undo"`
+	// UndoBlockedBy is the newest still-standing import that recorded a
+	// balance after this one; it must be undone first (#489, #522).
+	UndoBlockedBy *int64 `json:"undo_blocked_by,omitempty"`
 }
 
 // contentHash is the hex SHA-256 of the uploaded document bytes.
@@ -196,32 +199,16 @@ func (s *TransactionService) UndoImport(ctx context.Context, userID, accountID, 
 	if job.Status != "completed" || job.UndoneAt != nil {
 		return nil, ErrImportNotUndoable
 	}
-	// Undoing an older statement while a newer one that recorded a closing
-	// balance still stands would leave that observation contradicting the
-	// ledger (#489), so such imports unwind newest-first. Imports without a
-	// balance claim (plain CSV rows) are independent and may be undone freely.
-	if s.db != nil {
-		jobs, err := s.jobRepo.ListCompletedByAccount(ctx, userID, accountID, 200)
-		if err != nil {
-			return nil, err
-		}
-		var newer []int64
-		for _, j := range jobs {
-			if j.ID != job.ID && j.UndoneAt == nil && (j.CreatedAt.After(job.CreatedAt) ||
-				(j.CreatedAt.Equal(job.CreatedAt) && j.ID > job.ID)) {
-				newer = append(newer, j.ID)
-			}
-		}
-		if len(newer) > 0 {
-			var n int64
-			if err := s.db.WithContext(ctx).Model(&model.AccountBalanceObservation{}).
-				Where("user_id = ? AND import_job_id IN ?", userID, newer).Count(&n).Error; err != nil {
-				return nil, fmt.Errorf("check newer imports: %w", err)
-			}
-			if n > 0 {
-				return nil, ErrImportNotLatest
-			}
-		}
+	jobs, err := s.jobRepo.ListCompletedByAccount(ctx, userID, accountID, 200)
+	if err != nil {
+		return nil, err
+	}
+	claims, err := s.balanceClaims(ctx, userID, jobs)
+	if err != nil {
+		return nil, err
+	}
+	if undoBlocker(jobs, claims, *job) != nil {
+		return nil, ErrImportNotLatest
 	}
 
 	undo := func(txRepo repository.TransactionRepository, obsRepo repository.BalanceObservationRepository,
@@ -313,13 +300,63 @@ func (s *TransactionService) ListImportHistory(ctx context.Context, userID, acco
 	if err != nil {
 		return nil, err
 	}
+	claims, err := s.balanceClaims(ctx, userID, jobs)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]ImportHistoryEntry, 0, len(jobs))
 	for _, j := range jobs {
 		e := historyEntry(j)
-		e.CanUndo = j.UndoneAt == nil && live[j.ID] > 0
+		// An import that only recorded a balance (every row a duplicate) is
+		// still undoable: undo removes its observation.
+		e.CanUndo = j.UndoneAt == nil && (live[j.ID] > 0 || claims[j.ID])
+		if e.CanUndo {
+			if b := undoBlocker(jobs, claims, j); b != nil {
+				e.CanUndo, e.UndoBlockedBy = false, &b.ID
+			}
+		}
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+// balanceClaims reports which of the jobs recorded a balance observation.
+// Nil db (unit wiring without observations) means none did.
+func (s *TransactionService) balanceClaims(ctx context.Context, userID int64, jobs []model.IngestionJob) (map[int64]bool, error) {
+	claims := map[int64]bool{}
+	if s.db == nil || len(jobs) == 0 {
+		return claims, nil
+	}
+	ids := make([]int64, 0, len(jobs))
+	for _, j := range jobs {
+		ids = append(ids, j.ID)
+	}
+	var claimed []int64
+	if err := s.db.WithContext(ctx).Model(&model.AccountBalanceObservation{}).
+		Where("user_id = ? AND import_job_id IN ?", userID, ids).
+		Distinct().Pluck("import_job_id", &claimed).Error; err != nil {
+		return nil, fmt.Errorf("check import balance claims: %w", err)
+	}
+	for _, id := range claimed {
+		claims[id] = true
+	}
+	return claims, nil
+}
+
+// undoBlocker is the newest-first rule (#489): undoing an older statement
+// while a newer one that recorded a closing balance still stands would leave
+// that observation contradicting the ledger. It returns the newest such
+// standing import, or nil. Imports without a balance claim (plain CSV rows)
+// are independent and never block. jobs must be ordered newest first.
+func undoBlocker(jobs []model.IngestionJob, claims map[int64]bool, job model.IngestionJob) *model.IngestionJob {
+	for i := range jobs {
+		j := &jobs[i]
+		newer := j.CreatedAt.After(job.CreatedAt) || (j.CreatedAt.Equal(job.CreatedAt) && j.ID > job.ID)
+		if j.ID != job.ID && j.UndoneAt == nil && newer && claims[j.ID] {
+			return j
+		}
+	}
+	return nil
 }
 
 func historyEntry(j model.IngestionJob) ImportHistoryEntry {

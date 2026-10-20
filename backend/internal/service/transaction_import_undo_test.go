@@ -242,12 +242,43 @@ func TestUndoImport_BlocksOlderWhileNewerStands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import 2: %v", err)
 	}
+	// History says so before the user tries (#522): the older import names the
+	// newer one as its blocker; the newer one is undoable.
+	assertHistory := func(label string, wantOlderBlockedBy *int64, wantOlderCanUndo bool) {
+		t.Helper()
+		h, err := svc.ListImportHistory(ctx, userID, accountID)
+		if err != nil || len(h) != 2 {
+			t.Fatalf("%s: history len=%d err=%v", label, len(h), err)
+		}
+		older := h[1]
+		if older.JobID != *res1.JobID {
+			t.Fatalf("%s: history order = %d,%d", label, h[0].JobID, h[1].JobID)
+		}
+		if older.CanUndo != wantOlderCanUndo {
+			t.Errorf("%s: older can_undo = %v, want %v", label, older.CanUndo, wantOlderCanUndo)
+		}
+		switch {
+		case wantOlderBlockedBy == nil && older.UndoBlockedBy != nil:
+			t.Errorf("%s: older undo_blocked_by = %d, want none", label, *older.UndoBlockedBy)
+		case wantOlderBlockedBy != nil && (older.UndoBlockedBy == nil || *older.UndoBlockedBy != *wantOlderBlockedBy):
+			t.Errorf("%s: older undo_blocked_by = %v, want %d", label, older.UndoBlockedBy, *wantOlderBlockedBy)
+		}
+		if h[0].UndoBlockedBy != nil {
+			t.Errorf("%s: newest import reported blocked by %d", label, *h[0].UndoBlockedBy)
+		}
+		if h[0].UndoneAt == nil && !h[0].CanUndo {
+			t.Errorf("%s: newest standing import should be undoable", label)
+		}
+	}
+	assertHistory("both standing", res2.JobID, false)
+
 	if _, err := svc.UndoImport(ctx, userID, accountID, *res1.JobID); !errors.Is(err, service.ErrImportNotUndoable) {
 		t.Fatalf("undo older err = %v, want ErrImportNotUndoable", err)
 	}
 	if _, err := svc.UndoImport(ctx, userID, accountID, *res2.JobID); err != nil {
 		t.Fatalf("undo newest: %v", err)
 	}
+	assertHistory("newest undone", nil, true)
 	if _, err := svc.UndoImport(ctx, userID, accountID, *res1.JobID); err != nil {
 		t.Fatalf("undo older after newest: %v", err)
 	}

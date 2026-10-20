@@ -193,10 +193,13 @@ export type ImportHistoryEntry = {
   reconciled: boolean | null
   difference?: string
   // Undo (IMP-01): undone_at is set once the import's rows were removed;
-  // can_undo is false for undone or legacy imports with no linked rows.
+  // can_undo is false for undone or legacy imports with no linked rows, and
+  // for an older import while undo_blocked_by (a newer import that recorded
+  // the account's balance) still stands — undo that one first.
   undone_at?: string
   rows_undone?: number
   can_undo: boolean
+  undo_blocked_by?: number
 }
 
 // UpdateTransactionInput: sparse patch. `clear_category: true` with a null
