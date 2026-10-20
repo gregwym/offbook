@@ -376,6 +376,8 @@ test.describe('rule adds tags', () => {
     await expectInViewport(page, tags)
     await tags.fill('work TRIP, reimbursable')
     await expect(dialog).toContainText('2 would be tagged Work trip, reimbursable')
+    // The modal scrolls inside, so Create stays on screen even on a phone.
+    await expect(dialog.getByRole('button', { name: 'Create', exact: true })).toBeInViewport()
     await testInfo.attach(`${testInfo.project.name}-tags-draft`, {
       body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
     })

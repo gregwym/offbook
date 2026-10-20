@@ -178,11 +178,13 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
 
   return (
     <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
-        <div className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
+      {/* Capped to the viewport with only the body scrolling, so Create/Save
+          stay reachable on a phone however long the form gets. */}
+      <div className="flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col rounded-lg bg-white shadow-xl">
+        <div className="shrink-0 border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
           {mode === 'create' ? 'New rule' : `Edit "${rule?.pattern}"`}
         </div>
-        <div className="space-y-3 px-5 py-4">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
           {error && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
           <Field label="Pattern" error={patternError}>
             <input
@@ -328,7 +330,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
             )}
           </div>
         </div>
-        <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
+        <div className="flex shrink-0 justify-end gap-2 border-t border-gray-200 px-5 py-3">
           <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">Cancel</button>
           <button
             type="button"
