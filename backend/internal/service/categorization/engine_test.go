@@ -160,3 +160,42 @@ func TestApply_NoMatchLeavesTransactionUntouched(t *testing.T) {
 		t.Errorf("Apply mutated tx on no-match: %+v", tx)
 	}
 }
+
+func TestApply_RenameMerchant(t *testing.T) {
+	rules := categorization.Compile([]model.CategorizationRule{
+		{ID: 1, CategoryID: 10, MatchType: "contains", Pattern: "AMZN", IsActive: true, RenameMerchant: ptr("  Amazon ")},
+		{ID: 2, CategoryID: 20, MatchType: "contains", Pattern: "SHELL", IsActive: true, RenameMerchant: ptr("   ")},
+	})
+
+	t.Run("winning rule renames", func(t *testing.T) {
+		tx := &model.Transaction{Description: ptr("AMZN MKTP US*2K4"), MerchantName: ptr("AMZN Mktp")}
+		d, ok := categorization.Apply(tx, rules)
+		if !ok || d.RuleID != 1 {
+			t.Fatalf("Apply: ok=%v rule=%d, want rule 1", ok, d.RuleID)
+		}
+		if tx.MerchantName == nil || *tx.MerchantName != "Amazon" {
+			t.Errorf("merchant = %v, want Amazon (trimmed)", tx.MerchantName)
+		}
+		if !d.SameAs(tx) {
+			t.Error("SameAs after Apply = false, want true (re-apply is a no-op)")
+		}
+	})
+	t.Run("blank rename leaves merchant alone", func(t *testing.T) {
+		tx := &model.Transaction{Description: ptr("SHELL OIL 123"), MerchantName: ptr("Shell")}
+		d, ok := categorization.Apply(tx, rules)
+		if !ok || d.RenameMerchant != nil {
+			t.Fatalf("Apply: ok=%v rename=%v, want match without rename", ok, d.RenameMerchant)
+		}
+		if *tx.MerchantName != "Shell" {
+			t.Errorf("merchant = %q, want Shell", *tx.MerchantName)
+		}
+	})
+	t.Run("SameAs sees a stale merchant", func(t *testing.T) {
+		tx := &model.Transaction{Description: ptr("AMZN MKTP")}
+		d, _ := categorization.Apply(tx, rules)
+		tx.MerchantName = ptr("AMZN Mktp")
+		if d.SameAs(tx) {
+			t.Error("SameAs = true with a different merchant, want false")
+		}
+	})
+}

@@ -7,6 +7,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/gregwym/offbook/backend/internal/model"
+	"github.com/gregwym/offbook/backend/internal/service/categorization"
 	plaidsvc "github.com/gregwym/offbook/backend/internal/service/plaid"
 )
 
@@ -179,5 +180,38 @@ func TestMergePlaidUpdate_PreservesHiddenAt(t *testing.T) {
 				t.Errorf("hidden_at = %v, want %v", merged.HiddenAt, tc.in)
 			}
 		})
+	}
+}
+
+// TestMergePlaidUpdate_RuleRenameSurvivesModify (#534): a modified payload
+// carries Plaid's raw merchant again, but the user's rename rule re-runs in
+// the mapping, so the clean merchant survives resync and pending→posted.
+func TestMergePlaidUpdate_RuleRenameSurvivesModify(t *testing.T) {
+	raw := "AMZN Mktp US"
+	clean := "Amazon"
+	rules := categorization.Compile([]model.CategorizationRule{
+		{ID: 5, CategoryID: 9, MatchType: "contains", Pattern: "AMZN", IsActive: true, RenameMerchant: &clean},
+	})
+	in := plaidsvc.PlaidTransaction{
+		PlaidTransactionID: "ptx-r", PlaidAccountID: "pa", Amount: decimal.RequireFromString("12.34"),
+		Name: "AMZN MKTP US*2K4", MerchantName: &raw, Date: "2026-05-16",
+	}
+	added, err := plaidsvc.MapPlaidTransaction(in, 1, 11, 1, nil, rules)
+	if err != nil {
+		t.Fatalf("MapPlaidTransaction: %v", err)
+	}
+	if added.MerchantName == nil || *added.MerchantName != clean {
+		t.Fatalf("added merchant = %v, want Amazon", added.MerchantName)
+	}
+	in.Amount = decimal.RequireFromString("12.99")
+	merged, err := plaidsvc.MergePlaidUpdate(added, in, 11, 1, nil, rules)
+	if err != nil {
+		t.Fatalf("MergePlaidUpdate: %v", err)
+	}
+	if merged.MerchantName == nil || *merged.MerchantName != clean {
+		t.Errorf("merged merchant = %v, want Amazon", merged.MerchantName)
+	}
+	if !merged.Amount.Equal(decimal.RequireFromString("-12.99")) {
+		t.Errorf("merged amount = %s, want -12.99", merged.Amount)
 	}
 }

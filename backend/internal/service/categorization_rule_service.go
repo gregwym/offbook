@@ -24,7 +24,12 @@ var (
 	ErrInvalidPriority   = errors.New("priority must be >= 0")
 	ErrUnknownCategory   = errors.New("category does not exist")
 	ErrInvalidApplyScope = errors.New("scope must be one of: all, uncategorized, plaid_default")
+	ErrRenameTooLong     = errors.New("rename_merchant must be at most 200 characters")
 )
+
+// maxRenameMerchant bounds a rule's merchant rename; merchant names are
+// display labels, not free text.
+const maxRenameMerchant = 200
 
 var validMatchTypes = map[string]struct{}{
 	"contains": {},
@@ -39,9 +44,12 @@ type CreateRuleInput struct {
 	// AssetID, when set, narrows the rule to transactions whose
 	// asset_id matches. Either Pattern OR AssetID must be supplied —
 	// a rule with neither has nothing to match on.
-	AssetID  *int64
-	Priority int
-	IsActive *bool
+	AssetID *int64
+	// RenameMerchant, when non-blank, is written to merchant_name on every
+	// row the rule wins (#534). Blank means no rename.
+	RenameMerchant *string
+	Priority       int
+	IsActive       *bool
 }
 
 // UpdateRuleInput is a sparse patch. Nil pointer = leave alone.
@@ -53,8 +61,22 @@ type UpdateRuleInput struct {
 	CategoryID   *int64
 	AssetID      *int64
 	ClearAssetID bool
-	Priority     *int
-	IsActive     *bool
+	// RenameMerchant sets the rename; a blank string clears it (#534).
+	RenameMerchant *string
+	Priority       *int
+	IsActive       *bool
+}
+
+// normRename trims a rename and maps blank to nil (no rename).
+func normRename(p *string) *string {
+	if p == nil {
+		return nil
+	}
+	v := strings.TrimSpace(*p)
+	if v == "" {
+		return nil
+	}
+	return &v
 }
 
 // CategorizationRuleService owns rule validation and CRUD. It depends on
@@ -91,13 +113,14 @@ func (s *CategorizationRuleService) WithBulkApply(txRepo repository.TransactionR
 
 func (s *CategorizationRuleService) Create(ctx context.Context, userID int64, in CreateRuleInput) (*model.CategorizationRule, error) {
 	r := &model.CategorizationRule{
-		UserID:     userID,
-		Pattern:    strings.TrimSpace(in.Pattern),
-		MatchType:  strings.TrimSpace(in.MatchType),
-		CategoryID: in.CategoryID,
-		AssetID:    in.AssetID,
-		Priority:   in.Priority,
-		IsActive:   true,
+		UserID:         userID,
+		Pattern:        strings.TrimSpace(in.Pattern),
+		MatchType:      strings.TrimSpace(in.MatchType),
+		CategoryID:     in.CategoryID,
+		AssetID:        in.AssetID,
+		Priority:       in.Priority,
+		IsActive:       true,
+		RenameMerchant: normRename(in.RenameMerchant),
 	}
 	if in.IsActive != nil {
 		r.IsActive = *in.IsActive
@@ -148,6 +171,9 @@ func (s *CategorizationRuleService) Update(ctx context.Context, userID, id int64
 		r.AssetID = nil
 	case in.AssetID != nil:
 		r.AssetID = in.AssetID
+	}
+	if in.RenameMerchant != nil {
+		r.RenameMerchant = normRename(in.RenameMerchant)
 	}
 	if in.Priority != nil {
 		r.Priority = *in.Priority
@@ -262,9 +288,7 @@ func (s *CategorizationRuleService) apply(ctx context.Context, userID int64, sco
 					continue
 				}
 				// No-op if the row already reflects this decision.
-				if row.CategoryID != nil && *row.CategoryID == d.CategoryID &&
-					row.CategorizationRuleID != nil && *row.CategorizationRuleID == d.RuleID &&
-					row.CategorizationMethod != nil && *row.CategorizationMethod == categorization.MethodRule {
+				if d.SameAs(row) {
 					continue
 				}
 				if dryRun {
@@ -277,6 +301,7 @@ func (s *CategorizationRuleService) apply(ctx context.Context, userID int64, sco
 				row.CategoryID = &catID
 				row.CategorizationRuleID = &ruleID
 				row.CategorizationMethod = &method
+				d.SetMerchant(row)
 				if err := txRepo.Update(ctx, row); err != nil {
 					return fmt.Errorf("update transaction %d: %w", row.ID, err)
 				}
@@ -302,8 +327,10 @@ type DraftRuleInput struct {
 	MatchType  string
 	CategoryID int64
 	AssetID    *int64
-	Priority   int
-	IsActive   bool
+	// RenameMerchant as on CreateRuleInput (#534).
+	RenameMerchant *string
+	Priority       int
+	IsActive       bool
 }
 
 // DraftPreview reports a draft rule's impact against the user's existing
@@ -313,8 +340,12 @@ type DraftPreview struct {
 	// Matched counts rows where the draft is the winning rule (after priority
 	// ordering against the user's other rules), manual picks excluded.
 	Matched int `json:"matched"`
-	// WouldChange is the subset of Matched whose stored category or rule differs.
-	WouldChange   int `json:"would_change"`
+	// WouldChange is the subset of Matched whose stored category, rule or
+	// merchant (when the draft renames) differs.
+	WouldChange int `json:"would_change"`
+	// WouldRename is the subset of Matched whose merchant the draft's rename
+	// would change (#534).
+	WouldRename   int `json:"would_rename"`
 	SkippedManual int `json:"skipped_manual"`
 	// Samples are up to draftSampleLimit descriptions of matched rows.
 	Samples []string `json:"samples"`
@@ -330,14 +361,15 @@ func (s *CategorizationRuleService) PreviewDraft(ctx context.Context, userID int
 		return DraftPreview{}, ErrInvalidApplyScope
 	}
 	draft := &model.CategorizationRule{
-		UserID:     userID,
-		Pattern:    strings.TrimSpace(in.Pattern),
-		MatchType:  strings.TrimSpace(in.MatchType),
-		CategoryID: in.CategoryID,
-		AssetID:    in.AssetID,
-		Priority:   in.Priority,
-		IsActive:   in.IsActive,
-		ID:         math.MaxInt64, // new rules get the highest id, so lose priority ties
+		UserID:         userID,
+		Pattern:        strings.TrimSpace(in.Pattern),
+		MatchType:      strings.TrimSpace(in.MatchType),
+		CategoryID:     in.CategoryID,
+		AssetID:        in.AssetID,
+		Priority:       in.Priority,
+		IsActive:       in.IsActive,
+		ID:             math.MaxInt64, // new rules get the highest id, so lose priority ties
+		RenameMerchant: normRename(in.RenameMerchant),
 	}
 	if in.RuleID != nil {
 		if _, err := s.repo.GetByID(ctx, userID, *in.RuleID); err != nil {
@@ -395,9 +427,10 @@ func (s *CategorizationRuleService) PreviewDraft(ctx context.Context, userID int
 			if len(out.Samples) < draftSampleLimit {
 				out.Samples = append(out.Samples, draftSampleText(row))
 			}
-			if row.CategoryID != nil && *row.CategoryID == d.CategoryID &&
-				row.CategorizationRuleID != nil && *row.CategorizationRuleID == d.RuleID &&
-				row.CategorizationMethod != nil && *row.CategorizationMethod == categorization.MethodRule {
+			if d.MerchantChanged(row.MerchantName) {
+				out.WouldRename++
+			}
+			if d.SameAs(row) {
 				continue
 			}
 			out.WouldChange++
@@ -439,6 +472,9 @@ func (s *CategorizationRuleService) validate(ctx context.Context, r *model.Categ
 	}
 	if r.Priority < 0 {
 		return ErrInvalidPriority
+	}
+	if r.RenameMerchant != nil && len([]rune(*r.RenameMerchant)) > maxRenameMerchant {
+		return ErrRenameTooLong
 	}
 	if _, err := s.catRepo.GetByID(ctx, r.CategoryID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {

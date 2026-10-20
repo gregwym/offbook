@@ -61,8 +61,10 @@ type previewDraftRequest struct {
 	MatchType  string `json:"match_type"`
 	CategoryID int64  `json:"category_id"`
 	AssetID    *int64 `json:"asset_id"`
-	Priority   int    `json:"priority"`
-	IsActive   *bool  `json:"is_active"`
+	// RenameMerchant: optional merchant rename on match (#534).
+	RenameMerchant *string `json:"rename_merchant"`
+	Priority       int     `json:"priority"`
+	IsActive       *bool   `json:"is_active"`
 }
 
 // PreviewDraft reports the impact of an unsaved rule (create or edit)
@@ -75,13 +77,14 @@ func (h *CategorizationRuleHandler) PreviewDraft(c *gin.Context) {
 	}
 	active := req.IsActive == nil || *req.IsActive
 	result, err := h.svc.PreviewDraft(c.Request.Context(), auth.MustUserID(c.Request.Context()), service.DraftRuleInput{
-		RuleID:     req.RuleID,
-		Pattern:    req.Pattern,
-		MatchType:  req.MatchType,
-		CategoryID: req.CategoryID,
-		AssetID:    req.AssetID,
-		Priority:   req.Priority,
-		IsActive:   active,
+		RuleID:         req.RuleID,
+		Pattern:        req.Pattern,
+		MatchType:      req.MatchType,
+		CategoryID:     req.CategoryID,
+		AssetID:        req.AssetID,
+		RenameMerchant: req.RenameMerchant,
+		Priority:       req.Priority,
+		IsActive:       active,
 	})
 	if err != nil {
 		h.writeServiceError(c, err)
@@ -95,8 +98,10 @@ type createRuleRequest struct {
 	MatchType  string `json:"match_type"`
 	CategoryID int64  `json:"category_id"`
 	AssetID    *int64 `json:"asset_id"`
-	Priority   int    `json:"priority"`
-	IsActive   *bool  `json:"is_active"`
+	// RenameMerchant: optional merchant rename on match (#534).
+	RenameMerchant *string `json:"rename_merchant"`
+	Priority       int     `json:"priority"`
+	IsActive       *bool   `json:"is_active"`
 }
 
 func (h *CategorizationRuleHandler) Create(c *gin.Context) {
@@ -106,12 +111,13 @@ func (h *CategorizationRuleHandler) Create(c *gin.Context) {
 		return
 	}
 	r, err := h.svc.Create(c.Request.Context(), auth.MustUserID(c.Request.Context()), service.CreateRuleInput{
-		Pattern:    req.Pattern,
-		MatchType:  req.MatchType,
-		CategoryID: req.CategoryID,
-		AssetID:    req.AssetID,
-		Priority:   req.Priority,
-		IsActive:   req.IsActive,
+		Pattern:        req.Pattern,
+		MatchType:      req.MatchType,
+		CategoryID:     req.CategoryID,
+		AssetID:        req.AssetID,
+		RenameMerchant: req.RenameMerchant,
+		Priority:       req.Priority,
+		IsActive:       req.IsActive,
 	})
 	if err != nil {
 		h.writeServiceError(c, err)
@@ -148,8 +154,10 @@ type updateRuleRequest struct {
 	CategoryID   *int64  `json:"category_id"`
 	AssetID      *int64  `json:"asset_id"`
 	ClearAssetID bool    `json:"clear_asset_id"`
-	Priority     *int    `json:"priority"`
-	IsActive     *bool   `json:"is_active"`
+	// RenameMerchant: a blank string clears the rename (#534).
+	RenameMerchant *string `json:"rename_merchant"`
+	Priority       *int    `json:"priority"`
+	IsActive       *bool   `json:"is_active"`
 }
 
 func (h *CategorizationRuleHandler) Update(c *gin.Context) {
@@ -163,13 +171,14 @@ func (h *CategorizationRuleHandler) Update(c *gin.Context) {
 		return
 	}
 	r, err := h.svc.Update(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, service.UpdateRuleInput{
-		Pattern:      req.Pattern,
-		MatchType:    req.MatchType,
-		CategoryID:   req.CategoryID,
-		AssetID:      req.AssetID,
-		ClearAssetID: req.ClearAssetID,
-		Priority:     req.Priority,
-		IsActive:     req.IsActive,
+		Pattern:        req.Pattern,
+		MatchType:      req.MatchType,
+		CategoryID:     req.CategoryID,
+		AssetID:        req.AssetID,
+		ClearAssetID:   req.ClearAssetID,
+		RenameMerchant: req.RenameMerchant,
+		Priority:       req.Priority,
+		IsActive:       req.IsActive,
 	})
 	if err != nil {
 		h.writeServiceError(c, err)
@@ -202,7 +211,8 @@ func (h *CategorizationRuleHandler) writeServiceError(c *gin.Context, err error)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_SCOPE"})
 	case errors.Is(err, service.ErrEmptyPattern),
 		errors.Is(err, service.ErrInvalidMatchType),
-		errors.Is(err, service.ErrInvalidPriority):
+		errors.Is(err, service.ErrInvalidPriority),
+		errors.Is(err, service.ErrRenameTooLong):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_RULE"})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})

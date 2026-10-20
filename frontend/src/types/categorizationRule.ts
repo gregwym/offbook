@@ -11,6 +11,8 @@ export type CategorizationRule = {
   match_type: MatchType
   priority: number
   is_active: boolean
+  // Merchant name written to every transaction this rule wins (#534).
+  rename_merchant?: string | null
   created_at: string
   updated_at: string
 }
@@ -21,6 +23,8 @@ export type CreateRuleInput = {
   category_id: number
   priority: number
   is_active?: boolean
+  // Blank clears the rename on update (#534).
+  rename_merchant?: string
 }
 
 export type UpdateRuleInput = Partial<CreateRuleInput>
@@ -41,6 +45,8 @@ export type DraftPreview = {
   scanned: number
   matched: number
   would_change: number
+  // Matched rows whose merchant the draft's rename would change (#534).
+  would_rename: number
   skipped_manual: number
   samples: string[]
 }

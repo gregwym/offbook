@@ -30,14 +30,35 @@ type CompiledRule struct {
 	MatchType  string
 	Pattern    string
 	AssetID    *int64
-	patternCI  string // pattern uppercased once, for contains/exact fast path
-	Re         *regexp.Regexp
+	// RenameMerchant, when non-nil, replaces merchant_name on rows this
+	// rule wins (#534).
+	RenameMerchant *string
+	patternCI      string // pattern uppercased once, for contains/exact fast path
+	Re             *regexp.Regexp
 }
 
 // Decision is what Categorize returns when a rule matched.
 type Decision struct {
 	RuleID     int64
 	CategoryID int64
+	// RenameMerchant is the winning rule's merchant rename, nil when it
+	// has none.
+	RenameMerchant *string
+}
+
+// MerchantChanged reports whether applying d would change merchantName.
+func (d Decision) MerchantChanged(merchantName *string) bool {
+	return d.RenameMerchant != nil && (merchantName == nil || *merchantName != *d.RenameMerchant)
+}
+
+// SameAs reports whether a row's stored categorization already reflects d:
+// the rule's category, the rule as provenance, and its merchant rename.
+// Re-applying such a row is a no-op.
+func (d Decision) SameAs(t *model.Transaction) bool {
+	return t.CategoryID != nil && *t.CategoryID == d.CategoryID &&
+		t.CategorizationRuleID != nil && *t.CategorizationRuleID == d.RuleID &&
+		t.CategorizationMethod != nil && *t.CategorizationMethod == MethodRule &&
+		!d.MerchantChanged(t.MerchantName)
 }
 
 // Compile turns stored rules into matcher-ready CompiledRule values. The
@@ -59,6 +80,11 @@ func Compile(rules []model.CategorizationRule) []CompiledRule {
 			Pattern:    r.Pattern,
 			AssetID:    r.AssetID,
 			patternCI:  strings.ToUpper(r.Pattern),
+		}
+		if r.RenameMerchant != nil {
+			if v := strings.TrimSpace(*r.RenameMerchant); v != "" {
+				c.RenameMerchant = &v
+			}
 		}
 		if r.MatchType == "regex" {
 			re, err := regexp.Compile(r.Pattern)
@@ -98,20 +124,24 @@ func Categorize(rules []CompiledRule, assetID int64, descriptionClean, descripti
 		// don't reject them up-front.
 		if len(fields) == 0 {
 			if r.AssetID != nil && r.Pattern == "" {
-				return Decision{RuleID: r.ID, CategoryID: r.CategoryID}, true
+				return r.decision(), true
 			}
 			continue
 		}
 		if matches(r, fields) {
-			return Decision{RuleID: r.ID, CategoryID: r.CategoryID}, true
+			return r.decision(), true
 		}
 	}
 	return Decision{}, false
 }
 
+func (r CompiledRule) decision() Decision {
+	return Decision{RuleID: r.ID, CategoryID: r.CategoryID, RenameMerchant: r.RenameMerchant}
+}
+
 // Apply runs Categorize and, when a rule matches, mutates tx in place to
-// reflect the decision: sets CategoryID, CategorizationMethod="rule", and
-// CategorizationRuleID. Returns the decision and whether a rule matched.
+// reflect the decision: sets CategoryID, CategorizationMethod="rule",
+// CategorizationRuleID and, when the rule renames, MerchantName. Returns the decision and whether a rule matched.
 // Caller is responsible for deciding whether to call Apply — typically only
 // when the row has no existing category.
 func Apply(tx *model.Transaction, rules []CompiledRule) (Decision, bool) {
@@ -128,7 +158,16 @@ func Apply(tx *model.Transaction, rules []CompiledRule) (Decision, bool) {
 	tx.CategoryID = &catID
 	tx.CategorizationRuleID = &ruleID
 	tx.CategorizationMethod = &method
+	d.SetMerchant(tx)
 	return d, true
+}
+
+// SetMerchant writes the decision's merchant rename onto tx, if any.
+func (d Decision) SetMerchant(tx *model.Transaction) {
+	if d.RenameMerchant != nil {
+		v := *d.RenameMerchant
+		tx.MerchantName = &v
+	}
 }
 
 // collectFields returns the non-nil, non-empty text fields the matcher
