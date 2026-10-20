@@ -54,13 +54,14 @@ test.describe('first run', () => {
     await next.click()
 
     // The import dialog is preset to the new account.
-    await expect(page.getByText('Import transactions', { exact: true })).toBeVisible()
-    await expect(page.locator('select').first().locator('option:checked')).toHaveText(/First Checking/)
-    await page.locator('input[type=file]').setInputFiles({ name: 'first.csv', mimeType: 'text/csv', buffer: Buffer.from(statement) })
-    await page.getByRole('button', { name: 'Preview' }).click()
-    await expect(page.getByText('3 new', { exact: true })).toBeVisible()
-    await page.getByRole('button', { name: 'Import 3 new' }).click()
-    await expect(page.getByText('Import transactions', { exact: true })).toBeHidden()
+    const dialog = page.getByRole('dialog', { name: 'Import transactions' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator('select').first().locator('option:checked')).toHaveText(/First Checking/)
+    await dialog.locator('input[type=file]').setInputFiles({ name: 'first.csv', mimeType: 'text/csv', buffer: Buffer.from(statement) })
+    await dialog.getByRole('button', { name: 'Preview' }).click()
+    await expect(dialog.getByText('3 new', { exact: true })).toBeVisible()
+    await dialog.getByRole('button', { name: 'Import 3 new' }).click()
+    await expect(dialog).toBeHidden()
     await expect(confirm).toHaveCount(0)
     await expect(page.getByText('2,143.40').first()).toBeVisible()
 
