@@ -23,6 +23,7 @@ export type RuleFormDefaults = {
   is_active?: boolean
   rename_merchant?: string
   hide_matches?: boolean
+  mark_reviewed?: boolean
 }
 
 // Mirrors the backend's maxRenameMerchant.
@@ -54,6 +55,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   )
   const rename = renameMerchant.trim()
   const [hideMatches, setHideMatches] = useState(rule?.hide_matches ?? defaults?.hide_matches ?? false)
+  const [markReviewed, setMarkReviewed] = useState(rule?.mark_reviewed ?? defaults?.mark_reviewed ?? false)
   const [submitting, setSubmitting] = useState(false)
   // We split form errors by field when the backend gives us a code; otherwise
   // surface as a generic banner above the form.
@@ -67,7 +69,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   // result for an older draft reads as "loading" rather than stale.
   const cat = Number(categoryID)
   const draftReady = pattern.trim() !== '' && Number.isInteger(cat) && cat > 0 && priority >= 0
-  const draftKey = JSON.stringify([pattern.trim(), matchType, cat, priority, isActive, rename, hideMatches, rule?.id ?? null])
+  const draftKey = JSON.stringify([pattern.trim(), matchType, cat, priority, isActive, rename, hideMatches, markReviewed, rule?.id ?? null])
   const [impact, setImpact] = useState<{ key: string; data: DraftPreview | null } | null>(null)
   useEffect(() => {
     if (!draftReady) return
@@ -82,6 +84,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
           is_active: isActive,
           ...(rename ? { rename_merchant: rename } : {}),
           ...(hideMatches ? { hide_matches: true } : {}),
+          ...(markReviewed ? { mark_reviewed: true } : {}),
         },
         rule?.id,
         ctrl.signal,
@@ -95,7 +98,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
       clearTimeout(timer)
       ctrl.abort()
     }
-  }, [draftKey, draftReady, pattern, matchType, cat, priority, isActive, rename, hideMatches, rule?.id])
+  }, [draftKey, draftReady, pattern, matchType, cat, priority, isActive, rename, hideMatches, markReviewed, rule?.id])
   const current = draftReady && impact?.key === draftKey ? impact : null
   const impactData = current?.data ?? null
   const impactLoading = draftReady && isActive && current === null
@@ -132,6 +135,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
         // Editing sends '' to clear a rename; creating omits a blank one.
         ...(rename || rule?.rename_merchant ? { rename_merchant: rename } : {}),
         hide_matches: hideMatches,
+        mark_reviewed: markReviewed,
       })
     } catch (err) {
       const { code, message } = extractErr(err)
@@ -218,6 +222,15 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
               Hidden transactions stay in the list and account balance but leave spending, budgets and Top merchants. You can unhide any one later; the rule won&rsquo;t hide it again on the next sync.
             </p>
           </div>
+          <div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input type="checkbox" checked={markReviewed} onChange={(e) => setMarkReviewed(e.target.checked)} />
+              Also mark matching transactions reviewed
+            </label>
+            <p className="mt-1 text-xs text-gray-500">
+              For merchants you trust, like rent or payroll: matches skip Needs review. You can send any one back to review later; the rule won&rsquo;t mark it again on the next sync.
+            </p>
+          </div>
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
             Active
@@ -237,6 +250,8 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
                     ` ${impactData.would_rename} would show merchant “${rename}”.`}
                   {hideMatches && impactData.would_hide > 0 &&
                     ` ${impactData.would_hide} would be hidden from spending and budgets.`}
+                  {markReviewed && impactData.would_mark_reviewed > 0 &&
+                    ` ${impactData.would_mark_reviewed} would be marked reviewed.`}
                   {impactData.skipped_manual > 0 && ` ${impactData.skipped_manual} manual picks are never overridden.`}
                 </p>
                 {impactData.samples.length > 0 && (

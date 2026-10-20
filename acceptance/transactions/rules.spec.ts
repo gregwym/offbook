@@ -7,7 +7,7 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 // (nothing changes), applies it, and manual picks survive. A second journey
 // (#534) has a rule rename the merchant, so the list and Insights Top
 // merchants read one clean name. Throwaway user; runs under both desktop and
-// mobile projects.
+// mobile projects. Later journeys cover hide (#536) and mark reviewed (#538).
 
 test.describe('categorization rules journey', () => {
   test('rule impact preview, dry-run, apply, manual picks win', async ({ page }, testInfo) => {
@@ -208,6 +208,77 @@ test.describe('rule hides matches', () => {
     await expect(page.locator('span:visible', { hasText: /^hidden$/ })).toHaveCount(2)
   })
 })
+
+test.describe('rule marks matches reviewed', () => {
+  test('trusted recurring rows skip Needs review; new rows arrive reviewed; one can be sent back', async ({ page }, testInfo) => {
+    process.env.OFFBOOK_ROLE = process.env.OFFBOOK_ROLE ?? 'qa'
+    const user = await createThrowawayUser({ suite: `rules-review-${testInfo.project.name}` })
+    const cookie = await apiSignin(user.email, user.password)
+    const cats = await get(cookie, '/categories')
+    const income = (cats.data.find((x: { slug: string }) => x.slug === 'income') ?? cats.data[0]) as { id: number; name: string }
+    const acct = (await api(cookie, '/accounts', {
+      name: 'Review Rule Checking', institution_slug: 'manual', account_type: 'checking', currency: 'USD',
+    })).data.id
+    const today = new Date().toISOString().slice(0, 10)
+    const tx = (description: string, amount: string) =>
+      api(cookie, '/transactions', { account_id: acct, amount, description, transaction_date: today, source: 'csv' })
+    await tx('QAREV ACME PAYROLL 1', '2500.00')
+    await tx('QAREV ACME PAYROLL 2', '2500.00')
+    await tx('QAREV Corner shop', '-40.00')
+    expect(await reviewCount(cookie)).toBe(3)
+
+    await signIn(page, user.email, user.password)
+    await page.goto('/rules')
+    await page.getByRole('button', { name: 'New rule' }).click()
+    const dialog = page.locator('div.fixed.inset-0')
+    await dialog.getByPlaceholder('e.g. WHOLEFDS').fill('PAYROLL')
+    await dialog.getByLabel('Category').selectOption({ label: income.name })
+    const mark = dialog.getByLabel('Also mark matching transactions reviewed')
+    await mark.scrollIntoViewIfNeeded()
+    await expectInViewport(page, mark)
+    await mark.check()
+    await expect(dialog).toContainText('2 would be marked reviewed')
+    await testInfo.attach(`${testInfo.project.name}-review-draft`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+    await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(page.getByText('Marks reviewed')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Preview changes' }).click()
+    await page.getByRole('button', { name: 'Apply now' }).click()
+    await expect.poll(() => reviewCount(cookie)).toBe(1)
+    await expectNoOverflow(page)
+    await testInfo.attach(`${testInfo.project.name}-review-rules-list`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+    const again = await api(cookie, '/categorization-rules/apply', {})
+    expect(again.data.updated).toBe(0)
+
+    // A new matching row arrives already reviewed.
+    const fresh = (await tx('QAREV ACME PAYROLL 3', '2500.00')).data
+    expect(fresh.reviewed_at).toBeTruthy()
+    expect(await reviewCount(cookie)).toBe(1)
+
+    // The Needs review inbox holds only the untrusted row.
+    await page.goto('/transactions')
+    await page.getByRole('button', { name: /needs review/i }).first().click()
+    await expect(page.getByText('QAREV Corner shop').locator('visible=true').first()).toBeVisible()
+    await expect(page.getByText(/QAREV ACME PAYROLL/).locator('visible=true')).toHaveCount(0)
+    await expectNoOverflow(page)
+    await testInfo.attach(`${testInfo.project.name}-review-inbox`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+
+    // Any one can still be sent back to review.
+    await api(cookie, '/transactions/review', { ids: [fresh.id], reviewed: false })
+    expect(await reviewCount(cookie)).toBe(2)
+  })
+})
+
+async function reviewCount(cookie: string) {
+  const res = await get(cookie, '/transactions?reviewed=false&limit=1')
+  return res.total as number
+}
 
 async function totalSpend(cookie: string) {
   const res = await get(cookie, '/dashboard/spend-by-category?period=current_month')

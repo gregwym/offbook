@@ -16,6 +16,9 @@ export type CategorizationRule = {
   // Hides every flow transaction this rule wins from spending, budgets and
   // merchant reports (#536). Never unhides.
   hide_matches?: boolean
+  // Marks every flow transaction this rule wins reviewed, so it skips the
+  // Needs review inbox (#538). Never un-reviews.
+  mark_reviewed?: boolean
   created_at: string
   updated_at: string
 }
@@ -29,6 +32,7 @@ export type CreateRuleInput = {
   // Blank clears the rename on update (#534).
   rename_merchant?: string
   hide_matches?: boolean
+  mark_reviewed?: boolean
 }
 
 export type UpdateRuleInput = Partial<CreateRuleInput>
@@ -53,6 +57,8 @@ export type DraftPreview = {
   would_rename: number
   // Matched rows the draft would hide (#536).
   would_hide: number
+  // Matched rows the draft would mark reviewed (#538).
+  would_mark_reviewed: number
   skipped_manual: number
   samples: string[]
 }

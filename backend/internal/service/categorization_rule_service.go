@@ -50,8 +50,10 @@ type CreateRuleInput struct {
 	RenameMerchant *string
 	// HideMatches hides the flow rows the rule wins (#536).
 	HideMatches bool
-	Priority    int
-	IsActive    *bool
+	// MarkReviewed marks the flow rows the rule wins reviewed (#538).
+	MarkReviewed bool
+	Priority     int
+	IsActive     *bool
 }
 
 // UpdateRuleInput is a sparse patch. Nil pointer = leave alone.
@@ -68,8 +70,11 @@ type UpdateRuleInput struct {
 	// HideMatches turns hiding on or off (#536). Turning it off leaves
 	// already-hidden rows hidden.
 	HideMatches *bool
-	Priority    *int
-	IsActive    *bool
+	// MarkReviewed turns review marking on or off (#538). Turning it off
+	// leaves already-reviewed rows reviewed.
+	MarkReviewed *bool
+	Priority     *int
+	IsActive     *bool
 }
 
 // normRename trims a rename and maps blank to nil (no rename).
@@ -127,6 +132,7 @@ func (s *CategorizationRuleService) Create(ctx context.Context, userID int64, in
 		IsActive:       true,
 		RenameMerchant: normRename(in.RenameMerchant),
 		HideMatches:    in.HideMatches,
+		MarkReviewed:   in.MarkReviewed,
 	}
 	if in.IsActive != nil {
 		r.IsActive = *in.IsActive
@@ -183,6 +189,9 @@ func (s *CategorizationRuleService) Update(ctx context.Context, userID, id int64
 	}
 	if in.HideMatches != nil {
 		r.HideMatches = *in.HideMatches
+	}
+	if in.MarkReviewed != nil {
+		r.MarkReviewed = *in.MarkReviewed
 	}
 	if in.Priority != nil {
 		r.Priority = *in.Priority
@@ -340,8 +349,10 @@ type DraftRuleInput struct {
 	RenameMerchant *string
 	// HideMatches as on CreateRuleInput (#536).
 	HideMatches bool
-	Priority    int
-	IsActive    bool
+	// MarkReviewed as on CreateRuleInput (#538).
+	MarkReviewed bool
+	Priority     int
+	IsActive     bool
 }
 
 // DraftPreview reports a draft rule's impact against the user's existing
@@ -352,14 +363,18 @@ type DraftPreview struct {
 	// ordering against the user's other rules), manual picks excluded.
 	Matched int `json:"matched"`
 	// WouldChange is the subset of Matched whose stored category, rule,
-	// merchant (when the draft renames) or hidden state (when it hides) differs.
+	// merchant (when the draft renames), hidden state (when it hides) or
+	// review state (when it marks reviewed) differs.
 	WouldChange int `json:"would_change"`
 	// WouldRename is the subset of Matched whose merchant the draft's rename
 	// would change (#534).
 	WouldRename int `json:"would_rename"`
 	// WouldHide is the subset of Matched the draft would hide (#536).
-	WouldHide     int `json:"would_hide"`
-	SkippedManual int `json:"skipped_manual"`
+	WouldHide int `json:"would_hide"`
+	// WouldMarkReviewed is the subset of Matched the draft would mark
+	// reviewed (#538).
+	WouldMarkReviewed int `json:"would_mark_reviewed"`
+	SkippedManual     int `json:"skipped_manual"`
 	// Samples are up to draftSampleLimit descriptions of matched rows.
 	Samples []string `json:"samples"`
 }
@@ -384,6 +399,7 @@ func (s *CategorizationRuleService) PreviewDraft(ctx context.Context, userID int
 		ID:             math.MaxInt64, // new rules get the highest id, so lose priority ties
 		RenameMerchant: normRename(in.RenameMerchant),
 		HideMatches:    in.HideMatches,
+		MarkReviewed:   in.MarkReviewed,
 	}
 	if in.RuleID != nil {
 		if _, err := s.repo.GetByID(ctx, userID, *in.RuleID); err != nil {
@@ -446,6 +462,9 @@ func (s *CategorizationRuleService) PreviewDraft(ctx context.Context, userID int
 			}
 			if d.HideChanged(row) {
 				out.WouldHide++
+			}
+			if d.ReviewChanged(row) {
+				out.WouldMarkReviewed++
 			}
 			if d.SameAs(row) {
 				continue

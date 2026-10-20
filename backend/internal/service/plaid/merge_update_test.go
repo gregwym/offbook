@@ -245,3 +245,34 @@ func TestMergePlaidUpdate_RuleHideOnAddOnly(t *testing.T) {
 		t.Errorf("merged hidden_at = %v, want nil (user's unhide survives)", merged.HiddenAt)
 	}
 }
+
+// TestMergePlaidUpdate_RuleMarkReviewedOnAddOnly (#538): a review-marking
+// rule marks a newly added row reviewed, but a later modify (resync,
+// pending→posted) keeps the row's current review state — a row the user sent
+// back to Needs review stays there.
+func TestMergePlaidUpdate_RuleMarkReviewedOnAddOnly(t *testing.T) {
+	rules := categorization.Compile([]model.CategorizationRule{
+		{ID: 7, CategoryID: 9, MatchType: "contains", Pattern: "PAYROLL", IsActive: true, MarkReviewed: true},
+	})
+	in := plaidsvc.PlaidTransaction{
+		PlaidTransactionID: "ptx-r", PlaidAccountID: "pa", Amount: decimal.RequireFromString("-2500"),
+		Name: "ACME PAYROLL", Date: "2026-05-15", Pending: true,
+	}
+	added, err := plaidsvc.MapPlaidTransaction(in, 1, 11, 1, nil, rules)
+	if err != nil {
+		t.Fatalf("MapPlaidTransaction: %v", err)
+	}
+	if added.ReviewedAt == nil {
+		t.Fatal("added row unreviewed, want marked reviewed by rule")
+	}
+
+	added.ReviewedAt = nil // the user sent it back to Needs review
+	in.Pending = false
+	merged, err := plaidsvc.MergePlaidUpdate(added, in, 11, 1, nil, rules)
+	if err != nil {
+		t.Fatalf("MergePlaidUpdate: %v", err)
+	}
+	if merged.ReviewedAt != nil {
+		t.Errorf("merged reviewed_at = %v, want nil (user's choice survives)", merged.ReviewedAt)
+	}
+}
