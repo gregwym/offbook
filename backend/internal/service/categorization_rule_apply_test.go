@@ -601,3 +601,83 @@ func TestCategorizationRuleService_Apply_HideMatches(t *testing.T) {
 		t.Error("row unhidden after hide off, want kept hidden")
 	}
 }
+
+// TestCategorizationRuleService_Apply_MarkReviewed (#538): a review-marking
+// rule marks every non-manual row it wins reviewed, the draft preview counts
+// them first, a re-run is a no-op, and turning the mark off never un-reviews.
+func TestCategorizationRuleService_Apply_MarkReviewed(t *testing.T) {
+	svc, userID, accountID, fixtureCat, g := newRuleApplySvc(t)
+	ctx := context.Background()
+
+	a := mkTxn(t, g, userID, accountID, withDescription("ACME PAYROLL MAY"))
+	b := mkTxn(t, g, userID, accountID, withDescription("ACME PAYROLL JUN"))
+	manual := mkTxn(t, g, userID, accountID, withDescription("ACME PAYROLL manual"), withManualCategory(fixtureCat))
+	other := mkTxn(t, g, userID, accountID, withDescription("SHELL GAS"))
+
+	draft, err := svc.PreviewDraft(ctx, userID, service.DraftRuleInput{
+		Pattern: "PAYROLL", MatchType: "contains", CategoryID: fixtureCat, Priority: 50, IsActive: true, MarkReviewed: true,
+	})
+	if err != nil {
+		t.Fatalf("PreviewDraft: %v", err)
+	}
+	if draft.Matched != 2 || draft.WouldChange != 2 || draft.WouldMarkReviewed != 2 || draft.WouldHide != 0 || draft.SkippedManual != 1 {
+		t.Errorf("draft = %+v, want matched 2, would_change 2, would_mark_reviewed 2, would_hide 0, skipped_manual 1", draft)
+	}
+
+	rule, err := svc.Create(ctx, userID, service.CreateRuleInput{
+		Pattern: "PAYROLL", MatchType: "contains", CategoryID: fixtureCat, Priority: 50, MarkReviewed: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.CategorizationRule{}, rule.ID) })
+	if !rule.MarkReviewed {
+		t.Fatal("stored mark_reviewed = false, want true")
+	}
+
+	res, err := svc.Apply(ctx, userID, "")
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if res.Updated != 2 || res.SkippedManual != 1 {
+		t.Errorf("Apply = %+v, want updated 2, skipped_manual 1", res)
+	}
+	reviewed := func(id int64) bool {
+		var got model.Transaction
+		if err := g.First(&got, id).Error; err != nil {
+			t.Fatalf("load %d: %v", id, err)
+		}
+		return got.ReviewedAt != nil
+	}
+	for _, id := range []int64{a.ID, b.ID} {
+		if !reviewed(id) {
+			t.Errorf("txn %d unreviewed, want reviewed", id)
+		}
+	}
+	if reviewed(other.ID) {
+		t.Error("non-matching row marked reviewed")
+	}
+	if reviewed(manual.ID) {
+		t.Error("manual row marked reviewed, want untouched")
+	}
+
+	if res, _ = svc.Apply(ctx, userID, ""); res.Updated != 0 {
+		t.Errorf("re-Apply updated = %d, want 0 (idempotent)", res.Updated)
+	}
+
+	// Turning the mark off keeps rows reviewed; nothing for Apply to do.
+	off := false
+	updated, err := svc.Update(ctx, userID, rule.ID, service.UpdateRuleInput{MarkReviewed: &off})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.MarkReviewed {
+		t.Error("mark_reviewed after update = true, want false")
+	}
+	if res, _ = svc.Apply(ctx, userID, ""); res.Updated != 0 {
+		t.Errorf("Apply after mark off updated = %d, want 0", res.Updated)
+	}
+	if !reviewed(a.ID) {
+		t.Error("row un-reviewed after mark off, want kept reviewed")
+	}
+}

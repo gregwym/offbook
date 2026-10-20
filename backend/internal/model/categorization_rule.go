@@ -23,10 +23,13 @@ type CategorizationRule struct {
 	RenameMerchant *string `json:"rename_merchant,omitempty"`
 	// HideMatches hides the flow rows this rule wins from spending, income,
 	// budgets and merchant reports (#536). A rule never unhides.
-	HideMatches bool           `gorm:"not null;default:false" json:"hide_matches"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+	HideMatches bool `gorm:"not null;default:false" json:"hide_matches"`
+	// MarkReviewed marks the flow rows this rule wins reviewed, so they skip
+	// the Needs review inbox (#538). A rule never un-reviews.
+	MarkReviewed bool           `gorm:"not null;default:false" json:"mark_reviewed"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Category *Category `gorm:"foreignKey:CategoryID" json:"-"`
 	Asset    *Asset    `gorm:"foreignKey:AssetID" json:"-"`

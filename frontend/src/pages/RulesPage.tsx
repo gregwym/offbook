@@ -202,6 +202,9 @@ export function RulesPage() {
                   {r.hide_matches && (
                     <span className="block font-sans text-xs text-gray-500">Hides matches</span>
                   )}
+                  {r.mark_reviewed && (
+                    <span className="block font-sans text-xs text-gray-500">Marks reviewed</span>
+                  )}
                 </td>
                 <td className="hidden px-4 py-2 text-gray-700 sm:table-cell">{r.match_type}</td>
                 <td className="px-4 py-2 text-gray-700">{categoriesById.get(r.category_id)?.name ?? `#${r.category_id}`}</td>

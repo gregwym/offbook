@@ -35,9 +35,11 @@ type CompiledRule struct {
 	// rule wins (#534).
 	RenameMerchant *string
 	// Hide, when true, hides the flow rows this rule wins (#536).
-	Hide      bool
-	patternCI string // pattern uppercased once, for contains/exact fast path
-	Re        *regexp.Regexp
+	Hide bool
+	// MarkReviewed, when true, marks the flow rows this rule wins reviewed (#538).
+	MarkReviewed bool
+	patternCI    string // pattern uppercased once, for contains/exact fast path
+	Re           *regexp.Regexp
 }
 
 // Decision is what Categorize returns when a rule matched.
@@ -49,6 +51,9 @@ type Decision struct {
 	RenameMerchant *string
 	// Hide is true when the winning rule hides its matches (#536).
 	Hide bool
+	// MarkReviewed is true when the winning rule marks its matches
+	// reviewed (#538).
+	MarkReviewed bool
 }
 
 // MerchantChanged reports whether applying d would change merchantName.
@@ -63,15 +68,23 @@ func (d Decision) HideChanged(t *model.Transaction) bool {
 	return d.Hide && t.HiddenAt == nil && (t.Kind == "" || t.Kind == model.KindFlow)
 }
 
+// ReviewChanged reports whether applying d would mark t reviewed: the rule
+// marks reviewed, t is a flow row (only flow rows are in the review inbox)
+// and t isn't reviewed yet. A rule never un-reviews.
+func (d Decision) ReviewChanged(t *model.Transaction) bool {
+	return d.MarkReviewed && t.ReviewedAt == nil && (t.Kind == "" || t.Kind == model.KindFlow)
+}
+
 // SameAs reports whether a row's stored categorization already reflects d:
-// the rule's category, the rule as provenance, its merchant rename and its
-// hide. Re-applying such a row is a no-op.
+// the rule's category, the rule as provenance, its merchant rename, its
+// hide and its review mark. Re-applying such a row is a no-op.
 func (d Decision) SameAs(t *model.Transaction) bool {
 	return t.CategoryID != nil && *t.CategoryID == d.CategoryID &&
 		t.CategorizationRuleID != nil && *t.CategorizationRuleID == d.RuleID &&
 		t.CategorizationMethod != nil && *t.CategorizationMethod == MethodRule &&
 		!d.MerchantChanged(t.MerchantName) &&
-		!d.HideChanged(t)
+		!d.HideChanged(t) &&
+		!d.ReviewChanged(t)
 }
 
 // Compile turns stored rules into matcher-ready CompiledRule values. The
@@ -100,6 +113,7 @@ func Compile(rules []model.CategorizationRule) []CompiledRule {
 			}
 		}
 		c.Hide = r.HideMatches
+		c.MarkReviewed = r.MarkReviewed
 		if r.MatchType == "regex" {
 			re, err := regexp.Compile(r.Pattern)
 			if err != nil {
@@ -150,13 +164,13 @@ func Categorize(rules []CompiledRule, assetID int64, descriptionClean, descripti
 }
 
 func (r CompiledRule) decision() Decision {
-	return Decision{RuleID: r.ID, CategoryID: r.CategoryID, RenameMerchant: r.RenameMerchant, Hide: r.Hide}
+	return Decision{RuleID: r.ID, CategoryID: r.CategoryID, RenameMerchant: r.RenameMerchant, Hide: r.Hide, MarkReviewed: r.MarkReviewed}
 }
 
 // Apply runs Categorize and, when a rule matches, mutates tx in place to
 // reflect the decision: sets CategoryID, CategorizationMethod="rule",
-// CategorizationRuleID and, when the rule renames or hides, MerchantName and
-// HiddenAt. Returns the decision and whether a rule matched.
+// CategorizationRuleID and, when the rule renames, hides or marks reviewed,
+// MerchantName, HiddenAt and ReviewedAt. Returns the decision and whether a rule matched.
 // Caller is responsible for deciding whether to call Apply — typically only
 // when the row has no existing category.
 func Apply(tx *model.Transaction, rules []CompiledRule) (Decision, bool) {
@@ -177,15 +191,20 @@ func Apply(tx *model.Transaction, rules []CompiledRule) (Decision, bool) {
 	return d, true
 }
 
-// SetActions writes the decision's merchant rename and hide onto tx, if any.
+// SetActions writes the decision's merchant rename, hide and review mark
+// onto tx, if any.
 func (d Decision) SetActions(tx *model.Transaction) {
 	if d.RenameMerchant != nil {
 		v := *d.RenameMerchant
 		tx.MerchantName = &v
 	}
+	now := time.Now().UTC()
 	if d.HideChanged(tx) {
-		now := time.Now().UTC()
 		tx.HiddenAt = &now
+	}
+	if d.ReviewChanged(tx) {
+		reviewed := now
+		tx.ReviewedAt = &reviewed
 	}
 }
 

@@ -254,3 +254,60 @@ func TestApply_HideMatches(t *testing.T) {
 		}
 	})
 }
+
+func TestApply_MarkReviewed(t *testing.T) {
+	rules := categorization.Compile([]model.CategorizationRule{
+		{ID: 1, CategoryID: 10, MatchType: "contains", Pattern: "PAYROLL", IsActive: true, MarkReviewed: true},
+		{ID: 2, CategoryID: 20, MatchType: "contains", Pattern: "SHELL", IsActive: true},
+	})
+
+	t.Run("winning rule marks a flow row reviewed", func(t *testing.T) {
+		tx := &model.Transaction{Kind: model.KindFlow, Description: ptr("ACME PAYROLL")}
+		d, ok := categorization.Apply(tx, rules)
+		if !ok || d.RuleID != 1 || !d.MarkReviewed {
+			t.Fatalf("Apply: ok=%v rule=%d mark=%v, want rule 1 marking reviewed", ok, d.RuleID, d.MarkReviewed)
+		}
+		if tx.ReviewedAt == nil {
+			t.Fatal("ReviewedAt = nil, want set")
+		}
+		if tx.HiddenAt != nil {
+			t.Errorf("HiddenAt = %v, want nil (review mark doesn't hide)", tx.HiddenAt)
+		}
+		if !d.SameAs(tx) {
+			t.Error("SameAs after Apply = false, want true (re-apply is a no-op)")
+		}
+	})
+	t.Run("already reviewed keeps its timestamp", func(t *testing.T) {
+		at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+		tx := &model.Transaction{Description: ptr("PAYROLL"), ReviewedAt: &at}
+		categorization.Apply(tx, rules)
+		if tx.ReviewedAt == nil || !tx.ReviewedAt.Equal(at) {
+			t.Errorf("ReviewedAt = %v, want %v kept", tx.ReviewedAt, at)
+		}
+	})
+	t.Run("non-flow rows are never marked", func(t *testing.T) {
+		tx := &model.Transaction{Kind: model.KindTradeLeg, Description: ptr("PAYROLL")}
+		d, ok := categorization.Apply(tx, rules)
+		if !ok {
+			t.Fatal("Apply: no match, want rule 1")
+		}
+		if tx.ReviewedAt != nil || d.ReviewChanged(tx) {
+			t.Errorf("trade leg marked reviewed: ReviewedAt=%v", tx.ReviewedAt)
+		}
+	})
+	t.Run("rule without the mark leaves the row unreviewed", func(t *testing.T) {
+		tx := &model.Transaction{Description: ptr("SHELL OIL")}
+		categorization.Apply(tx, rules)
+		if tx.ReviewedAt != nil {
+			t.Errorf("ReviewedAt = %v, want nil", tx.ReviewedAt)
+		}
+	})
+	t.Run("SameAs sees a row the user sent back to review", func(t *testing.T) {
+		tx := &model.Transaction{Description: ptr("PAYROLL")}
+		d, _ := categorization.Apply(tx, rules)
+		tx.ReviewedAt = nil
+		if d.SameAs(tx) {
+			t.Error("SameAs = true on an unreviewed row, want false")
+		}
+	})
+}

@@ -103,7 +103,7 @@ describe('RulesPage smoke', () => {
       http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
         bodies.push((await request.json()) as Record<string, unknown>)
         return HttpResponse.json({
-          data: { scanned: 40, matched: 3, would_change: 2, would_rename: 0, would_hide: 0, skipped_manual: 1, samples: ['WHOLEFDS #1', 'WHOLEFDS #2'] },
+          data: { scanned: 40, matched: 3, would_change: 2, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, skipped_manual: 1, samples: ['WHOLEFDS #1', 'WHOLEFDS #2'] },
         })
       }),
     )
@@ -136,7 +136,7 @@ describe('RulesPage smoke', () => {
       http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
         previews.push((await request.json()) as Record<string, unknown>)
         return HttpResponse.json({
-          data: { scanned: 10, matched: 2, would_change: 2, would_rename: 2, would_hide: 0, skipped_manual: 0, samples: ['AMZN MKTP US*2K4'] },
+          data: { scanned: 10, matched: 2, would_change: 2, would_rename: 2, would_hide: 0, would_mark_reviewed: 0, skipped_manual: 0, samples: ['AMZN MKTP US*2K4'] },
         })
       }),
       http.post(`${API}/categorization-rules`, async ({ request }) => {
@@ -191,7 +191,7 @@ describe('RulesPage smoke', () => {
         const body = (await request.json()) as Record<string, unknown>
         previews.push(body)
         return HttpResponse.json({
-          data: { scanned: 10, matched: 3, would_change: 3, would_rename: 0, would_hide: body.hide_matches ? 3 : 0, skipped_manual: 0, samples: ['CASH SWEEP'] },
+          data: { scanned: 10, matched: 3, would_change: 3, would_rename: 0, would_hide: body.hide_matches ? 3 : 0, would_mark_reviewed: 0, skipped_manual: 0, samples: ['CASH SWEEP'] },
         })
       }),
       http.post(`${API}/categorization-rules`, async ({ request }) => {
@@ -230,5 +230,60 @@ describe('RulesPage smoke', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(screen.queryByText('Hides matches')).toBeNull())
     expect(patches[0]).toMatchObject({ hide_matches: false })
+  })
+
+  // #538: a rule can also mark its matches reviewed. The draft preview
+  // carries the flag and counts the rows; saving sends it; the list marks the
+  // rule; unticking on edit sends false.
+  it('marks matching transactions reviewed from a rule, previews it, and turns it off on edit', async () => {
+    const previews: Record<string, unknown>[] = []
+    const creates: Record<string, unknown>[] = []
+    const patches: Record<string, unknown>[] = []
+    let stored = [...fx.rules]
+    server.use(
+      http.get(`${API}/categorization-rules`, () => HttpResponse.json({ data: stored, total: stored.length })),
+      http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        previews.push(body)
+        return HttpResponse.json({
+          data: { scanned: 10, matched: 2, would_change: 2, would_rename: 0, would_hide: 0, would_mark_reviewed: body.mark_reviewed ? 2 : 0, skipped_manual: 0, samples: ['ACME PAYROLL'] },
+        })
+      }),
+      http.post(`${API}/categorization-rules`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        creates.push(body)
+        const r = { ...fx.rule1, id: 4, pattern: 'PAYROLL', mark_reviewed: true }
+        stored = [...stored, r]
+        return HttpResponse.json({ data: r }, { status: 201 })
+      }),
+      http.patch(`${API}/categorization-rules/:id`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        patches.push(body)
+        stored = stored.map((r) => (r.id === 4 ? { ...r, mark_reviewed: false } : r))
+        return HttpResponse.json({ data: stored.find((r) => r.id === 4) })
+      }),
+    )
+    renderPage(<RulesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
+    fireEvent.change(screen.getByPlaceholderText('e.g. WHOLEFDS'), { target: { value: 'PAYROLL' } })
+    const select = screen.getAllByRole('combobox').find((el) => el.textContent?.includes('pick one'))!
+    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[1].value) } })
+    fireEvent.click(screen.getByLabelText(/Also mark matching transactions reviewed/))
+
+    expect(await screen.findByText(/2 would be marked reviewed/)).toBeTruthy()
+    expect(previews.at(-1)).toMatchObject({ pattern: 'PAYROLL', mark_reviewed: true })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText('Marks reviewed')).toBeTruthy()
+    expect(creates[0]).toMatchObject({ pattern: 'PAYROLL', mark_reviewed: true })
+
+    const row = screen.getByText('Marks reviewed').closest('tr')!
+    fireEvent.click(within(row).getByRole('button', { name: /edit/i }))
+    const box = screen.getByLabelText(/Also mark matching transactions reviewed/) as HTMLInputElement
+    expect(box.checked).toBe(true)
+    fireEvent.click(box)
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(screen.queryByText('Marks reviewed')).toBeNull())
+    expect(patches[0]).toMatchObject({ mark_reviewed: false })
   })
 })
