@@ -34,7 +34,7 @@ test.describe('transactions filters journey', () => {
     const vp = page.viewportSize()!
     const toggle = page.getByRole('button', { name: /^Filters/ })
     const fromInput = page.getByLabel('From', { exact: true })
-    const accountSelect = page.getByLabel('Account', { exact: true })
+    const accountSelect = page.getByRole('combobox', { name: /^Account/ })
 
     if (vp.width < 768) {
       // First transaction is inside the first screen, without scrolling.
