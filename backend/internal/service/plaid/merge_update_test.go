@@ -276,3 +276,35 @@ func TestMergePlaidUpdate_RuleMarkReviewedOnAddOnly(t *testing.T) {
 		t.Errorf("merged reviewed_at = %v, want nil (user's choice survives)", merged.ReviewedAt)
 	}
 }
+
+// Tags are user metadata (#544): a Plaid modify or pending -> posted
+// adoption must carry them over untouched.
+func TestMergePlaidUpdate_PreservesTags(t *testing.T) {
+	existing := model.Transaction{
+		ID:                 1001,
+		UserID:             7,
+		AccountID:          11,
+		AssetID:            1,
+		Amount:             decimal.NewFromFloat(-20),
+		TransactionDate:    mustDate("2026-05-10"),
+		Source:             "plaid",
+		PlaidTransactionID: ptr("ptx-tags"),
+		Pending:            true,
+		Tags:               model.Tags{"vacation", "reimbursable"},
+	}
+	incoming := plaidsvc.PlaidTransaction{
+		PlaidTransactionID: "ptx-tags-posted",
+		PlaidAccountID:     "pacct-1",
+		Amount:             decimal.NewFromFloat(21),
+		Currency:           "USD",
+		Name:               "HOTEL",
+		Date:               "2026-05-11",
+	}
+	merged, err := plaidsvc.MergePlaidUpdate(existing, incoming, 11, 1, nil, nil)
+	if err != nil {
+		t.Fatalf("MergePlaidUpdate: %v", err)
+	}
+	if len(merged.Tags) != 2 || merged.Tags[0] != "vacation" || merged.Tags[1] != "reimbursable" {
+		t.Errorf("tags = %v, want [vacation reimbursable]", merged.Tags)
+	}
+}

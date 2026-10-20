@@ -72,6 +72,9 @@ type UpdateTransactionInput struct {
 	// Hidden hides (true) or unhides (false) a flow row from spending, budgets
 	// and merchant reports (#465); nil leaves it alone. Ledger is unaffected.
 	Hidden *bool
+	// Tags replaces the row's tags (#544); nil leaves them alone, an empty
+	// slice clears them. Metadata only.
+	Tags *[]string
 }
 
 // TransactionService owns business rules for transactions.
@@ -274,6 +277,15 @@ func (s *TransactionService) Update(ctx context.Context, userID, id int64, in Up
 	}
 	if in.Notes != nil {
 		t.Notes = in.Notes
+	}
+	if in.Tags != nil {
+		tags, err := NormalizeTags(*in.Tags)
+		if err != nil {
+			return nil, err
+		}
+		if t.Tags, err = s.canonicalTags(ctx, userID, tags); err != nil {
+			return nil, err
+		}
 	}
 	if in.Reviewed != nil {
 		if *in.Reviewed {

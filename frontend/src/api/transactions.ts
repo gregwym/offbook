@@ -4,6 +4,7 @@ import type {
   CreateTransactionInput,
   ImportHistoryEntry,
   ImportResult,
+  TagCount,
   Transaction,
   UpdateTransactionInput,
 } from '../types/transaction'
@@ -21,6 +22,8 @@ export type TransactionListFilter = {
   from?: string  // YYYY-MM-DD
   to?: string
   search?: string
+  // Exact tag (#544).
+  tag?: string
   limit?: number
   offset?: number
 }
@@ -38,11 +41,18 @@ export async function listTransactions(
   if (f.from) params.from = f.from
   if (f.to) params.to = f.to
   if (f.search) params.search = f.search
+  if (f.tag) params.tag = f.tag
   if (f.limit !== undefined) params.limit = f.limit
   if (f.offset !== undefined) params.offset = f.offset
 
   const res = await apiClient.get<ApiList<Transaction>>('/transactions', { params })
   return { items: res.data.data, total: res.data.total }
+}
+
+// listTransactionTags returns the user's tags with row counts (#544).
+export async function listTransactionTags(): Promise<TagCount[]> {
+  const res = await apiClient.get<ApiList<TagCount>>('/transactions/tags')
+  return res.data.data
 }
 
 export async function createTransaction(input: CreateTransactionInput): Promise<Transaction> {

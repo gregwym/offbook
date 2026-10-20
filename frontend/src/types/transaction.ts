@@ -54,6 +54,8 @@ export type Transaction = {
   // pending (#513): the bank hasn't posted this yet. The user's edits carry
   // over when it posts (the posted row adopts this one).
   pending?: boolean
+  // tags (#544): user labels; metadata only, never affect spending/balances.
+  tags?: string[]
   created_at: string
   updated_at: string
 }
@@ -225,4 +227,9 @@ export type UpdateTransactionInput = {
   reviewed?: boolean
   // true hides the row from spending/budget reports, false unhides it (#465).
   hidden?: boolean
+  // Replaces the row's tags (#544); [] clears them.
+  tags?: string[]
 }
+
+// TagCount is one of the user's tags and how many transactions carry it (#544).
+export type TagCount = { name: string; count: number }
