@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { acceptanceAPIURL } from '../fixtures/env.mjs'
 import { createThrowawayUser } from '../fixtures/state.mjs'
 
@@ -306,8 +306,13 @@ test.describe('rule run order', () => {
     await expect(page.getByRole('button', { name: 'Move "AMAZON" up' })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Move "AMAZON PRIME" down' })).toBeDisabled()
     const up = page.getByRole('button', { name: 'Move "AMAZON PRIME" up' })
-    await expectInViewport(page, up)
-    await expectInViewport(page, page.getByRole('button', { name: 'Delete' }).last())
+    // Row actions must sit inside the table's own box, not clipped by its
+    // scroll wrapper (the page-level overflow check can't see that).
+    const table = page.locator('table').last()
+    for (const action of [up, page.getByRole('button', { name: 'Delete' }).last()]) {
+      await expectInViewport(page, action)
+      await expectInside(table.locator('xpath=..'), action)
+    }
     await testInfo.attach(`${testInfo.project.name}-order-before`, {
       body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
     })
@@ -382,6 +387,13 @@ async function signIn(page: Page, email: string, password: string) {
 async function expectNoOverflow(page: Page) {
   const o = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)
   expect(o, 'no horizontal overflow').toBe(false)
+}
+
+async function expectInside(container: Locator, loc: Locator) {
+  const outer = (await container.boundingBox())!
+  const box = (await loc.boundingBox())!
+  expect(box.x, 'left edge inside container').toBeGreaterThanOrEqual(outer.x)
+  expect(box.x + box.width, 'right edge inside container').toBeLessThanOrEqual(outer.x + outer.width)
 }
 
 async function expectInViewport(page: Page, loc: ReturnType<Page['getByRole']> | ReturnType<Page['getByLabel']>) {

@@ -189,11 +189,11 @@ export function RulesPage() {
                 <span aria-hidden="true">#</span>
                 <span className="sr-only">Run order</span>
               </th>
-              <th className="px-4 py-2 text-left">Pattern</th>
+              <th className="px-2 py-2 sm:px-4 text-left">Pattern</th>
               <th className="hidden px-4 py-2 text-left sm:table-cell">Match</th>
-              <th className="px-4 py-2 text-left">Category</th>
+              <th className="px-2 py-2 sm:px-4 text-left">Category</th>
               <th className="hidden px-4 py-2 text-center sm:table-cell">Active</th>
-              <th className="px-4 py-2"></th>
+              <th className="px-2 py-2 sm:px-4"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -206,7 +206,7 @@ export function RulesPage() {
             {rules.map((r, i) => (
               <tr key={r.id} className="hover:bg-gray-50">
                 <td className="px-2 py-2 font-mono text-gray-700 sm:px-4">{i + 1}</td>
-                <td className="px-4 py-2 font-mono text-gray-900">
+                <td className="px-2 py-2 sm:px-4 font-mono text-gray-900">
                   {r.pattern}
                   {!r.is_active && <span className="ml-2 text-xs text-gray-400 sm:hidden">(inactive)</span>}
                   {r.rename_merchant && (
@@ -220,18 +220,18 @@ export function RulesPage() {
                   )}
                 </td>
                 <td className="hidden px-4 py-2 text-gray-700 sm:table-cell">{r.match_type}</td>
-                <td className="px-4 py-2 text-gray-700">{categoriesById.get(r.category_id)?.name ?? `#${r.category_id}`}</td>
+                <td className="px-2 py-2 sm:px-4 text-gray-700">{categoriesById.get(r.category_id)?.name ?? `#${r.category_id}`}</td>
                 <td className="hidden px-4 py-2 text-center sm:table-cell">
                   <span className={r.is_active ? 'text-emerald-700' : 'text-gray-400'}>
                     {r.is_active ? 'yes' : 'no'}
                   </span>
                 </td>
-                <td className="whitespace-nowrap px-4 py-2 text-right">
+                <td className="whitespace-nowrap px-2 py-2 text-right sm:px-4">
                   <button
                     type="button"
                     onClick={() => runMove(r.id, -1)}
                     disabled={moving || i === 0}
-                    className="mr-1 p-1 text-gray-500 hover:text-gray-900 disabled:opacity-30"
+                    className="p-1 text-gray-500 hover:text-gray-900 disabled:opacity-30"
                     aria-label={`Move "${r.pattern || `rule ${i + 1}`}" up`}
                     title="Run earlier"
                   >
@@ -241,7 +241,7 @@ export function RulesPage() {
                     type="button"
                     onClick={() => runMove(r.id, 1)}
                     disabled={moving || i === rules.length - 1}
-                    className="mr-2 p-1 text-gray-500 hover:text-gray-900 disabled:opacity-30"
+                    className="p-1 text-gray-500 hover:text-gray-900 disabled:opacity-30 sm:mr-1"
                     aria-label={`Move "${r.pattern || `rule ${i + 1}`}" down`}
                     title="Run later"
                   >
@@ -250,7 +250,7 @@ export function RulesPage() {
                   <button
                     type="button"
                     onClick={() => setEditing(r)}
-                    className="mr-2 text-gray-500 hover:text-gray-900"
+                    className="p-1 text-gray-500 hover:text-gray-900"
                     aria-label="Edit"
                   >
                     <Pencil size={16} />
@@ -262,7 +262,7 @@ export function RulesPage() {
                         await remove(r.id)
                       }
                     }}
-                    className="text-gray-500 hover:text-red-700"
+                    className="p-1 text-gray-500 hover:text-red-700"
                     aria-label="Delete"
                   >
                     <Trash2 size={16} />
