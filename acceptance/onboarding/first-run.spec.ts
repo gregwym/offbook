@@ -80,8 +80,7 @@ test.describe('first run', () => {
     // fully drawn on first paint (no entry animation leaving it blank).
     const allocation = page.locator('section', { has: page.getByRole('heading', { name: /asset allocation/i }) })
     await allocation.scrollIntoViewIfNeeded()
-    await expect(allocation.getByText('Cash', { exact: true })).toBeVisible()
-    await expect(allocation).toContainText('100.0%')
+    await expect(allocation.getByRole('listitem').filter({ hasText: 'Cash' })).toContainText('100.0%')
     await expect(allocation).not.toContainText(/fiat/i)
     const sector = allocation.locator('.recharts-pie-sector path').first()
     await expect(sector).toBeVisible()
