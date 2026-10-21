@@ -443,7 +443,7 @@ test.describe('rule conditions', () => {
     const big = await tx(joint, 'QACOND AMZN Mktp US 2', '-649.00')
     const mid = await tx(joint, 'QACOND AMZN Mktp US 3', '-89.50')
     const elsewhere = await tx(card, 'QACOND AMZN Mktp US 4', '-12.99')
-    const categoryOf = async (id: number) => (await get(cookie, `/transactions/${id}`)).data.category_id as number | null
+    const categoryOf = async (id: number) => ((await get(cookie, `/transactions/${id}`)).data.category_id ?? null) as number | null
 
     await signIn(page, user.email, user.password)
     await page.goto('/rules')
@@ -453,7 +453,7 @@ test.describe('rule conditions', () => {
     let dialog = page.locator('div.fixed.inset-0')
     await dialog.getByPlaceholder('e.g. WHOLEFDS').fill('QACOND AMZN')
     await dialog.getByLabel('Category').selectOption({ label: subs.name })
-    const account = dialog.getByLabel('Account', { exact: true })
+    const account = dialog.getByRole('combobox', { name: /^Account/ })
     await account.scrollIntoViewIfNeeded()
     await expectInViewport(page, account)
     await account.selectOption({ label: 'Joint Checking' })
@@ -501,7 +501,7 @@ test.describe('rule conditions', () => {
 
     // New rows follow the same conditions on import.
     expect((await tx(joint, 'QACOND AMZN Mktp US 5', '-7.25')).category_id).toBe(subs.id)
-    expect((await tx(card, 'QACOND AMZN Mktp US 6', '-7.25')).category_id).toBeNull()
+    expect((await tx(card, 'QACOND AMZN Mktp US 6', '-7.25')).category_id ?? null).toBeNull()
     expect((await tx(card, 'QACOND AMZN Mktp US 7', '-1200.00')).category_id).toBe(shopping.id)
 
     // Editing shows the stored band and can drop the account condition.
@@ -509,7 +509,7 @@ test.describe('rule conditions', () => {
     await row.getByRole('button', { name: 'Edit' }).click()
     dialog = page.locator('div.fixed.inset-0')
     await expect(dialog.getByLabel('Highest amount')).toHaveValue('20')
-    await dialog.getByLabel('Account', { exact: true }).selectOption({ label: 'Any account' })
+    await dialog.getByRole('combobox', { name: /^Account/ }).selectOption({ label: 'Any account' })
     await dialog.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(page.getByText('Only in Joint Checking')).toHaveCount(0)
     await page.getByRole('button', { name: 'Preview changes' }).click()
