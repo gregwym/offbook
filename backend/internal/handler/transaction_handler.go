@@ -81,6 +81,10 @@ func (h *TransactionHandler) Register(g *gin.RouterGroup) {
 //	from, to     — inclusive date range on transaction_date, YYYY-MM-DD or RFC3339
 //	search       — case-insensitive substring match on description + merchant_name
 //	tag          — exact tag (#544)
+//	spending     — true = the spending lens (#571): only rows the spending
+//	               figures count; category_id then matches split lines, and
+//	               the response adds spend_total (the matching figure)
+//	merchant     — with spending=true, the exact Top merchants label
 //	limit        — default 50, clamped to [1, 200]
 //	offset       — default 0, must be non-negative
 func (h *TransactionHandler) List(c *gin.Context) {
@@ -144,6 +148,19 @@ func (h *TransactionHandler) List(c *gin.Context) {
 	}
 	f.Search = c.Query("search")
 	f.Tag = strings.TrimSpace(c.Query("tag"))
+	if v := c.Query("spending"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "spending must be true or false", "code": "INVALID_REQUEST"})
+			return
+		}
+		f.Spending = b
+	}
+	f.Merchant = c.Query("merchant")
+	if f.Merchant != "" && !f.Spending {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "merchant requires spending=true", "code": "INVALID_REQUEST"})
+		return
+	}
 	if v := c.Query("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {
@@ -166,12 +183,21 @@ func (h *TransactionHandler) List(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"data":   transactions,
 		"total":  total,
 		"limit":  resolvedLimit(f.Limit),
 		"offset": f.Offset,
-	})
+	}
+	if f.Spending {
+		spent, err := h.svc.SpendTotal(c.Request.Context(), auth.MustUserID(c.Request.Context()), f)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
+			return
+		}
+		resp["spend_total"] = spent
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // ListTags handles GET /transactions/tags (#544).

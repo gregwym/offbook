@@ -5,6 +5,7 @@
 // role (owner/contributor). See hooks/useScopedBudgets.ts for the branch.
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Pencil, Plus, Target, Trash2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import {
   useScopedBudgets,
@@ -15,6 +16,7 @@ import { useCategoriesStore } from '../store/categoriesStore'
 import type { Category } from '../types/category'
 import { BUDGET_PERIODS, type BudgetPeriod } from '../types/budget'
 import { ModalShell } from '../components/ModalShell'
+import { spendingHref } from '../lib/spendingLink'
 
 export function BudgetsPage() {
   const {
@@ -118,6 +120,13 @@ export function BudgetsPage() {
             row={b}
             category={categoriesById.get(b.category_id)}
             canMutate={canMutate}
+            drillHref={
+              // Personal only (#571): a household budget sums members'
+              // books, which have no shared transaction list.
+              !isHousehold && b.period_start && b.period_end
+                ? spendingHref({ start: b.period_start, end: b.period_end, categoryID: b.category_id })
+                : undefined
+            }
             onEdit={() => setEditing(b)}
             onDelete={async () => {
               if (!window.confirm('Delete this budget?')) return
@@ -164,11 +173,13 @@ type CardProps = {
   row: ScopedBudgetRow
   category?: Category
   canMutate: boolean
+  // The current period's spending drill-down (#571), when it has one.
+  drillHref?: string
   onEdit: () => void
   onDelete: () => Promise<void>
 }
 
-function BudgetCard({ row, category, canMutate, onEdit, onDelete }: CardProps) {
+function BudgetCard({ row, category, canMutate, drillHref, onEdit, onDelete }: CardProps) {
   const pct = row.pct != null ? Math.min(100, Math.round(row.pct * 100)) : 0
   const over = row.pct != null && row.pct >= 1
   const warning = row.pct != null && row.pct >= 0.8 && !over
@@ -216,9 +227,16 @@ function BudgetCard({ row, category, canMutate, onEdit, onDelete }: CardProps) {
         </span>
       </div>
       {row.period_start && row.period_end && (
-        <p className="mt-2 text-xs text-gray-400">
-          {row.period_start.slice(0, 10)} → {row.period_end.slice(0, 10)}
-        </p>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
+          <span className="text-gray-400">
+            {row.period_start.slice(0, 10)} → {row.period_end.slice(0, 10)}
+          </span>
+          {drillHref && (
+            <Link to={drillHref} className="font-medium text-indigo-600 hover:text-indigo-800">
+              See transactions →
+            </Link>
+          )}
+        </div>
       )}
     </div>
   )

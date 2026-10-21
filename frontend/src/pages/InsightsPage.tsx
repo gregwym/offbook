@@ -10,6 +10,7 @@
 //   4) Budgets + Goals at-a-glance
 //   5) Account list summary
 import { subDecimal } from '../lib/decimal'
+import { spendingHref } from '../lib/spendingLink'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
@@ -497,6 +498,9 @@ function AllocationBand({ data, onSetPrice }: { data: InsightsData; onSetPrice: 
 // spending band's existing scope.
 function SpendingBand({ data }: { data: InsightsData }) {
   const rows = data.by_category
+  // Drill-down to the rows behind a figure (#571) — personal scope only;
+  // household figures are aggregates with no member transaction list.
+  const drill = data.scope === 'personal'
   const max = rows.reduce((acc, r) => Math.max(acc, num(r.amount)), 0)
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-5">
@@ -518,7 +522,17 @@ function SpendingBand({ data }: { data: InsightsData }) {
             const pct = max > 0 && v > 0 ? (v / max) * 100 : 0
             return (
               <li key={`${r.category_id ?? 'null'}-${r.name}`} className="flex items-center gap-3">
-                <span className="w-32 shrink-0 truncate text-gray-700">{r.name}</span>
+                {drill ? (
+                  <Link
+                    to={spendingHref({ start: data.period.from, end: data.period.to, categoryID: r.category_id })}
+                    title={`See the transactions behind ${r.name}`}
+                    className="w-32 shrink-0 truncate text-indigo-700 hover:text-indigo-900 hover:underline"
+                  >
+                    {r.name}
+                  </Link>
+                ) : (
+                  <span className="w-32 shrink-0 truncate text-gray-700">{r.name}</span>
+                )}
                 <div className="relative h-2 flex-1 rounded bg-gray-100">
                   <div
                     className="absolute inset-y-0 left-0 rounded bg-indigo-400"
@@ -540,7 +554,10 @@ function SpendingBand({ data }: { data: InsightsData }) {
       <div className="mt-5 grid grid-cols-1 gap-5 border-t border-gray-100 pt-4 lg:grid-cols-3">
         <CashFlowTrend months={data.cash_flow} />
         <CategoryTrendList items={data.category_trend} />
-        <TopMerchantsList rows={data.top_merchants} />
+        <TopMerchantsList
+          rows={data.top_merchants}
+          hrefFor={drill ? (merchant) => spendingHref({ start: data.period.from, end: data.period.to, merchant }) : undefined}
+        />
       </div>
 
       {data.scope === 'personal' && <RecurringList items={data.recurring} />}
@@ -667,7 +684,13 @@ function CategoryTrendList({ items }: { items: InsightsData['category_trend'] })
 }
 
 // Top spending merchants, period-scoped (#367).
-function TopMerchantsList({ rows }: { rows: InsightsData['top_merchants'] }) {
+function TopMerchantsList({
+  rows,
+  hrefFor,
+}: {
+  rows: InsightsData['top_merchants']
+  hrefFor?: (merchant: string) => string
+}) {
   const top = rows.slice(0, 5)
   return (
     <div>
@@ -683,7 +706,18 @@ function TopMerchantsList({ rows }: { rows: InsightsData['top_merchants'] }) {
           {top.map((m) => (
             <li key={m.merchant} className="flex items-center justify-between gap-2">
               <span className="truncate text-gray-700">
-                {m.merchant} <span className="text-xs text-gray-400">×{m.count}</span>
+                {hrefFor ? (
+                  <Link
+                    to={hrefFor(m.merchant)}
+                    title={`See the transactions behind ${m.merchant}`}
+                    className="text-indigo-700 hover:text-indigo-900 hover:underline"
+                  >
+                    {m.merchant}
+                  </Link>
+                ) : (
+                  m.merchant
+                )}{' '}
+                <span className="text-xs text-gray-400">×{m.count}</span>
               </span>
               <span className="shrink-0 text-right text-gray-500">
                 <AmountDisplay amount={m.amount} />
@@ -728,7 +762,17 @@ function BudgetsGoalsBand({ data }: { data: InsightsData }) {
               return (
                 <li key={b.id}>
                   <div className="flex items-center justify-between">
-                    <span className="text-gray-700">{b.category_name}</span>
+                    {b.period_start && b.period_end ? (
+                      <Link
+                        to={spendingHref({ start: b.period_start, end: b.period_end, categoryID: b.category_id })}
+                        title={`See the transactions behind the ${b.category_name} budget`}
+                        className="text-indigo-700 hover:text-indigo-900 hover:underline"
+                      >
+                        {b.category_name}
+                      </Link>
+                    ) : (
+                      <span className="text-gray-700">{b.category_name}</span>
+                    )}
                     <span className={over ? 'text-red-700' : 'text-gray-700'}>
                       <AmountDisplay amount={b.spent} /> / <AmountDisplay amount={b.limit} />
                     </span>

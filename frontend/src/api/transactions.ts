@@ -27,13 +27,18 @@ export type TransactionListFilter = {
   search?: string
   // Exact tag (#544).
   tag?: string
+  // Spending lens (#571): only rows the spending figures count; category_id
+  // then matches split lines and the response carries spend_total.
+  spending?: boolean
+  // With spending: the exact Top merchants label.
+  merchant?: string
   limit?: number
   offset?: number
 }
 
 export async function listTransactions(
   f: TransactionListFilter = {},
-): Promise<{ items: Transaction[]; total: number }> {
+): Promise<{ items: Transaction[]; total: number; spend_total?: string }> {
   const params: Record<string, string | number> = {}
   if (f.account_id !== undefined) params.account_id = f.account_id
   if (f.category_id !== undefined) {
@@ -45,11 +50,13 @@ export async function listTransactions(
   if (f.to) params.to = f.to
   if (f.search) params.search = f.search
   if (f.tag) params.tag = f.tag
+  if (f.spending) params.spending = 'true'
+  if (f.spending && f.merchant) params.merchant = f.merchant
   if (f.limit !== undefined) params.limit = f.limit
   if (f.offset !== undefined) params.offset = f.offset
 
-  const res = await apiClient.get<ApiList<Transaction>>('/transactions', { params })
-  return { items: res.data.data, total: res.data.total }
+  const res = await apiClient.get<ApiList<Transaction> & { spend_total?: string }>('/transactions', { params })
+  return { items: res.data.data, total: res.data.total, spend_total: res.data.spend_total }
 }
 
 // listTransactionTags returns the user's tags with row counts (#544).

@@ -67,6 +67,10 @@ export type InsightsBudgetRow = {
   limit: string
   spent: string
   pct: number // 0..N (>1.0 = over budget)
+  // The current period's [start, end) window — personal scope only, for the
+  // spending drill-down link (#571).
+  period_start?: string
+  period_end?: string
 }
 
 export type InsightsGoalRow = {
@@ -307,6 +311,8 @@ async function loadPersonal(trendMonths = 12): Promise<InsightsData> {
       limit: r.value.limit,
       spent: r.value.spent,
       pct: r.value.pct,
+      period_start: r.value.period_start,
+      period_end: r.value.period_end,
     })
   })
 
