@@ -29,6 +29,7 @@ var (
 	ErrRenameTooLong      = errors.New("rename_merchant must be at most 200 characters")
 	ErrUnknownRuleAccount = errors.New("account does not exist")
 	ErrInvalidAmountRange = errors.New("amount_min and amount_max must be >= 0 and amount_min <= amount_max")
+	ErrRuleHasNoAction    = errors.New("rule must set a category, rename the merchant, add tags, hide or mark reviewed")
 )
 
 // maxRenameMerchant bounds a rule's merchant rename; merchant names are
@@ -42,9 +43,11 @@ var validMatchTypes = map[string]struct{}{
 }
 
 type CreateRuleInput struct {
-	Pattern    string
-	MatchType  string
-	CategoryID int64
+	Pattern   string
+	MatchType string
+	// CategoryID is the category to set; nil keeps each matched row's
+	// category, and the rule then needs another action (#553).
+	CategoryID *int64
 	// AssetID, when set, narrows the rule to transactions whose
 	// asset_id matches. Either Pattern OR AssetID must be supplied —
 	// a rule with neither has nothing to match on.
@@ -71,11 +74,13 @@ type CreateRuleInput struct {
 // ClearAssetID drops asset binding without losing the difference between
 // "leave alone" and "clear" the way a nil AssetID would.
 type UpdateRuleInput struct {
-	Pattern      *string
-	MatchType    *string
-	CategoryID   *int64
-	AssetID      *int64
-	ClearAssetID bool
+	Pattern    *string
+	MatchType  *string
+	CategoryID *int64
+	// ClearCategoryID makes the rule keep each matched row's category (#553).
+	ClearCategoryID bool
+	AssetID         *int64
+	ClearAssetID    bool
 	// RenameMerchant sets the rename; a blank string clears it (#534).
 	RenameMerchant *string
 	// HideMatches turns hiding on or off (#536). Turning it off leaves
@@ -214,8 +219,11 @@ func (s *CategorizationRuleService) Update(ctx context.Context, userID, id int64
 	if in.MatchType != nil {
 		r.MatchType = strings.TrimSpace(*in.MatchType)
 	}
-	if in.CategoryID != nil {
-		r.CategoryID = *in.CategoryID
+	switch {
+	case in.ClearCategoryID:
+		r.CategoryID = nil
+	case in.CategoryID != nil:
+		r.CategoryID = in.CategoryID
 	}
 	switch {
 	case in.ClearAssetID:
@@ -474,12 +482,6 @@ func (s *CategorizationRuleService) apply(ctx context.Context, userID int64, sco
 					result.Updated++
 					continue
 				}
-				catID := d.CategoryID
-				ruleID := d.RuleID
-				method := categorization.MethodRule
-				row.CategoryID = &catID
-				row.CategorizationRuleID = &ruleID
-				row.CategorizationMethod = &method
 				d.SetActions(row)
 				if err := txRepo.Update(ctx, row); err != nil {
 					return fmt.Errorf("update transaction %d: %w", row.ID, err)
@@ -501,10 +503,11 @@ func (s *CategorizationRuleService) apply(ctx context.Context, userID int64, sco
 // DraftRuleInput is an unsaved rule to evaluate. RuleID, when set, means the
 // draft replaces that stored rule (edit); otherwise it is a new rule.
 type DraftRuleInput struct {
-	RuleID     *int64
-	Pattern    string
-	MatchType  string
-	CategoryID int64
+	RuleID    *int64
+	Pattern   string
+	MatchType string
+	// CategoryID as on CreateRuleInput (#553).
+	CategoryID *int64
 	AssetID    *int64
 	// RenameMerchant as on CreateRuleInput (#534).
 	RenameMerchant *string
@@ -734,7 +737,13 @@ func (s *CategorizationRuleService) validate(ctx context.Context, r *model.Categ
 		return ErrInvalidAmountRange
 	}
 
-	if _, err := s.catRepo.GetByID(ctx, r.CategoryID); err != nil {
+	if r.CategoryID == nil {
+		if r.RenameMerchant == nil && !r.HideMatches && !r.MarkReviewed && len(r.AddTags) == 0 {
+			return ErrRuleHasNoAction
+		}
+		return nil
+	}
+	if _, err := s.catRepo.GetByID(ctx, *r.CategoryID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return ErrUnknownCategory
 		}

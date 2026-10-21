@@ -115,7 +115,7 @@ describe('RulesPage smoke', () => {
     expect(screen.getByText(/Fill in pattern and category/)).toBeTruthy()
 
     const select = screen.getAllByRole('combobox').find((el) => el.textContent?.includes('pick one'))!
-    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[1].value) } })
+    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[2].value) } })
 
     expect(await screen.findByText(/Applies to 3 of 40 existing transactions: 2 would change category\. 1 manual pick stays as it is\./)).toBeTruthy()
     expect(screen.getByText('WHOLEFDS #1')).toBeTruthy()
@@ -158,12 +158,12 @@ describe('RulesPage smoke', () => {
     fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
     fireEvent.change(screen.getByPlaceholderText('e.g. WHOLEFDS'), { target: { value: 'AMZN' } })
     const select = screen.getAllByRole('combobox').find((el) => el.textContent?.includes('pick one'))!
-    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[1].value) } })
+    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[2].value) } })
     fireEvent.change(screen.getByLabelText(/Rename merchant to/), { target: { value: '  Amazon ' } })
     // Run order lives only in the list (#552): no Priority field, and the
     // form says where a new rule lands.
     expect(screen.queryByLabelText(/Priority/)).toBeNull()
-    expect(screen.getByText('New rules run first; reorder them on the Rules page.')).toBeTruthy()
+    expect(screen.getByText(/^New rules run first; reorder them on the Rules page\./)).toBeTruthy()
 
     expect(await screen.findByText(/2 would be renamed\. Renamed ones show merchant “Amazon”/)).toBeTruthy()
     expect(previews.at(-1)).toMatchObject({ pattern: 'AMZN', rename_merchant: 'Amazon' })
@@ -219,7 +219,7 @@ describe('RulesPage smoke', () => {
     fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
     fireEvent.change(screen.getByPlaceholderText('e.g. WHOLEFDS'), { target: { value: 'SWEEP' } })
     const select = screen.getAllByRole('combobox').find((el) => el.textContent?.includes('pick one'))!
-    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[1].value) } })
+    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[2].value) } })
     fireEvent.click(screen.getByLabelText(/Also hide matching transactions/))
 
     expect(await screen.findByText(/3 would be hidden\. Hidden ones leave spending and budgets/)).toBeTruthy()
@@ -274,7 +274,7 @@ describe('RulesPage smoke', () => {
     fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
     fireEvent.change(screen.getByPlaceholderText('e.g. WHOLEFDS'), { target: { value: 'PAYROLL' } })
     const select = screen.getAllByRole('combobox').find((el) => el.textContent?.includes('pick one'))!
-    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[1].value) } })
+    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[2].value) } })
     fireEvent.click(screen.getByLabelText(/Also mark matching transactions reviewed/))
 
     expect(await screen.findByText(/2 would be marked reviewed/)).toBeTruthy()
@@ -376,7 +376,7 @@ describe('RulesPage smoke', () => {
     fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
     fireEvent.change(screen.getByPlaceholderText('e.g. WHOLEFDS'), { target: { value: 'UBER' } })
     const select = screen.getAllByRole('combobox').find((el) => el.textContent?.includes('pick one'))!
-    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[1].value) } })
+    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[2].value) } })
     fireEvent.change(screen.getByLabelText(/Also add tags/), { target: { value: 'work trip, reimbursable, Reimbursable' } })
     fireEvent.click(await screen.findByRole('button', { name: 'Add tag vacation to this rule' }))
 
@@ -395,6 +395,71 @@ describe('RulesPage smoke', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(screen.queryByText(/Adds tags:/)).toBeNull())
     expect(patches[0]).toMatchObject({ add_tags: [] })
+  })
+
+  // #553: "Keep current category" makes a tag-only rule: no category_id is
+  // sent, the list says "Category unchanged", a rule with no other action is
+  // blocked, and editing back to keep sends clear_category_id.
+  it('creates a tag-only rule that keeps the category, then clears a category on edit', async () => {
+    const previews: Record<string, unknown>[] = []
+    const creates: Record<string, unknown>[] = []
+    const patches: Record<string, unknown>[] = []
+    let stored = [...fx.rules]
+    server.use(
+      http.get(`${API}/categorization-rules`, () => HttpResponse.json({ data: stored, total: stored.length })),
+      http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
+        previews.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json({
+          data: { scanned: 10, matched: 2, would_change: 2, would_recategorize: 0, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, would_tag: 2, skipped_manual: 0, samples: ['UBER TRIP'] },
+        })
+      }),
+      http.post(`${API}/categorization-rules`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        creates.push(body)
+        const r = { ...fx.rule1, id: 6, pattern: 'UBER', category_id: null, add_tags: body.add_tags as string[] }
+        stored = [...stored, r]
+        return HttpResponse.json({ data: r }, { status: 201 })
+      }),
+      http.patch(`${API}/categorization-rules/:id`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        patches.push(body)
+        stored = stored.map((r) => (r.id === fx.rule1.id ? { ...r, category_id: null, mark_reviewed: true } : r))
+        return HttpResponse.json({ data: stored.find((r) => r.id === fx.rule1.id) })
+      }),
+    )
+    renderPage(<RulesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
+    fireEvent.change(screen.getByPlaceholderText('e.g. WHOLEFDS'), { target: { value: 'UBER' } })
+    expect(screen.getByText(/This rule stops later rules from running on the same transaction/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'keep' } })
+
+    // Keep category alone does nothing: no preview, and saving is blocked.
+    expect(screen.getByText(/Add a rename, tags, hide or mark reviewed to see/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText(/This rule would change nothing/)).toBeTruthy()
+    expect(creates).toHaveLength(0)
+
+    fireEvent.change(screen.getByLabelText(/Also add tags/), { target: { value: 'reimbursable' } })
+    expect(screen.queryByText(/This rule would change nothing/)).toBeNull()
+    expect(await screen.findByText(/2 would be tagged\. Tags: reimbursable\. Categories stay as they are\./)).toBeTruthy()
+    expect(previews.at(-1)).not.toHaveProperty('category_id')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+    const row = (await screen.findByText('Adds tags: reimbursable')).closest('tr')!
+    expect(within(row).getByText('Category unchanged')).toBeTruthy()
+    expect(creates[0]).toMatchObject({ pattern: 'UBER', add_tags: ['reimbursable'] })
+    expect(creates[0]).not.toHaveProperty('category_id')
+
+    // Editing a categorizing rule to keep the category sends clear_category_id.
+    const first = screen.getByText(fx.rule1.pattern).closest('tr')!
+    fireEvent.click(within(first).getByRole('button', { name: /edit/i }))
+    fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'keep' } })
+    fireEvent.click(screen.getByLabelText(/Also mark matching transactions reviewed/))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(patches).toHaveLength(1))
+    expect(patches[0]).toMatchObject({ clear_category_id: true, mark_reviewed: true })
+    expect(patches[0]).not.toHaveProperty('category_id')
+    await waitFor(() => expect(within(screen.getByText(fx.rule1.pattern).closest('tr')!).getByText('Category unchanged')).toBeTruthy())
   })
 
   it('blocks saving a rule tag that is too long', async () => {
@@ -440,7 +505,7 @@ describe('RulesPage smoke', () => {
     fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
     fireEvent.change(screen.getByPlaceholderText('e.g. WHOLEFDS'), { target: { value: 'AMZN' } })
     const select = screen.getAllByRole('combobox').find((el) => el.textContent?.includes('pick one'))!
-    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[1].value) } })
+    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[2].value) } })
     const accountSelect = screen.getByLabelText('Account') as HTMLSelectElement
     await waitFor(() => expect(accountSelect.options.length).toBeGreaterThan(1))
     fireEvent.change(accountSelect, { target: { value: String(fx.account1.id) } })

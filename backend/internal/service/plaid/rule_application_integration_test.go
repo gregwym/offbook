@@ -47,7 +47,7 @@ func TestPlaidSync_RuleWinsOverPlaidDefault(t *testing.T) {
 	// User-owned rule: WHOLE FOODS description → entertainment.
 	rule := &model.CategorizationRule{
 		UserID: userID, Pattern: "WHOLE FOODS", MatchType: "contains",
-		CategoryID: entertainment.ID, Priority: 50, IsActive: true,
+		CategoryID: new(entertainment.ID), Priority: 50, IsActive: true,
 	}
 	if err := g.Create(rule).Error; err != nil {
 		t.Fatalf("seed rule: %v", err)
@@ -158,7 +158,7 @@ func TestPlaidSync_OtherUsersRuleDoesNotApply(t *testing.T) {
 	// Rule belongs to userB but targets the same pattern.
 	rule := &model.CategorizationRule{
 		UserID: userB, Pattern: "WHOLE FOODS", MatchType: "contains",
-		CategoryID: entertainment.ID, Priority: 50, IsActive: true,
+		CategoryID: new(entertainment.ID), Priority: 50, IsActive: true,
 	}
 	if err := g.Create(rule).Error; err != nil {
 		t.Fatalf("seed rule: %v", err)

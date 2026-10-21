@@ -458,6 +458,87 @@ test.describe('rule adds tags', () => {
   })
 })
 
+test.describe('rule keeps the category', () => {
+  test('a tag-only rule tags matches, leaves every category and spending total alone, and persists', async ({ page }, testInfo) => {
+    process.env.OFFBOOK_ROLE = process.env.OFFBOOK_ROLE ?? 'qa'
+    const user = await createThrowawayUser({ suite: `rules-keep-${testInfo.project.name}` })
+    const cookie = await apiSignin(user.email, user.password)
+    const cats = await get(cookie, '/categories')
+    const shopping = (cats.data.find((x: { slug: string }) => x.slug === 'shopping') ?? cats.data[0]) as { id: number; name: string }
+    const acct = (await api(cookie, '/accounts', {
+      name: 'Tag Only Checking', institution_slug: 'manual', account_type: 'checking', currency: 'USD',
+    })).data.id
+    const today = new Date().toISOString().slice(0, 10)
+    const tx = async (description: string, amount: string) =>
+      (await api(cookie, '/transactions', { account_id: acct, amount, description, transaction_date: today, source: 'csv' })).data
+    await tx('QAKEEP UBER TRIP 1', '-18.40')
+    await tx('QAKEEP UBER TRIP 2', '-22.10')
+    await tx('QAKEEP Corner shop', '-9.00')
+    // An existing categorizing rule already put the Uber rows in Shopping.
+    await api(cookie, '/categorization-rules', { pattern: 'QAKEEP UBER', match_type: 'contains', category_id: shopping.id, priority: 10 })
+    await api(cookie, '/categorization-rules/apply', {})
+    const byCategory = async () =>
+      ((await get(cookie, '/dashboard/spend-by-category?period=current_month')).data ?? [])
+        .map((c: { category_id: number | null; amount: string }) => `${c.category_id}:${c.amount}`).sort()
+    const spendBefore = await byCategory()
+    const categoriesOf = async () =>
+      ((await get(cookie, '/transactions?search=QAKEEP&limit=50')).data as { description: string; category_id: number | null; tags?: string[] }[])
+        .map((r) => `${r.description}:${r.category_id}`).sort()
+    const catsBefore = await categoriesOf()
+    expect(catsBefore).toContain(`QAKEEP UBER TRIP 1:${shopping.id}`)
+
+    await signIn(page, user.email, user.password)
+    await page.goto('/rules')
+    await page.getByRole('button', { name: 'New rule' }).click()
+    const dialog = page.locator('div.fixed.inset-0')
+    await dialog.getByPlaceholder('e.g. WHOLEFDS').fill('UBER')
+    await expect(dialog).toContainText('This rule stops later rules from running on the same transaction.')
+    await dialog.getByLabel('Category').selectOption({ label: 'Keep current category' })
+    await expect(dialog).toContainText('Matches keep their category.')
+    // Keeping the category and nothing else would change nothing.
+    await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(dialog).toContainText('This rule would change nothing.')
+    const tags = dialog.getByLabel('Also add tags (optional)')
+    await tags.fill('reimbursable')
+    await expect(dialog).not.toContainText('This rule would change nothing.')
+    await expect(dialog).toContainText('Applies to 2 of')
+    await expect(dialog).toContainText('2 would be tagged. Tags: reimbursable. Categories stay as they are.')
+    await expect(dialog).not.toContainText('would change category')
+    await expect(dialog.getByRole('button', { name: 'Create', exact: true })).toBeInViewport()
+    await testInfo.attach(`${testInfo.project.name}-keep-category-draft`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+    await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+    const row = page.locator('tr', { hasText: 'Adds tags: reimbursable' })
+    await expect(row.getByText('Category unchanged')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Preview changes' }).click()
+    await expect(page.getByText(/Preview \(2 of \d+ transactions\): 2 would be tagged\./)).toBeVisible()
+    await page.getByRole('button', { name: 'Apply now' }).click()
+    await expect.poll(async () => (await get(cookie, '/transactions?tag=reimbursable&limit=50')).total).toBe(2)
+    await expectNoOverflow(page)
+    await testInfo.attach(`${testInfo.project.name}-keep-category-rules-list`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+
+    // Categories and the exact spending-by-category totals are unchanged.
+    expect(await categoriesOf()).toEqual(catsBefore)
+    expect(await byCategory()).toEqual(spendBefore)
+    expect((await api(cookie, '/categorization-rules/apply', {})).data.updated).toBe(0)
+
+    // First match wins: a new Uber row is tagged by the top rule, which keeps
+    // its (empty) category, so the Shopping rule below does not run on it.
+    const fresh = await tx('QAKEEP UBER TRIP 3', '-11.00')
+    expect(fresh.tags).toEqual(['reimbursable'])
+    expect(fresh.category_id ?? null).toBeNull()
+
+    await page.reload()
+    await expect(page.locator('tr', { hasText: 'Adds tags: reimbursable' }).getByText('Category unchanged')).toBeVisible()
+    await page.locator('tr', { hasText: 'Adds tags: reimbursable' }).getByRole('button', { name: /edit/i }).click()
+    await expect(page.locator('div.fixed.inset-0').getByLabel('Category')).toHaveValue('keep')
+  })
+})
+
 test.describe('rule conditions', () => {
   test('account and amount bands split one merchant; other accounts and mid-size rows are left alone', async ({ page }, testInfo) => {
     process.env.OFFBOOK_ROLE = process.env.OFFBOOK_ROLE ?? 'qa'

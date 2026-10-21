@@ -84,8 +84,9 @@ func MapPlaidTransaction(p PlaidTransaction, userID, accountID, assetID int64, m
 		Pending:            p.Pending,
 	}
 
-	// Rules first — a matching rule overrides the Plaid PFC default.
-	if _, applied := categorization.Apply(&out, rules); !applied {
+	// Rules first — a matching rule overrides the Plaid PFC default. A
+	// matched rule without a category (#553) keeps the PFC default.
+	if d, applied := categorization.Apply(&out, rules); !applied || !d.SetsCategory() {
 		if catID, ok := mapper.MapPlaidCategory(p.PFCPrimary, p.PFCDetailed); ok {
 			out.CategoryID = &catID
 			method := CategorizationMethodPlaidDefault

@@ -38,6 +38,10 @@ export type RuleFormDefaults = {
 // Mirrors the backend's maxRenameMerchant.
 const MAX_RENAME = 200
 
+// Category select value for a rule that keeps each transaction's category
+// and only renames, tags, hides or marks reviewed (#553).
+const KEEP_CATEGORY = 'keep'
+
 type Props = {
   mode: 'create' | 'edit'
   categories: Category[]
@@ -52,9 +56,10 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   const [matchType, setMatchType] = useState<MatchType>(
     rule?.match_type ?? defaults?.match_type ?? 'contains',
   )
-  const [categoryID, setCategoryID] = useState<number | ''>(
-    rule?.category_id ?? defaults?.category_id ?? '',
+  const [categoryID, setCategoryID] = useState<number | '' | typeof KEEP_CATEGORY>(
+    rule ? (rule.category_id ?? KEEP_CATEGORY) : (defaults?.category_id ?? ''),
   )
+  const keepCategory = categoryID === KEEP_CATEGORY
   // Run order is set only by the Rules list's Move up/down (#552): a new
   // rule takes the caller's default (top of the list) and an edit keeps its
   // place. The draft preview still needs it to rank the draft.
@@ -112,12 +117,15 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   const [categoryError, setCategoryError] = useState<string | null>(null)
   const [renameError, setRenameError] = useState<string | null>(null)
   const tagsError = parsedTags.error
+  // A keep-category rule must do something else (#553).
+  const hasOtherAction = rename !== '' || hideMatches || markReviewed || ruleTags.length > 0
 
   // Live impact of the draft rule: debounced, cancels stale requests, and
   // never blocks saving. Results are keyed by the draft they describe, so a
   // result for an older draft reads as "loading" rather than stale.
-  const cat = Number(categoryID)
-  const draftReady = pattern.trim() !== '' && Number.isInteger(cat) && cat > 0 && conditionsOK
+  const cat = keepCategory ? 0 : Number(categoryID)
+  const draftReady =
+    pattern.trim() !== '' && (keepCategory ? hasOtherAction : Number.isInteger(cat) && cat > 0) && conditionsOK
   const draftKey = JSON.stringify([pattern.trim(), matchType, cat, priority, isActive, rename, hideMatches, markReviewed, tagsKey, accountID, amountMin, amountMax, rule?.id ?? null])
   const [impact, setImpact] = useState<{ key: string; data: DraftPreview | null } | null>(null)
   useEffect(() => {
@@ -128,7 +136,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
         {
           pattern: pattern.trim(),
           match_type: matchType,
-          category_id: cat,
+          ...(keepCategory ? {} : { category_id: cat }),
           priority,
           is_active: isActive,
           ...(rename ? { rename_merchant: rename } : {}),
@@ -151,7 +159,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
       clearTimeout(timer)
       ctrl.abort()
     }
-  }, [draftKey, draftReady, pattern, matchType, cat, priority, isActive, rename, hideMatches, markReviewed, tagsKey, accountID, amountMin, amountMax, rule?.id])
+  }, [draftKey, draftReady, keepCategory, pattern, matchType, cat, priority, isActive, rename, hideMatches, markReviewed, tagsKey, accountID, amountMin, amountMax, rule?.id])
   const current = draftReady && impact?.key === draftKey ? impact : null
   const impactData = current?.data ?? null
   const impactLoading = draftReady && isActive && current === null
@@ -165,8 +173,13 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
       setPatternError('Pattern is required.')
       return
     }
-    if (categoryID === '' || !Number.isInteger(categoryID) || categoryID <= 0) {
-      setCategoryError('Pick a category.')
+    if (keepCategory) {
+      if (!hasOtherAction) {
+        setCategoryError(NO_ACTION_MESSAGE)
+        return
+      }
+    } else if (categoryID === '' || !Number.isInteger(categoryID) || categoryID <= 0) {
+      setCategoryError('Pick a category, or Keep current category.')
       return
     }
     if (rename.length > MAX_RENAME) {
@@ -179,7 +192,10 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
       await onSubmit({
         pattern: pattern.trim(),
         match_type: matchType,
-        category_id: Number(categoryID),
+        // Keeping the category omits it; editing a rule that had one clears it.
+        ...(keepCategory
+          ? rule?.category_id != null ? { clear_category_id: true } : {}
+          : { category_id: Number(categoryID) }),
         // Editing never moves the rule; only create places it.
         ...(mode === 'create' ? { priority } : {}),
         is_active: isActive,
@@ -199,6 +215,8 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
         setPatternError(message)
       } else if (code === 'UNKNOWN_CATEGORY') {
         setCategoryError(message)
+      } else if (code === 'RULE_HAS_NO_ACTION') {
+        setCategoryError(NO_ACTION_MESSAGE)
       } else if (code === 'UNKNOWN_ACCOUNT') {
         setError('That account no longer exists. Pick another account or "Any account".')
       } else {
@@ -241,19 +259,30 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
         <p className="text-xs text-gray-500">
           {mode === 'create'
             ? 'New rules run first; reorder them on the Rules page.'
-            : 'Saving keeps this rule\u2019s place in the run order; reorder rules on the Rules page.'}
+            : 'Saving keeps this rule\u2019s place in the run order; reorder rules on the Rules page.'}{' '}
+          This rule stops later rules from running on the same transaction.
         </p>
-        <Field label="Category" error={categoryError}>
+        <Field label="Category" error={categoryError === NO_ACTION_MESSAGE && hasOtherAction ? null : categoryError}>
           <select
             className={inputClass}
             value={categoryID === '' ? '' : String(categoryID)}
-            onChange={(e) => setCategoryID(e.target.value === '' ? '' : Number(e.target.value))}
+            onChange={(e) =>
+              setCategoryID(
+                e.target.value === '' ? '' : e.target.value === KEEP_CATEGORY ? KEEP_CATEGORY : Number(e.target.value),
+              )
+            }
           >
             <option value="">— pick one —</option>
+            <option value={KEEP_CATEGORY}>Keep current category</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
+          {keepCategory && (
+            <p className="mt-1 text-xs text-gray-500">
+              Matches keep their category. Use this for a rule that only renames, tags, hides or marks reviewed.
+            </p>
+          )}
         </Field>
         <fieldset className="rounded-md border border-gray-200 px-3 pb-3 pt-1">
           <legend className="px-1 text-xs font-medium text-gray-600">Only when (optional)</legend>
@@ -372,7 +401,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
             'Checking which transactions this would affect\u2026'
           ) : impactData ? (
             <>
-              <p>{describeDraftImpact(impactData, { rename, tags: ruleTags })}</p>
+              <p>{describeDraftImpact(impactData, { rename, tags: ruleTags, keepCategory })}</p>
               {impactData.samples.length > 0 && (
                 <ul className="mt-1 list-disc pl-4 text-gray-500">
                   {impactData.samples.map((s, i) => (
@@ -384,6 +413,8 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
             </>
           ) : current ? (
             'Couldn\u2019t check the impact right now \u2014 you can still save.'
+          ) : keepCategory && pattern.trim() !== '' && !hasOtherAction ? (
+            'Add a rename, tags, hide or mark reviewed to see how many transactions this would affect.'
           ) : (
             'Fill in pattern and category to see how many transactions this would affect.'
           )}
@@ -406,7 +437,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
 
 // The live impact sentence, in the same action words as the Rules page's
 // preview/apply banner (#552), plus what each action means for this draft.
-function describeDraftImpact(d: DraftPreview, draft: { rename: string; tags: string[] }): string {
+function describeDraftImpact(d: DraftPreview, draft: { rename: string; tags: string[]; keepCategory: boolean }): string {
   if (d.matched === 0) return 'No existing transactions would use this rule.'
   const changes = describeRuleChanges(
     {
@@ -425,12 +456,16 @@ function describeDraftImpact(d: DraftPreview, draft: { rename: string; tags: str
   if (draft.rename && d.would_rename > 0) out += ` Renamed ones show merchant \u201c${draft.rename}\u201d.`
   if (d.would_hide > 0) out += ' Hidden ones leave spending and budgets.'
   if (draft.tags.length > 0 && d.would_tag > 0) out += ` Tags: ${draft.tags.join(', ')}.`
+  if (draft.keepCategory) out += ' Categories stay as they are.'
   const manual = describeManualPicks(d.skipped_manual, 'would')
   if (manual) out += ` ${manual[0].toUpperCase()}${manual.slice(1)}.`
   return out
 }
 
 const inputClass = 'w-full rounded border border-gray-300 px-2 py-1 text-sm'
+
+const NO_ACTION_MESSAGE =
+  'This rule would change nothing. Pick a category, or add a rename, tags, hide or mark reviewed.'
 
 // A non-negative decimal as typed (after stripping $ and commas).
 const DECIMAL_RE = /^\d+(\.\d+)?$/

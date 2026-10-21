@@ -29,7 +29,7 @@ func TestTransactionService_Create_AppliesRule(t *testing.T) {
 		UserID:     userID,
 		Pattern:    "WHOLEFDS",
 		MatchType:  "contains",
-		CategoryID: categoryID,
+		CategoryID: new(categoryID),
 		Priority:   10,
 		IsActive:   true,
 	}
@@ -78,7 +78,7 @@ func TestTransactionService_Create_RuleDoesNotCrossTenant(t *testing.T) {
 		UserID:     userB,
 		Pattern:    "WHOLEFDS",
 		MatchType:  "contains",
-		CategoryID: categoryID,
+		CategoryID: new(categoryID),
 		Priority:   10,
 		IsActive:   true,
 	}
@@ -137,7 +137,7 @@ func TestTransactionService_Create_ManualCategoryWinsOverRule(t *testing.T) {
 		UserID:     userID,
 		Pattern:    "WHOLEFDS",
 		MatchType:  "contains",
-		CategoryID: other.ID,
+		CategoryID: new(other.ID),
 		Priority:   10,
 		IsActive:   true,
 	}
@@ -194,11 +194,11 @@ func TestTransactionService_Create_PriorityBreaksTie(t *testing.T) {
 
 	low := &model.CategorizationRule{
 		UserID: userID, Pattern: "WHOLEFDS", MatchType: "contains",
-		CategoryID: categoryID, Priority: 1, IsActive: true,
+		CategoryID: new(categoryID), Priority: 1, IsActive: true,
 	}
 	high := &model.CategorizationRule{
 		UserID: userID, Pattern: "WHOLEFDS", MatchType: "contains",
-		CategoryID: other.ID, Priority: 100, IsActive: true,
+		CategoryID: new(other.ID), Priority: 100, IsActive: true,
 	}
 	if err := g.WithContext(ctx).Create(low).Error; err != nil {
 		t.Fatalf("seed low: %v", err)

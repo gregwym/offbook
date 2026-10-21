@@ -28,8 +28,9 @@ const MethodRule = "rule"
 // when non-nil, narrows the rule to transactions whose asset_id matches
 // — see Categorize.
 type CompiledRule struct {
-	ID         int64
-	CategoryID int64
+	ID int64
+	// CategoryID is nil for a rule that keeps the row's category (#553).
+	CategoryID *int64
 	MatchType  string
 	Pattern    string
 	AssetID    *int64
@@ -53,8 +54,11 @@ type CompiledRule struct {
 
 // Decision is what Categorize returns when a rule matched.
 type Decision struct {
-	RuleID     int64
-	CategoryID int64
+	RuleID int64
+	// CategoryID is nil when the winning rule keeps the row's category and
+	// only takes its other actions (#553). Such a rule still wins: later
+	// rules don't run on the row.
+	CategoryID *int64
 	// RenameMerchant is the winning rule's merchant rename, nil when it
 	// has none.
 	RenameMerchant *string
@@ -72,10 +76,15 @@ func (d Decision) MerchantChanged(merchantName *string) bool {
 	return d.RenameMerchant != nil && (merchantName == nil || *merchantName != *d.RenameMerchant)
 }
 
+// SetsCategory reports whether the winning rule sets a category. A rule
+// without one never writes category_id, categorization_method or
+// categorization_rule_id (#553).
+func (d Decision) SetsCategory() bool { return d.CategoryID != nil }
+
 // CategoryChanged reports whether applying d would change t's category.
 // Provenance (rule id, method) is not a category change.
 func (d Decision) CategoryChanged(t *model.Transaction) bool {
-	return t.CategoryID == nil || *t.CategoryID != d.CategoryID
+	return d.CategoryID != nil && (t.CategoryID == nil || *t.CategoryID != *d.CategoryID)
 }
 
 // HideChanged reports whether applying d would hide t: the rule hides, t is
@@ -125,13 +134,16 @@ func (d Decision) TagsChanged(t *model.Transaction) bool {
 }
 
 // SameAs reports whether a row's stored categorization already reflects d:
-// the rule's category, the rule as provenance, its merchant rename, its
-// hide, its review mark and its tags. Re-applying such a row is a no-op.
+// the rule's category and the rule as provenance (when the rule sets a
+// category), its merchant rename, its hide, its review mark and its tags.
+// Re-applying such a row is a no-op.
 func (d Decision) SameAs(t *model.Transaction) bool {
-	return t.CategoryID != nil && *t.CategoryID == d.CategoryID &&
-		t.CategorizationRuleID != nil && *t.CategorizationRuleID == d.RuleID &&
-		t.CategorizationMethod != nil && *t.CategorizationMethod == MethodRule &&
-		!d.MerchantChanged(t.MerchantName) &&
+	if d.CategoryID != nil && (d.CategoryChanged(t) ||
+		t.CategorizationRuleID == nil || *t.CategorizationRuleID != d.RuleID ||
+		t.CategorizationMethod == nil || *t.CategorizationMethod != MethodRule) {
+		return false
+	}
+	return !d.MerchantChanged(t.MerchantName) &&
 		!d.HideChanged(t) &&
 		!d.ReviewChanged(t) &&
 		!d.TagsChanged(t)
@@ -275,9 +287,11 @@ func (r CompiledRule) decision() Decision {
 }
 
 // Apply runs Categorize and, when a rule matches, mutates tx in place to
-// reflect the decision: sets CategoryID, CategorizationMethod="rule",
-// CategorizationRuleID and, when the rule renames, hides, marks reviewed or
-// tags, MerchantName, HiddenAt, ReviewedAt and Tags. Returns the decision and whether a rule matched.
+// reflect the decision: when the rule sets a category, CategoryID,
+// CategorizationMethod="rule" and CategorizationRuleID; when it renames,
+// hides, marks reviewed or tags, MerchantName, HiddenAt, ReviewedAt and Tags.
+// Returns the decision and whether a rule matched. A matched rule without a
+// category leaves the row's category to the caller's fallback (#553).
 // Caller is responsible for deciding whether to call Apply — typically only
 // when the row has no existing category.
 func Apply(tx *model.Transaction, rules []CompiledRule) (Decision, bool) {
@@ -288,19 +302,22 @@ func Apply(tx *model.Transaction, rules []CompiledRule) (Decision, bool) {
 	if !ok {
 		return Decision{}, false
 	}
-	catID := d.CategoryID
-	ruleID := d.RuleID
-	method := MethodRule
-	tx.CategoryID = &catID
-	tx.CategorizationRuleID = &ruleID
-	tx.CategorizationMethod = &method
 	d.SetActions(tx)
 	return d, true
 }
 
-// SetActions writes the decision's merchant rename, hide, review mark and
-// tags onto tx, if any.
+// SetActions writes the decision onto tx: its category with the rule as
+// provenance (when the rule sets one), merchant rename, hide, review mark
+// and tags, if any.
 func (d Decision) SetActions(tx *model.Transaction) {
+	if d.CategoryID != nil {
+		catID := *d.CategoryID
+		ruleID := d.RuleID
+		method := MethodRule
+		tx.CategoryID = &catID
+		tx.CategorizationRuleID = &ruleID
+		tx.CategorizationMethod = &method
+	}
 	if d.RenameMerchant != nil {
 		v := *d.RenameMerchant
 		tx.MerchantName = &v

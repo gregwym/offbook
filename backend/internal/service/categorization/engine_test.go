@@ -14,10 +14,10 @@ func ptr(s string) *string { return &s }
 
 func TestCompile_SkipsInvalidRegexAndInactive(t *testing.T) {
 	rules := []model.CategorizationRule{
-		{ID: 1, CategoryID: 10, MatchType: "contains", Pattern: "WHOLEFDS", IsActive: true},
-		{ID: 2, CategoryID: 20, MatchType: "regex", Pattern: "([unclosed", IsActive: true},
-		{ID: 3, CategoryID: 30, MatchType: "contains", Pattern: "INACTIVE", IsActive: false},
-		{ID: 4, CategoryID: 40, MatchType: "regex", Pattern: `^AMZN\s`, IsActive: true},
+		{ID: 1, CategoryID: new(int64(10)), MatchType: "contains", Pattern: "WHOLEFDS", IsActive: true},
+		{ID: 2, CategoryID: new(int64(20)), MatchType: "regex", Pattern: "([unclosed", IsActive: true},
+		{ID: 3, CategoryID: new(int64(30)), MatchType: "contains", Pattern: "INACTIVE", IsActive: false},
+		{ID: 4, CategoryID: new(int64(40)), MatchType: "regex", Pattern: `^AMZN\s`, IsActive: true},
 	}
 	got := categorization.Compile(rules)
 	if len(got) != 2 {
@@ -35,16 +35,16 @@ func TestCategorize_FirstMatchWins(t *testing.T) {
 	// Repo returns priority DESC, id ASC; Compile preserves order. So the
 	// first rule in the slice is the highest-priority one.
 	rules := categorization.Compile([]model.CategorizationRule{
-		{ID: 1, CategoryID: 10, MatchType: "contains", Pattern: "WHOLE", IsActive: true}, // high priority
-		{ID: 2, CategoryID: 20, MatchType: "contains", Pattern: "FOODS", IsActive: true}, // would also match
+		{ID: 1, CategoryID: new(int64(10)), MatchType: "contains", Pattern: "WHOLE", IsActive: true}, // high priority
+		{ID: 2, CategoryID: new(int64(20)), MatchType: "contains", Pattern: "FOODS", IsActive: true}, // would also match
 	})
 
 	d, ok := categorization.Categorize(rules, 0, nil, ptr("WHOLE FOODS MARKET #123"), nil)
 	if !ok {
 		t.Fatal("expected match")
 	}
-	if d.RuleID != 1 || d.CategoryID != 10 {
-		t.Errorf("got rule %d/cat %d, want 1/10 (higher priority)", d.RuleID, d.CategoryID)
+	if d.RuleID != 1 || catOf(d) != 10 {
+		t.Errorf("got rule %d/cat %d, want 1/10 (higher priority)", d.RuleID, catOf(d))
 	}
 }
 
@@ -57,25 +57,25 @@ func TestCategorize_MatchTypes(t *testing.T) {
 		wantMatch bool
 	}{
 		{"contains case-insensitive",
-			model.CategorizationRule{ID: 1, CategoryID: 9, MatchType: "contains", Pattern: "wholefds", IsActive: true},
+			model.CategorizationRule{ID: 1, CategoryID: new(int64(9)), MatchType: "contains", Pattern: "wholefds", IsActive: true},
 			ptr("WHOLEFDS MARKET"), nil, true},
 		{"contains no match",
-			model.CategorizationRule{ID: 1, CategoryID: 9, MatchType: "contains", Pattern: "WHOLEFDS", IsActive: true},
+			model.CategorizationRule{ID: 1, CategoryID: new(int64(9)), MatchType: "contains", Pattern: "WHOLEFDS", IsActive: true},
 			ptr("TRADER JOES"), nil, false},
 		{"exact case-insensitive",
-			model.CategorizationRule{ID: 1, CategoryID: 9, MatchType: "exact", Pattern: "amzn mktp", IsActive: true},
+			model.CategorizationRule{ID: 1, CategoryID: new(int64(9)), MatchType: "exact", Pattern: "amzn mktp", IsActive: true},
 			ptr("AMZN MKTP"), nil, true},
 		{"exact substring rejected",
-			model.CategorizationRule{ID: 1, CategoryID: 9, MatchType: "exact", Pattern: "AMZN", IsActive: true},
+			model.CategorizationRule{ID: 1, CategoryID: new(int64(9)), MatchType: "exact", Pattern: "AMZN", IsActive: true},
 			ptr("AMZN MKTP"), nil, false},
 		{"regex matches",
-			model.CategorizationRule{ID: 1, CategoryID: 9, MatchType: "regex", Pattern: `^AMZN\s`, IsActive: true},
+			model.CategorizationRule{ID: 1, CategoryID: new(int64(9)), MatchType: "regex", Pattern: `^AMZN\s`, IsActive: true},
 			ptr("AMZN MKTP"), nil, true},
 		{"regex no match",
-			model.CategorizationRule{ID: 1, CategoryID: 9, MatchType: "regex", Pattern: `^AMZN\s`, IsActive: true},
+			model.CategorizationRule{ID: 1, CategoryID: new(int64(9)), MatchType: "regex", Pattern: `^AMZN\s`, IsActive: true},
 			ptr("PRIME AMZN"), nil, false},
 		{"matches merchant field",
-			model.CategorizationRule{ID: 1, CategoryID: 9, MatchType: "contains", Pattern: "starbucks", IsActive: true},
+			model.CategorizationRule{ID: 1, CategoryID: new(int64(9)), MatchType: "contains", Pattern: "starbucks", IsActive: true},
 			ptr("Random description"), ptr("Starbucks #4321"), true},
 	}
 	for _, tc := range cases {
@@ -91,7 +91,7 @@ func TestCategorize_MatchTypes(t *testing.T) {
 
 func TestCategorize_NoFieldsNoMatch(t *testing.T) {
 	rs := categorization.Compile([]model.CategorizationRule{
-		{ID: 1, CategoryID: 9, MatchType: "contains", Pattern: "X", IsActive: true},
+		{ID: 1, CategoryID: new(int64(9)), MatchType: "contains", Pattern: "X", IsActive: true},
 	})
 	if _, ok := categorization.Categorize(rs, 0, nil, nil, nil); ok {
 		t.Error("expected no match with all-nil fields")
@@ -107,9 +107,9 @@ func TestCategorize_AssetIDFilter(t *testing.T) {
 	other := int64(202)
 	rs := categorization.Compile([]model.CategorizationRule{
 		// Asset-bound rule with no pattern — matches any AAPL leg.
-		{ID: 1, CategoryID: 11, MatchType: "contains", Pattern: "", AssetID: &aapl, IsActive: true},
+		{ID: 1, CategoryID: new(int64(11)), MatchType: "contains", Pattern: "", AssetID: &aapl, IsActive: true},
 		// Asset-agnostic rule — matches anything with "DIVIDEND".
-		{ID: 2, CategoryID: 22, MatchType: "contains", Pattern: "DIVIDEND", IsActive: true},
+		{ID: 2, CategoryID: new(int64(22)), MatchType: "contains", Pattern: "DIVIDEND", IsActive: true},
 	})
 
 	// AAPL leg with no text → first rule fires on asset alone.
@@ -130,14 +130,14 @@ func TestCategorize_AssetIDFilter(t *testing.T) {
 
 func TestApply_MutatesTransaction(t *testing.T) {
 	rs := categorization.Compile([]model.CategorizationRule{
-		{ID: 7, CategoryID: 42, MatchType: "contains", Pattern: "WHOLE", IsActive: true},
+		{ID: 7, CategoryID: new(int64(42)), MatchType: "contains", Pattern: "WHOLE", IsActive: true},
 	})
 	tx := &model.Transaction{Description: ptr("WHOLE FOODS")}
 	d, ok := categorization.Apply(tx, rs)
 	if !ok {
 		t.Fatal("expected match")
 	}
-	if d.RuleID != 7 || d.CategoryID != 42 {
+	if d.RuleID != 7 || catOf(d) != 42 {
 		t.Errorf("decision = %+v, want rule 7 cat 42", d)
 	}
 	if tx.CategoryID == nil || *tx.CategoryID != 42 {
@@ -153,7 +153,7 @@ func TestApply_MutatesTransaction(t *testing.T) {
 
 func TestApply_NoMatchLeavesTransactionUntouched(t *testing.T) {
 	rs := categorization.Compile([]model.CategorizationRule{
-		{ID: 1, CategoryID: 99, MatchType: "contains", Pattern: "ZZZZ", IsActive: true},
+		{ID: 1, CategoryID: new(int64(99)), MatchType: "contains", Pattern: "ZZZZ", IsActive: true},
 	})
 	tx := &model.Transaction{Description: ptr("Coffee")}
 	if _, ok := categorization.Apply(tx, rs); ok {
@@ -166,8 +166,8 @@ func TestApply_NoMatchLeavesTransactionUntouched(t *testing.T) {
 
 func TestApply_RenameMerchant(t *testing.T) {
 	rules := categorization.Compile([]model.CategorizationRule{
-		{ID: 1, CategoryID: 10, MatchType: "contains", Pattern: "AMZN", IsActive: true, RenameMerchant: ptr("  Amazon ")},
-		{ID: 2, CategoryID: 20, MatchType: "contains", Pattern: "SHELL", IsActive: true, RenameMerchant: ptr("   ")},
+		{ID: 1, CategoryID: new(int64(10)), MatchType: "contains", Pattern: "AMZN", IsActive: true, RenameMerchant: ptr("  Amazon ")},
+		{ID: 2, CategoryID: new(int64(20)), MatchType: "contains", Pattern: "SHELL", IsActive: true, RenameMerchant: ptr("   ")},
 	})
 
 	t.Run("winning rule renames", func(t *testing.T) {
@@ -205,8 +205,8 @@ func TestApply_RenameMerchant(t *testing.T) {
 
 func TestApply_HideMatches(t *testing.T) {
 	rules := categorization.Compile([]model.CategorizationRule{
-		{ID: 1, CategoryID: 10, MatchType: "contains", Pattern: "SWEEP", IsActive: true, HideMatches: true},
-		{ID: 2, CategoryID: 20, MatchType: "contains", Pattern: "SHELL", IsActive: true},
+		{ID: 1, CategoryID: new(int64(10)), MatchType: "contains", Pattern: "SWEEP", IsActive: true, HideMatches: true},
+		{ID: 2, CategoryID: new(int64(20)), MatchType: "contains", Pattern: "SHELL", IsActive: true},
 	})
 
 	t.Run("winning rule hides a flow row", func(t *testing.T) {
@@ -259,8 +259,8 @@ func TestApply_HideMatches(t *testing.T) {
 
 func TestApply_MarkReviewed(t *testing.T) {
 	rules := categorization.Compile([]model.CategorizationRule{
-		{ID: 1, CategoryID: 10, MatchType: "contains", Pattern: "PAYROLL", IsActive: true, MarkReviewed: true},
-		{ID: 2, CategoryID: 20, MatchType: "contains", Pattern: "SHELL", IsActive: true},
+		{ID: 1, CategoryID: new(int64(10)), MatchType: "contains", Pattern: "PAYROLL", IsActive: true, MarkReviewed: true},
+		{ID: 2, CategoryID: new(int64(20)), MatchType: "contains", Pattern: "SHELL", IsActive: true},
 	})
 
 	t.Run("winning rule marks a flow row reviewed", func(t *testing.T) {
@@ -316,8 +316,8 @@ func TestApply_MarkReviewed(t *testing.T) {
 
 func TestApply_AddTags(t *testing.T) {
 	rules := categorization.Compile([]model.CategorizationRule{
-		{ID: 1, CategoryID: 10, MatchType: "contains", Pattern: "UBER", IsActive: true, AddTags: model.Tags{"work-travel", "Reimbursable"}},
-		{ID: 2, CategoryID: 20, MatchType: "contains", Pattern: "SHELL", IsActive: true},
+		{ID: 1, CategoryID: new(int64(10)), MatchType: "contains", Pattern: "UBER", IsActive: true, AddTags: model.Tags{"work-travel", "Reimbursable"}},
+		{ID: 2, CategoryID: new(int64(20)), MatchType: "contains", Pattern: "SHELL", IsActive: true},
 	})
 
 	t.Run("winning rule adds its tags to a flow row", func(t *testing.T) {
@@ -381,4 +381,12 @@ func TestApply_AddTags(t *testing.T) {
 			t.Error("SameAs = true with a rule tag missing, want false")
 		}
 	})
+}
+
+// catOf is the decision's category, 0 when the rule keeps the row's.
+func catOf(d categorization.Decision) int64 {
+	if d.CategoryID == nil {
+		return 0
+	}
+	return *d.CategoryID
 }
