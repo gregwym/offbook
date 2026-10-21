@@ -60,8 +60,9 @@ test.describe('spending drill-down', () => {
     await expect(banner).toContainText('Groceries')
     await expect(banner).toContainText('3 transactions')
     await expect(banner.getByTestId('spend-total')).toContainText('120.00')
+    // Rows render a phone and a desktop layout; only the visible one counts.
     for (const d of ['Drill Grocer refund', 'Drill Superstore']) {
-      await expect(page.getByText(d).first()).toBeVisible()
+      await expect(page.getByText(d).filter({ visible: true }).first()).toBeVisible()
     }
     await expect(page.getByText('Drill Reimbursed lunch')).toHaveCount(0)
     await expect(page.getByText('Drill Salary')).toHaveCount(0)
@@ -77,7 +78,7 @@ test.describe('spending drill-down', () => {
     await banner.getByRole('button', { name: 'Show all transactions' }).click()
     await expect(banner).toHaveCount(0)
     await expect(page).not.toHaveURL(/spending=1/)
-    await expect(page.getByText('Drill Salary').first()).toBeVisible()
+    await expect(page.getByText('Drill Salary').filter({ visible: true }).first()).toBeVisible()
 
     // Top merchants: Drill Grocer = 100 - 30 = 70.00 (the hidden 40 stays out).
     await page.goto('/insights')
