@@ -1115,7 +1115,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             onClick={onEditDetails}
             title={note}
             aria-label={`Note: ${note}. Edit details for ${label}`}
-            className="ml-1.5 inline-flex items-center rounded border border-amber-200 bg-amber-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-amber-800 hover:bg-amber-100"
+            className="ml-1.5 hidden items-center md:inline-flex rounded border border-amber-200 bg-amber-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-amber-800 hover:bg-amber-100"
           >
             note
           </button>
@@ -1154,7 +1154,18 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
           </div>
           {/* No hover on touch screens: spell out what the chip's tooltip says. */}
           {tx.pending && <div className="text-xs text-sky-700">{PENDING_HINT}</div>}
-          {note !== '' && <div className="line-clamp-2 break-words text-xs italic text-gray-600">{note}</div>}
+          {/* No hover on a phone: the note is written out (one line) and
+              tapping it opens Edit details, instead of a chip (#569). */}
+          {note !== '' && (
+            <button
+              type="button"
+              onClick={onEditDetails}
+              title={note}
+              className="block w-full truncate text-left text-xs italic text-gray-600"
+            >
+              {note}
+            </button>
+          )}
           {/* Daily review stays inline: category, reviewed, then one menu
               for the rest, so a row stays short on a phone (#554). */}
           <div className="flex items-center gap-1.5">

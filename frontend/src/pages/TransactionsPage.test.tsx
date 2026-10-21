@@ -398,7 +398,8 @@ describe('TransactionsPage notes (#569)', () => {
     await expectHealthySmoke()
     const chip = await screen.findByRole('button', { name: 'Note: Coffee with Sam. Edit details for NOTE CAFE' })
     expect(chip).toHaveAttribute('title', 'Coffee with Sam')
-    expect(screen.getByText('Coffee with Sam')).toBeInTheDocument()
+    // Phone layout: the note itself is the tap target.
+    expect(screen.getByRole('button', { name: 'Coffee with Sam' })).toBeInTheDocument()
     fireEvent.click(chip)
     expect(await screen.findByRole('dialog', { name: 'Edit details' })).toBeInTheDocument()
     expect(screen.getByLabelText('Notes')).toHaveValue('Coffee with Sam')

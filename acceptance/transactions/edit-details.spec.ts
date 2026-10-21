@@ -57,15 +57,18 @@ test.describe('edit details journey', () => {
     // The list shows the fixed merchant and a note chip that reopens the editor.
     const row = page.locator('tbody tr').filter({ hasText: label })
     await expect(row.getByText('Blue Bottle Coffee').locator('visible=true').first()).toBeVisible()
-    const chip = row.getByRole('button', { name: /^Note: Coffee with Sam/ })
-    await expect(chip).toBeVisible()
     const vp = page.viewportSize()!
+    let chip
     if (vp.width < 768) {
-      // No hover on a phone: the note is written out under the row.
-      await expect(row.getByText('Coffee with Sam — expense it').locator('visible=true')).toBeVisible()
+      // No hover on a phone: the note is written out under the row and is
+      // itself the tap target; the row stays compact.
+      chip = row.getByRole('button', { name: 'Coffee with Sam — expense it' })
+      await expect(chip).toBeVisible()
       const box = (await row.boundingBox())!
       expect(box.height, 'row with a note on a phone').toBeLessThanOrEqual(150)
     } else {
+      chip = row.getByRole('button', { name: /^Note: Coffee with Sam/ })
+      await expect(chip).toBeVisible()
       await expect(chip).toHaveAttribute('title', 'Coffee with Sam — expense it')
     }
     await testInfo.attach(`${testInfo.project.name}-row-with-note`, { body: await page.screenshot(), contentType: 'image/png' })
