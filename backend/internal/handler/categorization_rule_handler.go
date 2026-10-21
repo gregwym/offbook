@@ -28,6 +28,38 @@ func (h *CategorizationRuleHandler) Register(g *gin.RouterGroup) {
 	g.POST("/categorization-rules/apply", h.Apply)
 	g.POST("/categorization-rules/preview", h.PreviewDraft)
 	g.POST("/categorization-rules/reorder", h.Reorder)
+	g.GET("/categorization-rules/apply-runs/latest", h.LatestApplyRun)
+	g.POST("/categorization-rules/apply-runs/:id/undo", h.UndoApply)
+}
+
+// LatestApplyRun returns the caller's most recent committed apply run so the
+// Rules page can keep offering Undo after a reload (#565). No run is
+// {"data": null}, not a 404 — "never applied" is a normal state.
+func (h *CategorizationRuleHandler) LatestApplyRun(c *gin.Context) {
+	run, err := h.svc.LatestApplyRun(c.Request.Context(), auth.MustUserID(c.Request.Context()))
+	if errors.Is(err, service.ErrRuleApplyRunNotFound) {
+		c.JSON(http.StatusOK, gin.H{"data": nil})
+		return
+	}
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": run})
+}
+
+// UndoApply reverts the caller's latest apply run (#565).
+func (h *CategorizationRuleHandler) UndoApply(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	run, err := h.svc.UndoApply(c.Request.Context(), auth.MustUserID(c.Request.Context()), id)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": run})
 }
 
 type reorderRulesRequest struct {
@@ -296,6 +328,10 @@ func (h *CategorizationRuleHandler) writeServiceError(c *gin.Context, err error)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_TAGS"})
 	case errors.Is(err, service.ErrRuleHasNoAction):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "RULE_HAS_NO_ACTION"})
+	case errors.Is(err, service.ErrRuleApplyRunNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error(), "code": "RULE_APPLY_RUN_NOT_FOUND"})
+	case errors.Is(err, service.ErrRuleApplyNotUndoable):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "RULE_APPLY_NOT_UNDOABLE"})
 	case errors.Is(err, service.ErrInvalidApplyScope):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_SCOPE"})
 	case errors.Is(err, service.ErrEmptyPattern),

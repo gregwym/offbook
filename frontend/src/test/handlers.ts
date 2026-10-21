@@ -40,6 +40,8 @@ export const handlers = [
   http.post(`${API}/categorization-rules/preview`, () =>
     HttpResponse.json({ data: { scanned: 0, matched: 0, would_change: 0, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, would_tag: 0, skipped_manual: 0, samples: [] } }),
   ),
+  // No rules were ever re-applied, so nothing to undo (#565).
+  http.get(`${API}/categorization-rules/apply-runs/latest`, () => HttpResponse.json({ data: null })),
   http.get(`${API}/categorization-verdicts`, () => list(fx.categorizationVerdicts)),
 
   // Transfer matching (#371) — happy path has no pending proposals.

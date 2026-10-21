@@ -643,6 +643,80 @@ test.describe('rule conditions', () => {
   })
 })
 
+// #565 (TX-01 revert): a wrong re-apply is undone in one click. Rows come
+// back exactly as they were; a row the user changed since is kept; the
+// offer survives a reload and disappears once used; spending agrees.
+test.describe('undo a rules re-apply', () => {
+  test('re-apply, edit one row, reload, undo: the rest come back, the edit stays', async ({ page }, testInfo) => {
+    process.env.OFFBOOK_ROLE = process.env.OFFBOOK_ROLE ?? 'qa'
+    const user = await createThrowawayUser({ suite: `rules-undo-${testInfo.project.name}` })
+    const cookie = await apiSignin(user.email, user.password)
+    const cats = await get(cookie, '/categories')
+    const shopping = cats.data.find((x: { slug: string }) => x.slug === 'shopping') as { id: number }
+    const gas = cats.data.find((x: { slug: string }) => x.slug === 'gas') as { id: number }
+    const acct = (await api(cookie, '/accounts', {
+      name: 'Undo Checking', institution_slug: 'manual', account_type: 'checking', currency: 'USD',
+    })).data.id
+    const today = new Date().toISOString().slice(0, 10)
+    const tx = async (description: string, amount: string) =>
+      (await api(cookie, '/transactions', { account_id: acct, amount, description, transaction_date: today, source: 'csv' })).data
+    const a = await tx('QAUNDO MARKET 1', '-12.34')
+    const b = await tx('QAUNDO MARKET 2', '-56.78')
+    const c = await tx('QAUNDO MARKET 3', '-9.10')
+    await tx('Unrelated bakery', '-4.00')
+    const spendBefore = await totalSpend(cookie)
+
+    // An over-eager rule: re-categorizes and hides every QAUNDO row.
+    await api(cookie, '/categorization-rules', {
+      pattern: 'QAUNDO', match_type: 'contains', category_id: shopping.id, hide_matches: true, priority: 10,
+    })
+
+    await signIn(page, user.email, user.password)
+    await page.goto('/rules')
+    await expect(page.getByRole('heading', { name: 'Rules', exact: true })).toBeVisible()
+    // Nothing applied yet, so nothing to undo.
+    await expect(page.getByRole('button', { name: 'Undo re-apply' })).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Re-apply to all transactions' }).click()
+    await expect(page.getByText(/Updated 3 of \d+ transactions: 3 changed category, 3 hidden\./)).toBeVisible()
+    await expect(page.getByText('Last re-apply changed 3 transactions.', { exact: false })).toBeVisible()
+    await expectInViewport(page, page.getByRole('button', { name: 'Undo re-apply' }))
+    await expectNoOverflow(page)
+    await testInfo.attach(`${testInfo.project.name}-undo-offered`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+    expect(await totalSpend(cookie)).toBeCloseTo(spendBefore - 12.34 - 56.78 - 9.10, 2)
+
+    // The user fixes one row by hand after the run.
+    await patch(cookie, `/transactions/${c.id}`, { category_id: gas.id })
+
+    // The offer survives a reload.
+    await page.reload()
+    await expect(page.getByText('Last re-apply changed 3 transactions.', { exact: false })).toBeVisible()
+    await page.getByRole('button', { name: 'Undo re-apply' }).click()
+    await expect(page.getByText('Undone: 2 transactions are back as they were; 1 transaction changed since then stays as it is.')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Undo re-apply' })).toHaveCount(0)
+    await expectNoOverflow(page)
+    await testInfo.attach(`${testInfo.project.name}-undo-done`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+
+    const rows = await get(cookie, '/transactions?search=QAUNDO&limit=50')
+    const byID = new Map(rows.data.map((t: { id: number }) => [t.id, t]))
+    for (const restored of [a, b]) {
+      const row = byID.get(restored.id) as { category_id?: number | null; hidden_at?: string; amount: string }
+      expect(row.category_id ?? null, `row ${restored.id} category restored`).toBeNull()
+      expect(row.hidden_at, `row ${restored.id} unhidden`).toBeUndefined()
+      expect(Number(row.amount)).toBe(Number(restored.amount))
+    }
+    const kept = byID.get(c.id) as { category_id?: number | null; hidden_at?: string }
+    expect(kept.category_id).toBe(gas.id)
+    expect(kept.hidden_at).toBeTruthy()
+    // Spending: the restored rows count again; the kept row stays hidden.
+    expect(await totalSpend(cookie)).toBeCloseTo(spendBefore - 9.10, 2)
+  })
+})
+
 async function reviewCount(cookie: string) {
   const res = await get(cookie, '/transactions?reviewed=false&limit=1')
   return res.total as number

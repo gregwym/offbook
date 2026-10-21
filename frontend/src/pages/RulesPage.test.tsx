@@ -99,6 +99,59 @@ describe('RulesPage smoke', () => {
     expect(screen.queryByRole('button', { name: 'Apply now' })).toBeNull()
   })
 
+  // #565: a committed re-apply offers Undo; undoing reports what came back
+  // and what was kept, and the offer goes away.
+  it('undoes a re-apply and says what was restored and kept', async () => {
+    const undone: string[] = []
+    server.use(
+      http.post(`${API}/categorization-rules/apply`, () =>
+        HttpResponse.json({
+          data: { scanned: 40, updated: 12, skipped_manual: 0, recategorized: 12, renamed: 0, hidden: 0, marked_reviewed: 0, tagged: 0, dry_run: false, run_id: 31 },
+        }),
+      ),
+      http.post(`${API}/categorization-rules/apply-runs/:id/undo`, ({ params }) => {
+        undone.push(String(params.id))
+        return HttpResponse.json({
+          data: { id: 31, scope: 'all', rows_changed: 12, created_at: '2026-10-21T12:00:00Z', undone_at: '2026-10-21T12:01:00Z', rows_restored: 11, rows_kept: 1 },
+        })
+      }),
+    )
+    renderPage(<RulesPage />)
+    expect(screen.queryByRole('button', { name: 'Undo re-apply' })).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: 'Re-apply to all transactions' }))
+    expect(await screen.findByText(/Last re-apply changed 12 transactions\./)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo re-apply' }))
+    expect(
+      await screen.findByText('Undone: 11 transactions are back as they were; 1 transaction changed since then stays as it is.'),
+    ).toBeTruthy()
+    expect(undone).toEqual(['31'])
+    expect(screen.queryByRole('button', { name: 'Undo re-apply' })).toBeNull()
+  })
+
+  it('offers undo for the last re-apply after a reload, and explains a stale undo', async () => {
+    let latestCalls = 0
+    server.use(
+      http.get(`${API}/categorization-rules/apply-runs/latest`, () => {
+        latestCalls++
+        return HttpResponse.json({
+          data:
+            latestCalls === 1
+              ? { id: 8, scope: 'all', rows_changed: 1, created_at: '2026-10-21T12:00:00Z' }
+              : { id: 8, scope: 'all', rows_changed: 1, created_at: '2026-10-21T12:00:00Z', undone_at: '2026-10-21T12:05:00Z', rows_restored: 1, rows_kept: 0 },
+        })
+      }),
+      http.post(`${API}/categorization-rules/apply-runs/:id/undo`, () =>
+        HttpResponse.json({ error: 'only your latest rules run can be undone, once', code: 'RULE_APPLY_NOT_UNDOABLE' }, { status: 409 }),
+      ),
+    )
+    renderPage(<RulesPage />)
+    expect(await screen.findByText(/Last re-apply changed 1 transaction\./)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Undo re-apply' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('only the latest re-apply can be undone, once')
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Undo re-apply' })).toBeNull())
+  })
+
   it('shows the draft rule impact in the form before saving', async () => {
     const bodies: Record<string, unknown>[] = []
     server.use(

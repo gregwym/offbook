@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Pencil, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Pencil, Plus, RefreshCw, Sparkles, Trash2, Undo2 } from 'lucide-react'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
 import { listCategorizationVerdicts } from '../api/aiCategorizationVerdicts'
-import { formatApplyResult } from '../lib/ruleChanges'
+import { getLatestApplyRun, undoApplyRun } from '../api/categorizationRules'
+import { describeApplyRun, formatApplyResult, formatUndoResult } from '../lib/ruleChanges'
 import { useAccountsStore } from '../store/accountsStore'
 import { useCategoriesStore } from '../store/categoriesStore'
 import { useRulesStore } from '../store/rulesStore'
@@ -12,6 +13,7 @@ import type { Category } from '../types/category'
 import type {
   CategorizationRule,
   CreateRuleInput,
+  RuleApplyRun,
 } from '../types/categorizationRule'
 
 export function RulesPage() {
@@ -27,6 +29,10 @@ export function RulesPage() {
   const [verdicts, setVerdicts] = useState<AICategorizationVerdict[]>([])
   const [promoteSeed, setPromoteSeed] = useState<{ merchantKey: string; defaults: RuleFormDefaults } | null>(null)
   const [promotedKeys, setPromotedKeys] = useState<Set<string>>(new Set())
+  // The latest committed re-apply, offered for undo until it is undone (#565).
+  const [lastRun, setLastRun] = useState<RuleApplyRun | null>(null)
+  const [undoing, setUndoing] = useState(false)
+  const [undoError, setUndoError] = useState<string | null>(null)
 
   useEffect(() => {
     void fetch()
@@ -37,6 +43,11 @@ export function RulesPage() {
       .catch(() => {
         // Best-effort — the AI suggestions panel just stays empty; the core
         // rules table/functionality doesn't depend on it.
+      })
+    getLatestApplyRun()
+      .then(setLastRun)
+      .catch(() => {
+        // Best-effort — without it the page just doesn't offer Undo.
       })
   }, [fetch, fetchCategories, fetchAccounts])
 
@@ -78,12 +89,46 @@ export function RulesPage() {
       const result = await apply(undefined, dryRun)
       setApplyMsg(formatApplyResult(result))
       setPreviewed(dryRun)
+      if (result.run_id) {
+        setUndoError(null)
+        setLastRun({
+          id: result.run_id,
+          scope: 'all',
+          rows_changed: result.updated,
+          created_at: new Date().toISOString(),
+        })
+      }
     } catch {
       // store already captured the error; toast it via the error banner
     } finally {
       setApplying(false)
     }
   }
+
+  const runUndo = async () => {
+    if (!lastRun) return
+    setUndoing(true)
+    setUndoError(null)
+    try {
+      const run = await undoApplyRun(lastRun.id)
+      setLastRun(run)
+      setApplyMsg(formatUndoResult(run))
+      setPreviewed(false)
+    } catch (err) {
+      if (undoErrorCode(err) === 'RULE_APPLY_NOT_UNDOABLE') {
+        // Already undone (another tab) or a newer run exists: show what is
+        // actually undoable now.
+        setUndoError('That re-apply can no longer be undone: only the latest re-apply can be undone, once.')
+        getLatestApplyRun().then(setLastRun).catch(() => setLastRun(null))
+      } else {
+        setUndoError('Could not undo the last re-apply. Nothing was changed; try again.')
+      }
+    } finally {
+      setUndoing(false)
+    }
+  }
+
+  const canUndo = lastRun != null && !lastRun.undone_at && lastRun.rows_changed > 0
 
   return (
     <div>
@@ -144,6 +189,28 @@ export function RulesPage() {
             )}
           </span>
           <button type="button" aria-label="Dismiss" onClick={() => { setApplyMsg(null); setPreviewed(false) }} className="ml-3 text-emerald-700 hover:text-emerald-900">×</button>
+        </div>
+      )}
+      {undoError && (
+        <div role="alert" className="mt-4 flex items-start justify-between rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <span>{undoError}</span>
+          <button type="button" aria-label="Dismiss" onClick={() => setUndoError(null)} className="ml-3 text-red-600 hover:text-red-800">×</button>
+        </div>
+      )}
+      {canUndo && (
+        <div className="mt-4 flex flex-col gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            {describeApplyRun(lastRun)} Undo puts those transactions back as they were; anything you changed since stays.
+          </span>
+          <button
+            type="button"
+            onClick={runUndo}
+            disabled={undoing || applying}
+            className="inline-flex shrink-0 items-center justify-center gap-2 self-start rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 sm:self-auto"
+          >
+            <Undo2 size={16} />
+            {undoing ? 'Undoing…' : 'Undo re-apply'}
+          </button>
         </div>
       )}
 
@@ -353,4 +420,11 @@ function RuleAmountCondition({ min, max, currency }: { min?: string | null; max?
   }
   if (min) return <>Amount <AmountDisplay amount={min} currency={currency} /> or more</>
   return <>Amount up to <AmountDisplay amount={max} currency={currency} /></>
+}
+
+function undoErrorCode(err: unknown): string | undefined {
+  if (err && typeof err === 'object' && 'response' in err) {
+    return (err as { response?: { data?: { code?: string } } }).response?.data?.code
+  }
+  return undefined
 }

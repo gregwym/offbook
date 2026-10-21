@@ -24,6 +24,7 @@ GET /api/v1/budgets/:id/spend
 GET /api/v1/categories
 GET /api/v1/categorization-rules
 GET /api/v1/categorization-rules/:id
+GET /api/v1/categorization-rules/apply-runs/latest
 GET /api/v1/categorization-verdicts
 GET /api/v1/dashboard/allocation
 GET /api/v1/dashboard/budget-alerts
@@ -92,6 +93,7 @@ POST /api/v1/auth/signup-with-invite
 POST /api/v1/budgets
 POST /api/v1/categorization-rules
 POST /api/v1/categorization-rules/apply
+POST /api/v1/categorization-rules/apply-runs/:id/undo
 POST /api/v1/categorization-rules/preview
 POST /api/v1/categorization-rules/reorder
 POST /api/v1/h/ai/threads
