@@ -243,7 +243,13 @@ export function RulesPage() {
                   )}
                 </td>
                 <td className="hidden px-4 py-2 text-gray-700 sm:table-cell">{r.match_type}</td>
-                <td className="px-2 py-2 sm:px-4 text-gray-700">{categoriesById.get(r.category_id)?.name ?? `#${r.category_id}`}</td>
+                <td className="px-2 py-2 text-gray-700 sm:px-4">
+                  {r.category_id == null ? (
+                    <span className="text-gray-500">Category unchanged</span>
+                  ) : (
+                    (categoriesById.get(r.category_id)?.name ?? `#${r.category_id}`)
+                  )}
+                </td>
                 <td className="hidden px-4 py-2 text-center sm:table-cell">
                   <span className={r.is_active ? 'text-emerald-700' : 'text-gray-400'}>
                     {r.is_active ? 'yes' : 'no'}

@@ -7,7 +7,9 @@ export type CategorizationRule = {
   id: number
   user_id: number
   pattern: string
-  category_id: number
+  // null: the rule keeps each matched transaction's category and only takes
+  // its other actions (#553).
+  category_id: number | null
   match_type: MatchType
   priority: number
   is_active: boolean
@@ -35,7 +37,9 @@ export type CategorizationRule = {
 export type CreateRuleInput = {
   pattern: string
   match_type: MatchType
-  category_id: number
+  // Omit to keep each matched transaction's category (#553); the rule then
+  // needs another action.
+  category_id?: number
   priority: number
   is_active?: boolean
   // Blank clears the rename on update (#534).
@@ -51,6 +55,8 @@ export type CreateRuleInput = {
 }
 
 export type UpdateRuleInput = Partial<CreateRuleInput> & {
+  // Switch the rule to keeping each transaction's category (#553).
+  clear_category_id?: boolean
   // Drop a condition on update (#550).
   clear_account_id?: boolean
   clear_amount_min?: boolean
