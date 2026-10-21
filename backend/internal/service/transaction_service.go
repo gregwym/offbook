@@ -213,6 +213,11 @@ func (s *TransactionService) List(ctx context.Context, userID int64, f repositor
 	return s.repo.List(ctx, userID, f)
 }
 
+// SpendTotal is the spending figure behind a spending-lens List (#571).
+func (s *TransactionService) SpendTotal(ctx context.Context, userID int64, f repository.TransactionFilter) (decimal.Decimal, error) {
+	return s.repo.SpendTotal(ctx, userID, f)
+}
+
 func (s *TransactionService) Get(ctx context.Context, userID, id int64) (*model.Transaction, error) {
 	t, err := s.repo.GetByID(ctx, userID, id)
 	if err != nil {

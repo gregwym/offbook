@@ -42,6 +42,7 @@ export function resetStores() {
   useTransactionsStore.setState({
     transactions: [],
     total: 0,
+    spendTotal: null,
     loading: false,
     error: null,
     filter: {},

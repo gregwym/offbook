@@ -107,6 +107,8 @@ describe('useScopedInsights (personal scope)', () => {
         limit: fx.budgetSpend1.limit,
         spent: fx.budgetSpend1.spent,
         pct: fx.budgetSpend1.pct,
+        period_start: fx.budgetSpend1.period_start,
+        period_end: fx.budgetSpend1.period_end,
       },
     ])
     expect(data.goals).toEqual([

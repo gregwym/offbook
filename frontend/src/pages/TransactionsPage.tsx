@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ArrowRightLeft, Check, CheckCheck, ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Plus, Scissors, SlidersHorizontal, Sparkles, Tag, Trash2, Undo2, Upload, X } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
@@ -29,7 +29,7 @@ import { RowActionsMenu, type RowAction } from '../components/RowActionsMenu'
 
 export function TransactionsPage() {
   const {
-    transactions, total, loading, error,
+    transactions, total, spendTotal, loading, error,
     filter, page, pageSize,
     fetch, setFilter, setPage, create, setCategory, update, remove, markReviewed, bulkEdit, undoBulkEdit,
   } = useTransactionsStore()
@@ -55,14 +55,20 @@ export function TransactionsPage() {
   const [applyToastBusy, setApplyToastBusy] = useState(false)
 
   // Local filter inputs — synced into the store via setFilter on change.
-  const [accountID, setAccountID] = useState<string>(String(filter.account_id ?? ''))
+  // A spending drill-down link (#571) carries its category and dates in the
+  // URL; those win over whatever filter the store remembers.
+  const [urlParams] = useSearchParams()
+  const drillIn = urlParams.get('spending') === '1'
+  const [accountID, setAccountID] = useState<string>(drillIn ? '' : String(filter.account_id ?? ''))
   const [categoryID, setCategoryID] = useState<string>(
-    filter.category_id === undefined ? '' : filter.category_id === null ? 'null' : String(filter.category_id),
+    drillIn
+      ? urlParams.get('category_id') ?? ''
+      : filter.category_id === undefined ? '' : filter.category_id === null ? 'null' : String(filter.category_id),
   )
-  const [from, setFrom] = useState<string>(filter.from ?? '')
-  const [to, setTo] = useState<string>(filter.to ?? '')
-  const [searchInput, setSearchInput] = useState<string>(filter.search ?? '')
-  const [tag, setTag] = useState<string>(filter.tag ?? '')
+  const [from, setFrom] = useState<string>(drillIn ? urlParams.get('from') ?? '' : filter.from ?? '')
+  const [to, setTo] = useState<string>(drillIn ? urlParams.get('to') ?? '' : filter.to ?? '')
+  const [searchInput, setSearchInput] = useState<string>(drillIn ? '' : filter.search ?? '')
+  const [tag, setTag] = useState<string>(drillIn ? '' : filter.tag ?? '')
   const search = useDebounce(searchInput, 300)
   const [adding, setAdding] = useState(false)
   const [importing, setImporting] = useState(false)
@@ -124,6 +130,59 @@ export function TransactionsPage() {
     [setSearchParams],
   )
   const [reviewCount, setReviewCount] = useState<number | null>(null)
+  // Spending drill-down (#571): ?spending=1 lists only the rows the spending
+  // figures count, and the banner shows their total — the number the user
+  // clicked on Insights or Budgets. Category and dates stay in the URL so a
+  // reload or shared link keeps the same view.
+  const spending = searchParams.get('spending') === '1'
+  const merchant = spending ? searchParams.get('merchant') ?? '' : ''
+  useEffect(() => {
+    if (!spending) return
+    setSearchParams(
+      (prev) => {
+        const out = new URLSearchParams(prev)
+        const want: Record<string, string> = { category_id: categoryID, from, to }
+        let changed = false
+        for (const [k, v] of Object.entries(want)) {
+          if ((prev.get(k) ?? '') === v) continue
+          changed = true
+          if (v) out.set(k, v)
+          else out.delete(k)
+        }
+        return changed ? out : prev
+      },
+      { replace: true },
+    )
+  }, [spending, categoryID, from, to, setSearchParams])
+  const exitSpending = () => {
+    setSearchParams(
+      (prev) => {
+        const out = new URLSearchParams(prev)
+        for (const k of ['spending', 'merchant', 'category_id', 'from', 'to']) out.delete(k)
+        return out
+      },
+      { replace: true },
+    )
+  }
+  // Clear the lens's category/dates once the URL has actually left it. Doing
+  // it in exitSpending would race the navigation (router updates land in a
+  // transition), and the sync effect above would write the old URL back.
+  const wasSpending = useRef(spending)
+  useEffect(() => {
+    if (wasSpending.current && !spending) {
+      setCategoryID('')
+      setFrom('')
+      setTo('')
+    }
+    wasSpending.current = spending
+  }, [spending])
+  const spendingLabel = merchant
+    ? merchant
+    : categoryID === 'null'
+      ? 'Uncategorized'
+      : categoryID
+        ? categories.find((c) => String(c.id) === categoryID)?.name ?? 'Category'
+        : 'All categories'
   // Row selection for bulk review, plus the last review action so an
   // accidental click can be undone without a reload.
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -197,9 +256,11 @@ export function TransactionsPage() {
       to: to === '' ? undefined : to,
       search: search === '' ? undefined : search,
       tag: tag === '' ? undefined : tag,
+      spending: spending || undefined,
+      merchant: merchant === '' ? undefined : merchant,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountID, categoryID, from, to, search, tag, needsReview])
+  }, [accountID, categoryID, from, to, search, tag, needsReview, spending, merchant])
 
   // Recent-import signal: the most recent last_synced_at across all
   // Plaid-linked accounts. The banner key is built off this so a new
@@ -411,6 +472,46 @@ export function TransactionsPage() {
 
       {error && (
         <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+      )}
+
+      {spending && (
+        <section
+          aria-label="Spending drill-down"
+          className="mt-4 flex flex-wrap items-start justify-between gap-x-3 gap-y-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900"
+        >
+          <div className="min-w-0">
+            <div className="font-medium">
+              Spending · <span className="break-words">{spendingLabel}</span>
+            </div>
+            <div className="text-indigo-800">
+              {from || to ? (
+                <>
+                  <DateDisplay value={from || null} /> – <DateDisplay value={to || null} /> ·{' '}
+                </>
+              ) : null}
+              {total} transaction{total === 1 ? '' : 's'}
+              {spendTotal !== null && (
+                <>
+                  {' · '}
+                  <span data-testid="spend-total" className="font-medium">
+                    <AmountDisplay amount={spendTotal} />
+                  </span>
+                </>
+              )}
+            </div>
+            <div className="mt-0.5 text-xs text-indigo-700">
+              Only what counts as spending: transfers and hidden rows are left out, refunds are subtracted, and a split
+              row counts its part in this category.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={exitSpending}
+            className="shrink-0 rounded-md border border-indigo-300 bg-white px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+          >
+            Show all transactions
+          </button>
+        </section>
       )}
 
       {showBanner && (

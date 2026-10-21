@@ -32,9 +32,43 @@ type TransactionFilter struct {
 	To       *time.Time // inclusive upper bound on transaction_date
 	Search   string     // ILIKE %term% across description + merchant_name
 	// Tag, when non-empty, restricts to rows carrying this exact tag (#544).
-	Tag    string
-	Limit  int
-	Offset int
+	Tag string
+	// Spending switches to the spending lens (#571): only rows with a
+	// spend_lines allocation that the spending figures count (flow, not a
+	// transfer or hidden, outflow or refund). CategoryID/UncategorizedOnly
+	// then match the allocation's category, so a split row appears under
+	// each category it is split into.
+	Spending bool
+	// Merchant, with Spending, restricts to rows whose merchant label
+	// (merchantLabelSQL) equals it exactly — the Top merchants grouping.
+	Merchant string
+	Limit    int
+	Offset   int
+}
+
+// merchantLabelSQL is the merchant label Top merchants groups by, over
+// transactions aliased m.
+const merchantLabelSQL = `COALESCE(NULLIF(m.merchant_name, ''), NULLIF(m.description_clean, ''), m.description, 'Unknown')`
+
+// spendLineCond is the spending-lens predicate over spend_lines aliased s
+// (joined to its transaction as m) — the same rows SpendByCategory,
+// TopMerchants and budget spend sum (#571).
+func spendLineCond(userID int64, f TransactionFilter) (string, []any) {
+	cond := `s.user_id = ? AND s.deleted_at IS NULL AND s.is_transfer = FALSE
+		AND s.kind = 'flow' AND (s.amount < 0 OR s.is_refund)`
+	args := []any{userID}
+	switch {
+	case f.UncategorizedOnly:
+		cond += " AND s.category_id IS NULL"
+	case f.CategoryID != nil:
+		cond += " AND s.category_id = ?"
+		args = append(args, *f.CategoryID)
+	}
+	if f.Merchant != "" {
+		cond += " AND " + merchantLabelSQL + " = ?"
+		args = append(args, f.Merchant)
+	}
+	return cond, args
 }
 
 // TransactionRepository is the data-access contract for transactions.
@@ -46,6 +80,8 @@ type TransactionRepository interface {
 	// ListTags returns the user's distinct tags on live rows with how many
 	// rows carry each, alphabetical (case-insensitive) (#544).
 	ListTags(ctx context.Context, userID int64) ([]TagCount, error)
+	// SpendTotal sums the spending-lens allocations of List(f)'s rows (#571).
+	SpendTotal(ctx context.Context, userID int64, f TransactionFilter) (decimal.Decimal, error)
 	Update(ctx context.Context, t *model.Transaction) error
 	SoftDelete(ctx context.Context, userID, id int64) error
 	// CreateBatch inserts many transactions in one round-trip, doing
@@ -344,13 +380,17 @@ func (r *transactionRepo) ReplaceSplits(ctx context.Context, userID, txnID int64
 	})
 }
 
-func (r *transactionRepo) List(ctx context.Context, userID int64, f TransactionFilter) ([]model.Transaction, int64, error) {
+// filtered builds the List query's WHERE over transactions.
+func (r *transactionRepo) filtered(ctx context.Context, userID int64, f TransactionFilter) *gorm.DB {
 	q := r.db.WithContext(ctx).Model(&model.Transaction{}).Where("user_id = ?", userID)
 
 	if f.AccountID != nil {
 		q = q.Where("account_id = ?", *f.AccountID)
 	}
 	switch {
+	case f.Spending:
+		cond, args := spendLineCond(userID, f)
+		q = q.Where("id IN (SELECT s.id FROM spend_lines s JOIN transactions m ON m.id = s.id WHERE "+cond+")", args...)
 	case f.UncategorizedOnly:
 		q = q.Where("category_id IS NULL")
 	case f.CategoryID != nil:
@@ -379,6 +419,11 @@ func (r *transactionRepo) List(ctx context.Context, userID int64, f TransactionF
 	if f.Tag != "" {
 		q = q.Where("tags @> ARRAY[?]::text[]", f.Tag)
 	}
+	return q
+}
+
+func (r *transactionRepo) List(ctx context.Context, userID int64, f TransactionFilter) ([]model.Transaction, int64, error) {
+	q := r.filtered(ctx, userID, f)
 
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -405,6 +450,24 @@ func (r *transactionRepo) List(ctx context.Context, userID int64, f TransactionF
 		return nil, 0, err
 	}
 	return out, total, nil
+}
+
+// SpendTotal sums the spending-lens allocations (positive = spent, refunds
+// net against it) of the rows List(f) returns, so a drill-down's total
+// equals the Insights / budget figure it came from (#571). Only meaningful
+// with f.Spending.
+func (r *transactionRepo) SpendTotal(ctx context.Context, userID int64, f TransactionFilter) (decimal.Decimal, error) {
+	cond, args := spendLineCond(userID, f)
+	ids := r.filtered(ctx, userID, f).Select("id")
+	var s string
+	err := r.db.WithContext(ctx).Raw(
+		"SELECT COALESCE(SUM(-s.amount), 0)::text FROM spend_lines s JOIN transactions m ON m.id = s.id WHERE "+cond+" AND s.id IN (?)",
+		append(args, ids)...,
+	).Scan(&s).Error
+	if err != nil {
+		return decimal.Zero, err
+	}
+	return decimal.NewFromString(s)
 }
 
 // TagCount is one of a user's tags and how many live rows carry it (#544).

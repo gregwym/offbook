@@ -591,3 +591,61 @@ describe('TransactionsPage bulk edit (#567)', () => {
     expect(screen.getByText('3 selected')).toBeInTheDocument()
   })
 })
+
+// Spending drill-down (#571): a link from Insights/Budgets lands on the rows
+// behind the figure, with their total, and the view survives a reload.
+describe('TransactionsPage spending drill-down', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('seeds the spending lens from the URL and shows the figure it explains', async () => {
+    const seen: URLSearchParams[] = []
+    server.use(
+      http.get(`${API}/transactions`, ({ request }) => {
+        const q = new URL(request.url).searchParams
+        // The review-count probe (reviewed=false&limit=1) is a separate query.
+        if (q.get('reviewed') !== 'false') seen.push(q)
+        return HttpResponse.json({
+          data: fx.transactions,
+          total: fx.transactions.length,
+          ...(q.get('spending') === 'true' ? { spend_total: '123.45' } : {}),
+        })
+      }),
+    )
+    renderPage(<TransactionsPage />, '/transactions?spending=1&category_id=1&from=2026-10-01&to=2026-10-31')
+
+    const banner = await screen.findByRole('region', { name: /spending drill-down/i })
+    await waitFor(() => expect(within(banner).getByText(/Groceries/)).toBeInTheDocument())
+    expect(within(banner).getByTestId('spend-total')).toHaveTextContent('123.45')
+    const last = seen[seen.length - 1]
+    expect(last.get('spending')).toBe('true')
+    expect(last.get('category_id')).toBe('1')
+    expect(last.get('from')).toBe('2026-10-01')
+    expect(last.get('to')).toBe('2026-10-31')
+
+    fireEvent.click(within(banner).getByRole('button', { name: /show all transactions/i }))
+    await waitFor(() => expect(screen.queryByRole('region', { name: /spending drill-down/i })).not.toBeInTheDocument())
+    await waitFor(() => {
+      const q = seen[seen.length - 1]
+      expect(q.get('spending')).toBeNull()
+      expect(q.get('category_id')).toBeNull()
+      expect(q.get('from')).toBeNull()
+    })
+  })
+
+  it('passes a merchant drill-down through and labels the banner with it', async () => {
+    let merchant: string | null = null
+    server.use(
+      http.get(`${API}/transactions`, ({ request }) => {
+        const q = new URL(request.url).searchParams
+        if (q.get('reviewed') !== 'false') merchant = q.get('merchant')
+        return HttpResponse.json({ data: fx.transactions, total: 1, spend_total: '9.99' })
+      }),
+    )
+    renderPage(<TransactionsPage />, '/transactions?spending=1&merchant=Blue+Bottle&from=2026-10-01&to=2026-10-31')
+    const banner = await screen.findByRole('region', { name: /spending drill-down/i })
+    expect(within(banner).getByText('Blue Bottle')).toBeInTheDocument()
+    await waitFor(() => expect(merchant).toBe('Blue Bottle'))
+  })
+})

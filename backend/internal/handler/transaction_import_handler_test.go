@@ -156,6 +156,9 @@ func TestReviewEndpoints_Validation(t *testing.T) {
 		{"empty ids", http.MethodPost, "/api/v1/transactions/review", `{"ids":[],"reviewed":true}`},
 		{"too many ids", http.MethodPost, "/api/v1/transactions/review", `{"ids":[` + strings.Repeat("1,", 500) + `1],"reviewed":true}`},
 		{"bad reviewed query", http.MethodGet, "/api/v1/transactions?reviewed=maybe", ""},
+		// Spending drill-down (#571): merchant only means something in the spending lens.
+		{"bad spending query", http.MethodGet, "/api/v1/transactions?spending=sure", ""},
+		{"merchant without spending", http.MethodGet, "/api/v1/transactions?merchant=Target", ""},
 		// Bulk edit (#567): exactly one action over 1–500 ids.
 		{"bulk edit without action", http.MethodPost, "/api/v1/transactions/bulk-edit", `{"ids":[1]}`},
 		{"bulk edit with two actions", http.MethodPost, "/api/v1/transactions/bulk-edit", `{"ids":[1],"category_id":2,"hidden":true}`},

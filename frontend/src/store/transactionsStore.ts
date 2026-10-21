@@ -21,6 +21,8 @@ import type {
 type State = {
   transactions: Transaction[]
   total: number
+  // The spending figure behind a spending-lens list (#571); null otherwise.
+  spendTotal: string | null
   loading: boolean
   error: string | null
   filter: TransactionListFilter
@@ -56,6 +58,7 @@ let fetchSeq = 0
 export const useTransactionsStore = create<State>((set, get) => ({
   transactions: [],
   total: 0,
+  spendTotal: null,
   loading: false,
   error: null,
   filter: {},
@@ -67,13 +70,13 @@ export const useTransactionsStore = create<State>((set, get) => ({
     const seq = ++fetchSeq
     set({ loading: true, error: null })
     try {
-      const { items, total } = await listTransactions({
+      const { items, total, spend_total } = await listTransactions({
         ...filter,
         limit: pageSize,
         offset: page * pageSize,
       })
       if (seq !== fetchSeq) return
-      set({ transactions: items, total, loading: false })
+      set({ transactions: items, total, spendTotal: spend_total ?? null, loading: false })
     } catch (err) {
       if (seq !== fetchSeq) return
       set({ loading: false, error: errMsg(err) })

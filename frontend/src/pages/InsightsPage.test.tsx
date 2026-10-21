@@ -219,3 +219,43 @@ describe('InsightsPage spending band refunds', () => {
     expect(within(band).queryByText('Income')).toBeNull()
   })
 })
+
+// #571: personal spending figures open the transactions behind them;
+// household aggregates have no member transaction list, so no links.
+describe('InsightsPage spending drill-down links', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('links categories, merchants and budgets to the spending lens for the period', async () => {
+    server.use(
+      http.get('*/dashboard/summary', () =>
+        HttpResponse.json({
+          data: {
+            ...fx.dashboardSummary,
+            period: { key: 'current_month', from: '2026-07-01T00:00:00Z', to: '2026-08-01T00:00:00Z' },
+          },
+        }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    const band = (await screen.findByText(/spending by category/i)).closest('section') as HTMLElement
+    expect(within(band).getByRole('link', { name: 'Groceries' })).toHaveAttribute(
+      'href',
+      '/transactions?spending=1&category_id=1&from=2026-07-01&to=2026-07-31',
+    )
+    expect(within(band).getByRole('link', { name: 'Whole Foods' })).toHaveAttribute(
+      'href',
+      '/transactions?spending=1&merchant=Whole+Foods&from=2026-07-01&to=2026-07-31',
+    )
+    const budgets = (await screen.findByText(/budgets · this period/i)).closest('div.rounded-lg') as HTMLElement
+    await waitFor(() => expect(within(budgets).getAllByRole('link').some((a) => a.getAttribute('href')?.startsWith('/transactions?spending=1&category_id=1'))).toBe(true))
+  })
+
+  it('renders household spending without drill-down links', async () => {
+    setHouseholdScope(1)
+    renderPage(<InsightsPage />)
+    const band = (await screen.findByText(/spending by category/i)).closest('section') as HTMLElement
+    await waitFor(() => expect(within(band).queryAllByRole('link')).toHaveLength(0))
+  })
+})

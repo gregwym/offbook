@@ -342,3 +342,113 @@ func txIDSet(ts []model.Transaction) map[int64]struct{} {
 	}
 	return out
 }
+
+// TestTransactionRepository_List_SpendingLens: spending=true returns exactly
+// the rows the spending figures count, category matches split lines, and
+// SpendTotal equals the Insights / budget number for the same filter (#571).
+func TestTransactionRepository_List_SpendingLens(t *testing.T) {
+	g := openTestDB(t)
+	ctx := context.Background()
+	repo := repository.NewTransactionRepository(g)
+	userID, accA, _, catX, catY, ids := seedTxFixture(t, g)
+	usdID := lookupUSDAssetID(t, g)
+
+	d := func(s string) time.Time {
+		v, _ := time.Parse("2006-01-02", s)
+		return v
+	}
+	desc := func(s string) *string { return &s }
+	hiddenAt := time.Now()
+	extra := []model.Transaction{
+		// Split $60: $45 X + $15 Y — must appear under both categories.
+		{UserID: userID, AccountID: accA, AssetID: usdID, CategoryID: &catY, Amount: decimal.NewFromInt(-60),
+			Description: desc("Target run"), MerchantName: desc("Target"), TransactionDate: d("2026-05-11"), Source: "manual"},
+		// Transfer, hidden and an uncategorized inflow never count as spend.
+		{UserID: userID, AccountID: accA, AssetID: usdID, CategoryID: &catX, Amount: decimal.NewFromInt(-500),
+			Description: desc("To savings"), TransactionDate: d("2026-05-13"), Source: "manual", IsTransfer: true},
+		{UserID: userID, AccountID: accA, AssetID: usdID, CategoryID: &catX, Amount: decimal.NewFromInt(-70),
+			Description: desc("Hidden reimbursable"), MerchantName: desc("Whole Foods"), TransactionDate: d("2026-05-14"), Source: "manual", HiddenAt: &hiddenAt},
+		{UserID: userID, AccountID: accA, AssetID: usdID, Amount: decimal.NewFromInt(900),
+			Description: desc("Paycheck"), TransactionDate: d("2026-05-16"), Source: "manual"},
+	}
+	for i := range extra {
+		if err := g.WithContext(ctx).Create(&extra[i]).Error; err != nil {
+			t.Fatalf("seed extra %d: %v", i, err)
+		}
+		id := extra[i].ID
+		t.Cleanup(func() { g.Unscoped().Delete(&model.Transaction{}, id) })
+	}
+	split := extra[0].ID
+	if err := repo.ReplaceSplits(ctx, userID, split, []model.TransactionSplit{
+		{CategoryID: &catX, Amount: decimal.NewFromInt(-45)},
+		{CategoryID: &catY, Amount: decimal.NewFromInt(-15)},
+	}); err != nil {
+		t.Fatalf("ReplaceSplits: %v", err)
+	}
+
+	from, to := d("2026-05-01"), d("2026-05-31")
+	ptr := func(v int64) *int64 { return &v }
+	tests := []struct {
+		name  string
+		f     repository.TransactionFilter
+		want  []int64
+		total string
+	}{
+		// X: -100 Whole Foods, +25 Whole Foods refund, $45 split line.
+		{"category X nets refunds and includes split line",
+			repository.TransactionFilter{Spending: true, CategoryID: ptr(catX), From: &from, To: &to},
+			[]int64{ids[0], ids[3], split}, "120"},
+		{"category Y includes the split's Y line",
+			repository.TransactionFilter{Spending: true, CategoryID: ptr(catY), From: &from, To: &to},
+			[]int64{ids[1], split}, "55"},
+		{"uncategorized excludes the paycheck inflow",
+			repository.TransactionFilter{Spending: true, UncategorizedOnly: true, From: &from, To: &to},
+			[]int64{ids[2]}, "5"},
+		{"merchant label, hidden row excluded",
+			repository.TransactionFilter{Spending: true, Merchant: "Whole Foods", From: &from, To: &to},
+			[]int64{ids[0], ids[3]}, "75"},
+		{"whole period",
+			repository.TransactionFilter{Spending: true, From: &from, To: &to},
+			[]int64{ids[0], ids[1], ids[2], ids[3], split}, "180"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, total, err := repo.List(ctx, userID, tc.f)
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if total != int64(len(tc.want)) {
+				t.Errorf("total = %d, want %d", total, len(tc.want))
+			}
+			seen := map[int64]bool{}
+			for _, r := range got {
+				seen[r.ID] = true
+			}
+			for _, id := range tc.want {
+				if !seen[id] {
+					t.Errorf("missing row %d", id)
+				}
+			}
+			spent, err := repo.SpendTotal(ctx, userID, tc.f)
+			if err != nil {
+				t.Fatalf("SpendTotal: %v", err)
+			}
+			if !spent.Equal(decimal.RequireFromString(tc.total)) {
+				t.Errorf("SpendTotal = %s, want %s", spent, tc.total)
+			}
+		})
+	}
+
+	t.Run("another user sees nothing", func(t *testing.T) {
+		other := seedTestUser(t, g)
+		f := repository.TransactionFilter{Spending: true, CategoryID: ptr(catX)}
+		got, total, err := repo.List(ctx, other, f)
+		if err != nil || total != 0 || len(got) != 0 {
+			t.Fatalf("other user: got %d rows (total %d, err %v)", len(got), total, err)
+		}
+		spent, err := repo.SpendTotal(ctx, other, f)
+		if err != nil || !spent.IsZero() {
+			t.Fatalf("other user SpendTotal = %s (err %v)", spent, err)
+		}
+	})
+}
