@@ -26,6 +26,9 @@ export type Transaction = {
   description?: string | null
   description_clean?: string | null
   merchant_name?: string | null
+  // merchant_edited_at (#569): the user fixed the merchant by hand; sync and
+  // rules keep it. Null/absent = the bank's (or a rule's) name.
+  merchant_edited_at?: string | null
   transaction_date: string  // YYYY-MM-DD (DATE column)
   posted_date?: string | null
   source: TransactionSource

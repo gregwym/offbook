@@ -359,3 +359,75 @@ func TestTransactionService_Review_InboxExcludesNonFlow(t *testing.T) {
 		t.Fatalf("adjustment leaked into inbox: total=%d err=%v", total, err)
 	}
 }
+
+// TestTransactionService_Update_MerchantPin (#569): a merchant the user sets is
+// pinned (merchant_edited_at), re-saving the same name keeps the pin time,
+// and clearing it un-pins so the bank/rules own the name again. Notes save
+// alongside without touching money.
+func TestTransactionService_Update_MerchantPin(t *testing.T) {
+	svc, userID, accountID, _, _ := newTxSvc(t)
+	ctx := context.Background()
+
+	created, err := svc.Create(ctx, userID, validTxInput(accountID))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, userID, created.ID) })
+	if created.MerchantEditedAt != nil {
+		t.Fatalf("new row merchant_edited_at = %v, want nil", created.MerchantEditedAt)
+	}
+
+	steps := []struct {
+		name       string
+		merchant   string
+		wantName   *string
+		wantPinned bool
+	}{
+		{"set pins", "  Blue Bottle  ", new("Blue Bottle"), true},
+		{"same name keeps pin", "Blue Bottle", new("Blue Bottle"), true},
+		{"clear un-pins", "  ", nil, false},
+	}
+	var firstPin *time.Time
+	for _, st := range steps {
+		t.Run(st.name, func(t *testing.T) {
+			note := "client lunch"
+			got, err := svc.Update(ctx, userID, created.ID, service.UpdateTransactionInput{MerchantName: &st.merchant, Notes: &note})
+			if err != nil {
+				t.Fatalf("update: %v", err)
+			}
+			if (got.MerchantName == nil) != (st.wantName == nil) || (st.wantName != nil && *got.MerchantName != *st.wantName) {
+				t.Errorf("merchant = %v, want %v", got.MerchantName, st.wantName)
+			}
+			if (got.MerchantEditedAt != nil) != st.wantPinned {
+				t.Errorf("merchant_edited_at = %v, want pinned=%v", got.MerchantEditedAt, st.wantPinned)
+			}
+			if st.name == "set pins" {
+				firstPin = got.MerchantEditedAt
+			}
+			if st.name == "same name keeps pin" && (firstPin == nil || got.MerchantEditedAt == nil || got.MerchantEditedAt.Sub(*firstPin).Abs() >= time.Microsecond) {
+				t.Errorf("pin moved: %v -> %v", firstPin, got.MerchantEditedAt)
+			}
+			if got.Notes == nil || *got.Notes != note {
+				t.Errorf("notes = %v, want %q", got.Notes, note)
+			}
+			if !got.Amount.Equal(decimal.NewFromFloat(-12.34)) {
+				t.Errorf("amount = %s, want -12.34", got.Amount)
+			}
+		})
+	}
+	reread, err := svc.Get(ctx, userID, created.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if reread.MerchantEditedAt != nil || reread.MerchantName != nil {
+		t.Errorf("after clear: merchant=%v edited=%v, want both nil", reread.MerchantName, reread.MerchantEditedAt)
+	}
+	blank := " "
+	cleared, err := svc.Update(ctx, userID, created.ID, service.UpdateTransactionInput{Notes: &blank})
+	if err != nil {
+		t.Fatalf("clear notes: %v", err)
+	}
+	if cleared.Notes != nil {
+		t.Errorf("notes after blank = %q, want nil", *cleared.Notes)
+	}
+}

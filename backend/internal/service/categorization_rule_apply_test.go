@@ -523,6 +523,64 @@ func TestCategorizationRuleService_Apply_RenameMerchant(t *testing.T) {
 	}
 }
 
+// TestCategorizationRuleService_Apply_RenameSkipsPinnedMerchant (#569): a
+// rename rule re-categorizes a row whose merchant the user fixed by hand but
+// leaves the merchant alone, and the draft preview and apply counts agree.
+func TestCategorizationRuleService_Apply_RenameSkipsPinnedMerchant(t *testing.T) {
+	svc, userID, accountID, fixtureCat, g := newRuleApplySvc(t)
+	ctx := context.Background()
+
+	edited := time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC)
+	pinned := mkTxn(t, g, userID, accountID, withDescription("PINAMZN books"), func(tx *model.Transaction) {
+		v := "Amazon Books"
+		tx.MerchantName, tx.MerchantEditedAt = &v, &edited
+	})
+	plain := mkTxn(t, g, userID, accountID, withDescription("PINAMZN mktp"))
+
+	rename := "Amazon"
+	in := service.CreateRuleInput{Pattern: "PINAMZN", MatchType: "contains", CategoryID: new(fixtureCat), Priority: 50, RenameMerchant: &rename}
+	draft, err := svc.PreviewDraft(ctx, userID, service.DraftRuleInput{
+		Pattern: in.Pattern, MatchType: in.MatchType, CategoryID: in.CategoryID, Priority: in.Priority, IsActive: true, RenameMerchant: &rename,
+	})
+	if err != nil {
+		t.Fatalf("PreviewDraft: %v", err)
+	}
+	if draft.WouldChange != 2 || draft.WouldRecategorize != 2 || draft.WouldRename != 1 {
+		t.Errorf("draft = %+v, want would_change 2, would_recategorize 2, would_rename 1", draft)
+	}
+	rule, err := svc.Create(ctx, userID, in)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.CategorizationRule{}, rule.ID) })
+
+	res, err := svc.Apply(ctx, userID, "")
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if res.Updated != 2 || res.Recategorized != 2 || res.Renamed != 1 {
+		t.Errorf("Apply = %+v, want updated 2, recategorized 2, renamed 1", res)
+	}
+	load := func(id int64) model.Transaction {
+		var got model.Transaction
+		if err := g.First(&got, id).Error; err != nil {
+			t.Fatalf("load %d: %v", id, err)
+		}
+		return got
+	}
+	if got := load(pinned.ID); got.MerchantName == nil || *got.MerchantName != "Amazon Books" || got.MerchantEditedAt == nil {
+		t.Errorf("pinned row merchant = %v edited = %v, want Amazon Books kept", got.MerchantName, got.MerchantEditedAt)
+	} else if got.CategoryID == nil || *got.CategoryID != fixtureCat {
+		t.Errorf("pinned row category = %v, want %d", got.CategoryID, fixtureCat)
+	}
+	if got := load(plain.ID); got.MerchantName == nil || *got.MerchantName != "Amazon" {
+		t.Errorf("plain row merchant = %v, want Amazon", got.MerchantName)
+	}
+	if res, _ = svc.Apply(ctx, userID, ""); res.Updated != 0 {
+		t.Errorf("re-Apply updated = %d, want 0 (pinned row is not a pending rename)", res.Updated)
+	}
+}
+
 // TestCategorizationRuleService_Apply_HideMatches (#536): a hiding rule hides
 // every non-manual row it wins, the draft preview counts them first, a re-run
 // is a no-op, and turning hiding off never unhides.

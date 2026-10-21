@@ -259,7 +259,14 @@ func (s *TransactionService) Update(ctx context.Context, userID, id int64, in Up
 		t.Description = trimPtr(in.Description)
 	}
 	if in.MerchantName != nil {
-		t.MerchantName = trimPtr(in.MerchantName)
+		// A user-set merchant is pinned so sync and rule renames keep it
+		// (#569); clearing it hands the name back to the bank/rules.
+		if m := trimPtr(in.MerchantName); *m == "" {
+			t.MerchantName, t.MerchantEditedAt = nil, nil
+		} else if t.MerchantName == nil || *t.MerchantName != *m || t.MerchantEditedAt == nil {
+			now := time.Now().UTC()
+			t.MerchantName, t.MerchantEditedAt = m, &now
+		}
 	}
 	if in.TransactionDate != nil {
 		if in.TransactionDate.IsZero() {
@@ -276,7 +283,10 @@ func (s *TransactionService) Update(ctx context.Context, userID, id int64, in Up
 		}
 	}
 	if in.Notes != nil {
-		t.Notes = in.Notes
+		// A blank note clears it (JSON null means "leave alone" on PATCH).
+		if t.Notes = trimPtr(in.Notes); *t.Notes == "" {
+			t.Notes = nil
+		}
 	}
 	if in.Tags != nil {
 		tags, err := NormalizeTags(*in.Tags)

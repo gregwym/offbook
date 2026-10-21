@@ -394,7 +394,7 @@ func (r *ApplyResult) count(d categorization.Decision, t *model.Transaction) {
 	if d.CategoryChanged(t) {
 		r.Recategorized++
 	}
-	if d.MerchantChanged(t.MerchantName) {
+	if d.MerchantChanged(t) {
 		r.Renamed++
 	}
 	if d.HideChanged(t) {
@@ -741,7 +741,7 @@ func (s *CategorizationRuleService) PreviewDraft(ctx context.Context, userID int
 			if d.CategoryChanged(row) {
 				out.WouldRecategorize++
 			}
-			if d.MerchantChanged(row.MerchantName) {
+			if d.MerchantChanged(row) {
 				out.WouldRename++
 			}
 			if d.HideChanged(row) {

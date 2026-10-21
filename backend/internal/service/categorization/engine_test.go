@@ -390,3 +390,31 @@ func catOf(d categorization.Decision) int64 {
 	}
 	return *d.CategoryID
 }
+
+// TestApply_RenameSkipsPinnedMerchant (#569): a rename rule never overwrites
+// a merchant the user fixed by hand, and SameAs/MerchantChanged agree so the
+// apply preview doesn't count it as a rename.
+func TestApply_RenameSkipsPinnedMerchant(t *testing.T) {
+	rules := categorization.Compile([]model.CategorizationRule{
+		{ID: 1, CategoryID: new(int64(10)), MatchType: "contains", Pattern: "AMZN", IsActive: true, RenameMerchant: ptr("Amazon")},
+	})
+	edited := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	tx := &model.Transaction{Description: ptr("AMZN MKTP US"), MerchantName: ptr("Amazon Books"), MerchantEditedAt: &edited}
+	d, ok := categorization.Match(rules, tx)
+	if !ok {
+		t.Fatal("expected a match")
+	}
+	if d.MerchantChanged(tx) {
+		t.Error("MerchantChanged on a pinned merchant = true, want false")
+	}
+	d.SetActions(tx)
+	if *tx.MerchantName != "Amazon Books" {
+		t.Errorf("merchant = %q, want the user's Amazon Books", *tx.MerchantName)
+	}
+	if tx.CategoryID == nil || *tx.CategoryID != 10 {
+		t.Errorf("category = %v, want 10 (the rule's other actions still apply)", tx.CategoryID)
+	}
+	if !d.SameAs(tx) {
+		t.Error("SameAs after SetActions = false, want true")
+	}
+}

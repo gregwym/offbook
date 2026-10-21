@@ -71,9 +71,11 @@ type Decision struct {
 	AddTags []string
 }
 
-// MerchantChanged reports whether applying d would change merchantName.
-func (d Decision) MerchantChanged(merchantName *string) bool {
-	return d.RenameMerchant != nil && (merchantName == nil || *merchantName != *d.RenameMerchant)
+// MerchantChanged reports whether applying d would change t's merchant. A
+// merchant the user fixed by hand is pinned (#569): rules never rename it.
+func (d Decision) MerchantChanged(t *model.Transaction) bool {
+	return d.RenameMerchant != nil && t.MerchantEditedAt == nil &&
+		(t.MerchantName == nil || *t.MerchantName != *d.RenameMerchant)
 }
 
 // SetsCategory reports whether the winning rule sets a category. A rule
@@ -143,7 +145,7 @@ func (d Decision) SameAs(t *model.Transaction) bool {
 		t.CategorizationMethod == nil || *t.CategorizationMethod != MethodRule) {
 		return false
 	}
-	return !d.MerchantChanged(t.MerchantName) &&
+	return !d.MerchantChanged(t) &&
 		!d.HideChanged(t) &&
 		!d.ReviewChanged(t) &&
 		!d.TagsChanged(t)
@@ -318,7 +320,7 @@ func (d Decision) SetActions(tx *model.Transaction) {
 		tx.CategorizationRuleID = &ruleID
 		tx.CategorizationMethod = &method
 	}
-	if d.RenameMerchant != nil {
+	if d.MerchantChanged(tx) {
 		v := *d.RenameMerchant
 		tx.MerchantName = &v
 	}

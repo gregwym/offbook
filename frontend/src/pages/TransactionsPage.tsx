@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ArrowRightLeft, Check, CheckCheck, ChevronDown, ChevronRight, Eye, EyeOff, Plus, Scissors, SlidersHorizontal, Sparkles, Tag, Trash2, Undo2, Upload, X } from 'lucide-react'
+import { ArrowRightLeft, Check, CheckCheck, ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Plus, Scissors, SlidersHorizontal, Sparkles, Tag, Trash2, Undo2, Upload, X } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { DateDisplay } from '../components/DateDisplay'
 import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
 import { SplitTransactionModal } from '../components/SplitTransactionModal'
 import { TagEditorModal } from '../components/TagEditorModal'
+import { EditDetailsModal } from '../components/EditDetailsModal'
 import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
 import { TransferMatchesModal } from '../components/TransferMatchesModal'
 import { listTransactions, listTransactionTags } from '../api/transactions'
@@ -46,6 +47,7 @@ export function TransactionsPage() {
   // Tags (#544): the row being tagged, and the user's tags for the filter
   // and the editor's suggestions.
   const [tagging, setTagging] = useState<Transaction | null>(null)
+  const [editing, setEditing] = useState<Transaction | null>(null)
   const [tagOptions, setTagOptions] = useState<TagCount[]>([])
   // After a successful rule create from a txn, surface a toast with two
   // actions: jump to /rules, or re-apply to existing transactions.
@@ -741,6 +743,7 @@ export function TransactionsPage() {
                   onSplit={() => setSplitting(t)}
                   onToggleHidden={() => { update(t.id, { hidden: t.hidden_at == null }).catch(() => {}) }}
                   onEditTags={() => setTagging(t)}
+                  onEditDetails={() => setEditing(t)}
                   onTagClick={(name) => setTag(name)}
                   onDelete={async () => {
                     if (window.confirm('Delete this transaction?')) {
@@ -826,6 +829,15 @@ export function TransactionsPage() {
           suggestions={tagOptions}
           onClose={() => setTagging(null)}
           onSaved={() => { refreshTags(); void fetch() }}
+        />
+      )}
+
+      {editing && (
+        <EditDetailsModal
+          tx={editing}
+          currency={assetByID.get(editing.asset_id)?.symbol ?? accountByID.get(editing.account_id)?.currency ?? 'USD'}
+          onClose={() => setEditing(null)}
+          onSaved={() => { void fetch() }}
         />
       )}
 
@@ -958,6 +970,8 @@ type RowProps = {
   onToggleHidden?: () => void
   // Tags (#544): open the editor / filter the list by a tag chip.
   onEditTags?: () => void
+  // Opens the merchant/notes editor (#569).
+  onEditDetails?: () => void
   onTagClick?: (tag: string) => void
   onDelete: () => Promise<void>
   // Review state (#424). Absent for rows that don't take part in review
@@ -975,7 +989,7 @@ type RowProps = {
 
 const PENDING_HINT = 'Your bank hasn’t posted this yet. Your edits will carry over when it posts.'
 
-function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onSplit, onToggleHidden, onEditTags, onTagClick, onDelete, onUnlinkTransfer, indented, selected, onSelect, onToggleReviewed }: RowProps) {
+function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onSplit, onToggleHidden, onEditTags, onEditDetails, onTagClick, onDelete, onUnlinkTransfer, indented, selected, onSelect, onToggleReviewed }: RowProps) {
   // Per ADR-0013, the unit on a transaction is asset_id. Display currency
   // = asset.symbol when available; fall back to the parent account's
   // currency for older rows that haven't been backfilled.
@@ -1021,7 +1035,9 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
       {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
     </select>
   )
+  const note = tx.notes?.trim() ?? ''
   const rowActions: RowAction[] = [
+    ...(onEditDetails ? [{ key: 'details', ariaLabel: `Edit details for ${label}`, label: <><Pencil size={16} /> Edit details</>, onSelect: onEditDetails }] : []),
     { key: 'rule', ariaLabel: `Create rule from ${label}`, label: <><Sparkles size={16} /> Create rule</>, onSelect: onCreateRule },
     ...(splittable && splitCount === 0 && onSplit
       ? [{ key: 'split', ariaLabel: `Split ${label}`, label: <><Scissors size={16} /> Split</>, onSelect: onSplit }]
@@ -1093,6 +1109,17 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             hidden
           </span>
         )}
+        {note !== '' && (
+          <button
+            type="button"
+            onClick={onEditDetails}
+            title={note}
+            aria-label={`Note: ${note}. Edit details for ${label}`}
+            className="ml-1.5 hidden items-center md:inline-flex rounded border border-amber-200 bg-amber-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-amber-800 hover:bg-amber-100"
+          >
+            note
+          </button>
+        )}
         {unpairedTransfer && (
           <span
             title="This row is in the Transfer category but has no matching leg, so it is not counted in spending, income or budgets."
@@ -1127,6 +1154,18 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
           </div>
           {/* No hover on touch screens: spell out what the chip's tooltip says. */}
           {tx.pending && <div className="text-xs text-sky-700">{PENDING_HINT}</div>}
+          {/* No hover on a phone: the note is written out (one line) and
+              tapping it opens Edit details, instead of a chip (#569). */}
+          {note !== '' && (
+            <button
+              type="button"
+              onClick={onEditDetails}
+              title={note}
+              className="block w-full truncate text-left text-xs italic text-gray-600"
+            >
+              {note}
+            </button>
+          )}
           {/* Daily review stays inline: category, reviewed, then one menu
               for the rest, so a row stays short on a phone (#554). */}
           <div className="flex items-center gap-1.5">
