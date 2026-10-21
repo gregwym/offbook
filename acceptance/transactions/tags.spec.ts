@@ -33,17 +33,34 @@ test.describe('tags journey', () => {
     // First tag: typed and added, with the explainer copy visible.
     const vp = page.viewportSize()!
     const mobile = vp.width < 768
+    // Tags sits behind "More actions" at both widths (#554 phone, #563 desktop).
     const openTags = async (label: string) => {
-      if (mobile) {
-        await page.getByRole('button', { name: `More actions for ${label}` }).click()
-        await page.getByRole('menu').getByRole('menuitem', { name: `Tags for ${label}` }).click()
-      } else {
-        await page.getByRole('button', { name: `Tags for ${label}` }).click()
-      }
+      await page.getByRole('button', { name: `More actions for ${label}` }).locator('visible=true').click()
+      await page.getByRole('menu').getByRole('menuitem', { name: `Tags for ${label}` }).click()
     }
-    // The newest row's Tags action is on the first screen at both widths
-    // (behind "More actions" on a phone, #554).
-    await expect(page.getByRole('button', { name: mobile ? 'More actions for QATAG Corner grocer' : 'Tags for QATAG Corner grocer' })).toBeInViewport()
+    // The newest row's actions are on the first screen at both widths.
+    await expect(page.getByRole('button', { name: 'More actions for QATAG Corner grocer' }).locator('visible=true')).toBeInViewport()
+    if (!mobile) {
+      // #563: on desktop an untagged row is one line of controls — Reviewed
+      // and More actions — and the date doesn't wrap.
+      const row = page.locator('tbody tr').filter({ hasText: 'QATAG Corner grocer' })
+      const box = (await row.boundingBox())!
+      expect(box.height, 'transaction row height on desktop').toBeLessThanOrEqual(64)
+      const review = row.getByRole('button', { name: /QATAG Corner grocer.*review/ }).locator('visible=true')
+      const more = row.getByRole('button', { name: 'More actions for QATAG Corner grocer' }).locator('visible=true')
+      const rb = (await review.boundingBox())!
+      const mb = (await more.boundingBox())!
+      expect(Math.abs(rb.y - mb.y), 'Reviewed and More actions share a line').toBeLessThanOrEqual(4)
+      await expect(row.getByRole('button', { name: 'Tags for QATAG Corner grocer' })).toHaveCount(0)
+      await testInfo.attach(`${testInfo.project.name}-compact-rows`, { body: await page.screenshot(), contentType: 'image/png' })
+      await more.click()
+      const menu = page.getByRole('menu', { name: 'Actions for QATAG Corner grocer' })
+      await expect(menu.getByRole('menuitem')).toHaveText(['Create rule', 'Split', 'Tags', 'Hide from spending', 'Delete'])
+      await expect(menu).toBeInViewport()
+      await testInfo.attach(`${testInfo.project.name}-row-menu`, { body: await page.screenshot(), contentType: 'image/png' })
+      await page.keyboard.press('Escape')
+      await expect(menu).toBeHidden()
+    }
     if (mobile) {
       // #554: an untagged row is compact, so several fit on one screen;
       // category and the reviewed toggle stay one tap away.
@@ -52,7 +69,7 @@ test.describe('tags journey', () => {
       expect(box.height, 'transaction row height on a phone').toBeLessThanOrEqual(120)
       await expect(row.getByRole('combobox', { name: 'Category for QATAG Corner grocer' }).locator('visible=true')).toBeVisible()
       await expect(row.getByRole('button', { name: /QATAG Corner grocer.*review/ }).locator('visible=true')).toBeVisible()
-      const more = row.getByRole('button', { name: 'More actions for QATAG Corner grocer' })
+      const more = row.getByRole('button', { name: 'More actions for QATAG Corner grocer' }).locator('visible=true')
       const mb = (await more.boundingBox())!
       expect(Math.min(mb.width, mb.height), 'More actions target size').toBeGreaterThanOrEqual(44)
       await testInfo.attach(`${testInfo.project.name}-compact-rows`, { body: await page.screenshot(), contentType: 'image/png' })

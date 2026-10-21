@@ -905,7 +905,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
       {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
     </select>
   )
-  const mobileActions: RowAction[] = [
+  const rowActions: RowAction[] = [
     { key: 'rule', ariaLabel: `Create rule from ${label}`, label: <><Sparkles size={16} /> Create rule</>, onSelect: onCreateRule },
     ...(splittable && splitCount === 0 && onSplit
       ? [{ key: 'split', ariaLabel: `Split ${label}`, label: <><Scissors size={16} /> Split</>, onSelect: onSplit }]
@@ -934,7 +934,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
           />
         )}
       </td>
-      <td className={`hidden px-3 py-2 align-top text-gray-700 md:table-cell ${indented ? 'pl-8' : ''}`}><DateDisplay value={tx.transaction_date} /></td>
+      <td className={`hidden whitespace-nowrap px-3 py-2 align-top text-gray-700 md:table-cell ${indented ? 'pl-8' : ''}`}><DateDisplay value={tx.transaction_date} /></td>
       <td className="px-2 py-2 align-top text-gray-900 md:px-3">
         {tx.description ?? '—'}
         {unreviewed && <span className="sr-only"> (needs review)</span>}
@@ -1030,7 +1030,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
                 <Check size={18} />
               </button>
             )}
-            <RowActionsMenu label={label} actions={mobileActions} />
+            <RowActionsMenu label={label} actions={rowActions} />
           </div>
         </div>
       </td>
@@ -1041,9 +1041,10 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
       <td className="hidden px-3 py-2 align-top text-gray-700 md:table-cell">{account?.name ?? `#${tx.account_id}`}</td>
       <td className="hidden px-3 py-2 align-top md:table-cell">{categorySelect}</td>
       <td className="hidden px-3 py-2 align-top md:table-cell">
-        {/* Six 32px icons wrap to two rows of three before they can push the
-            table past its wrapper and clip Delete (#561). */}
-        <div className="flex min-w-[6.5rem] flex-wrap justify-end gap-1">
+        {/* Desktop mirrors the phone (#554): Reviewed stays inline and the
+            rest share one "More actions" menu, so a row is one line of
+            controls instead of six icons wrapping to two rows (#563). */}
+        <div className="flex items-center justify-end gap-1">
           {reviewable && (
             <button
               type="button"
@@ -1059,56 +1060,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
               <Check size={16} />
             </button>
           )}
-          {splittable && (
-            <button
-              type="button"
-              onClick={onSplit}
-              className="hidden min-h-8 min-w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-indigo-700 md:inline-flex"
-              aria-label={`Split ${label}`}
-              title="Split across categories"
-            >
-              <Scissors size={16} />
-            </button>
-          )}
-          {onEditTags && (
-            <button
-              type="button"
-              onClick={onEditTags}
-              className="hidden min-h-8 min-w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-indigo-700 md:inline-flex"
-              aria-label={`Tags for ${label}`}
-              title="Add or remove tags"
-            >
-              <Tag size={16} />
-            </button>
-          )}
-          {hideable && (
-            <button
-              type="button"
-              onClick={onToggleHidden}
-              className="hidden min-h-8 min-w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-indigo-700 md:inline-flex"
-              aria-label={hidden ? `Unhide ${label}` : `Hide ${label}`}
-              title={hidden ? 'Unhide — count in spending and budgets again' : 'Hide from spending and budgets'}
-            >
-              {hidden ? <Eye size={16} /> : <EyeOff size={16} />}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={onCreateRule}
-            className="hidden min-h-8 min-w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-indigo-700 md:inline-flex"
-            aria-label="Create rule from this transaction"
-            title="Create rule from this transaction"
-          >
-            <Sparkles size={16} />
-          </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            className="hidden min-h-8 min-w-8 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-red-700 md:inline-flex"
-            aria-label="Delete"
-          >
-            <Trash2 size={16} />
-          </button>
+          <RowActionsMenu label={label} actions={rowActions} compact />
         </div>
       </td>
     </tr>
