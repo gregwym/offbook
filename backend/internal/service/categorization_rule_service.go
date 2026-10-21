@@ -357,9 +357,38 @@ type ApplyResult struct {
 	Scanned       int `json:"scanned"`
 	Updated       int `json:"updated"`
 	SkippedManual int `json:"skipped_manual"`
-	// DryRun is true when nothing was written; Updated then counts the rows
-	// that would change.
+	// Per-action subsets of Updated (#552), so the UI can say what changed
+	// rather than calling every update a re-categorization. A row counts
+	// once per action it gets; a row whose only change is the rule
+	// provenance counts in none.
+	Recategorized  int `json:"recategorized"`
+	Renamed        int `json:"renamed"`
+	Hidden         int `json:"hidden"`
+	MarkedReviewed int `json:"marked_reviewed"`
+	Tagged         int `json:"tagged"`
+	// DryRun is true when nothing was written; Updated and the per-action
+	// counts then describe the rows that would change.
 	DryRun bool `json:"dry_run"`
+}
+
+// count adds the actions d takes on t to the per-action counters. Call it
+// before d is written to t.
+func (r *ApplyResult) count(d categorization.Decision, t *model.Transaction) {
+	if d.CategoryChanged(t) {
+		r.Recategorized++
+	}
+	if d.MerchantChanged(t.MerchantName) {
+		r.Renamed++
+	}
+	if d.HideChanged(t) {
+		r.Hidden++
+	}
+	if d.ReviewChanged(t) {
+		r.MarkedReviewed++
+	}
+	if d.TagsChanged(t) {
+		r.Tagged++
+	}
 }
 
 // Apply walks the user's transactions in chunks and re-runs the categorization
@@ -440,6 +469,7 @@ func (s *CategorizationRuleService) apply(ctx context.Context, userID int64, sco
 				if d.SameAs(row) {
 					continue
 				}
+				result.count(d, row)
 				if dryRun {
 					result.Updated++
 					continue
@@ -503,6 +533,9 @@ type DraftPreview struct {
 	// merchant (when the draft renames), hidden state (when it hides),
 	// review state (when it marks reviewed) or tags (when it tags) differ.
 	WouldChange int `json:"would_change"`
+	// WouldRecategorize is the subset of Matched whose category the draft
+	// would change (#552).
+	WouldRecategorize int `json:"would_recategorize"`
 	// WouldRename is the subset of Matched whose merchant the draft's rename
 	// would change (#534).
 	WouldRename int `json:"would_rename"`
@@ -612,6 +645,9 @@ func (s *CategorizationRuleService) PreviewDraft(ctx context.Context, userID int
 			out.Matched++
 			if len(out.Samples) < draftSampleLimit {
 				out.Samples = append(out.Samples, draftSampleText(row))
+			}
+			if d.CategoryChanged(row) {
+				out.WouldRecategorize++
 			}
 			if d.MerchantChanged(row.MerchantName) {
 				out.WouldRename++

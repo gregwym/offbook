@@ -3,13 +3,13 @@ import { ArrowDown, ArrowUp, Pencil, Plus, RefreshCw, Sparkles, Trash2 } from 'l
 import { AmountDisplay } from '../components/AmountDisplay'
 import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
 import { listCategorizationVerdicts } from '../api/aiCategorizationVerdicts'
+import { formatApplyResult } from '../lib/ruleChanges'
 import { useAccountsStore } from '../store/accountsStore'
 import { useCategoriesStore } from '../store/categoriesStore'
 import { useRulesStore } from '../store/rulesStore'
 import type { AICategorizationVerdict } from '../types/aiCategorizationVerdict'
 import type { Category } from '../types/category'
 import type {
-  ApplyResult,
   CategorizationRule,
   CreateRuleInput,
 } from '../types/categorizationRule'
@@ -89,9 +89,9 @@ export function RulesPage() {
     <div>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Categorization rules</h1>
+          <h1 className="text-2xl font-semibold text-gray-900">Rules</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Auto-categorize transactions on import. Rules run top to bottom; the first match wins. Manual picks always win.
+            Rules categorize, rename, hide, mark reviewed and tag transactions on import. Rules run top to bottom; the first match wins. Manual picks always win.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -347,16 +347,4 @@ function RuleAmountCondition({ min, max, currency }: { min?: string | null; max?
   }
   if (min) return <>Amount <AmountDisplay amount={min} currency={currency} /> or more</>
   return <>Amount up to <AmountDisplay amount={max} currency={currency} /></>
-}
-
-function formatApplyResult(r: ApplyResult): string {
-  const manual = r.skipped_manual > 0 ? `; ${r.skipped_manual} manual picks stay as they are` : ''
-  if (r.dry_run) {
-    return `Preview: ${r.updated} of ${r.scanned} transactions would be re-categorized${manual}. Nothing has been changed.`
-  }
-  const parts = [`Scanned ${r.scanned}`, `updated ${r.updated}`]
-  if (r.skipped_manual > 0) {
-    parts.push(`skipped ${r.skipped_manual} manual`)
-  }
-  return parts.join(', ') + '.'
 }
