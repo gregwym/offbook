@@ -45,17 +45,19 @@ test.describe('Plaid OAuth return', () => {
     // 1. New link from Add account → bank redirect → back, accounts imported.
     await page.goto('/accounts/add')
     await page.getByRole('button', { name: 'Connect a bank' }).click()
+    await expect.poll(() => calls).toEqual(['link-token:new', 'exchange', 'sync-accounts:item-oauth', 'sync-transactions:item-oauth'])
     await page.waitForURL(/\/accounts$/)
-    expect(calls).toEqual(['link-token:new', 'exchange', 'sync-accounts:item-oauth', 'sync-transactions:item-oauth'])
     expect(await page.evaluate(() => window.sessionStorage.length)).toBe(0)
 
     // 2. Re-auth from Settings (update mode) → bank redirect → back to Settings, no exchange.
     calls.length = 0
     await page.goto('/settings')
     await page.getByRole('button', { name: /Reconnect Platypus OAuth Bank/ }).click()
+    // The tab is already on /settings, so waitForURL alone returns before the
+    // redirect (#559). Wait for the round-trip's syncs, then for the way back.
+    await expect.poll(() => calls).toEqual(['link-token:update:item-reauth', 'sync-accounts:item-reauth', 'sync-transactions:item-reauth'])
     await page.waitForURL(/\/settings$/)
     await expect(page.getByText('Platypus OAuth Bank').first()).toBeVisible()
-    expect(calls).toEqual(['link-token:update:item-reauth', 'sync-accounts:item-reauth', 'sync-transactions:item-reauth'])
     await shot(page, testInfo, 'settings-after-reauth')
 
     // 3. Return page re-inits Link with the stored token + receivedRedirectUri.
