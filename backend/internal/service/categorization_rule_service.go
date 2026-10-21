@@ -832,7 +832,7 @@ func (s *CategorizationRuleService) validate(ctx context.Context, r *model.Categ
 		}
 		return nil
 	}
-	if _, err := s.catRepo.GetByID(ctx, *r.CategoryID); err != nil {
+	if _, err := s.catRepo.GetVisible(ctx, &r.UserID, *r.CategoryID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return ErrUnknownCategory
 		}

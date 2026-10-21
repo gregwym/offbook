@@ -107,7 +107,9 @@ func (s *BudgetService) Create(ctx context.Context, owner repository.PlanOwner, 
 	if in.RolloverStart != nil && in.RolloverStart.IsNegative() {
 		return nil, ErrInvalidRolloverStart
 	}
-	if _, err := s.catRepo.GetByID(ctx, in.CategoryID); err != nil {
+	// A personal budget may use the user's own categories; a household
+	// budget only the shared system taxonomy (#573).
+	if _, err := s.catRepo.GetVisible(ctx, owner.UserID, in.CategoryID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrUnknownCategory
 		}
@@ -161,7 +163,7 @@ func (s *BudgetService) Update(ctx context.Context, owner repository.PlanOwner, 
 		return nil, err
 	}
 	if in.CategoryID != nil {
-		if _, err := s.catRepo.GetByID(ctx, *in.CategoryID); err != nil {
+		if _, err := s.catRepo.GetVisible(ctx, owner.UserID, *in.CategoryID); err != nil {
 			if errors.Is(err, repository.ErrNotFound) {
 				return nil, ErrUnknownCategory
 			}
@@ -388,7 +390,7 @@ func (s *BudgetService) Alerts(ctx context.Context, userID int64) ([]BudgetAlert
 	}
 	catNames := map[int64]string{}
 	for _, id := range catIDs {
-		c, err := s.catRepo.GetByID(ctx, id)
+		c, err := s.catRepo.GetVisible(ctx, &userID, id)
 		if err != nil {
 			// Category was deleted out from under the budget — fall back
 			// to "#<id>" so the alert still renders.

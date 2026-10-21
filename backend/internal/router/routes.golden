@@ -66,6 +66,7 @@ GET /api/v1/transactions/tags
 GET /api/v1/transfers/candidates
 PATCH /api/v1/accounts/:id
 PATCH /api/v1/budgets/:id
+PATCH /api/v1/categories/:id
 PATCH /api/v1/categorization-rules/:id
 PATCH /api/v1/households/:id
 PATCH /api/v1/households/:id/members/:userID
@@ -91,6 +92,7 @@ POST /api/v1/auth/signout
 POST /api/v1/auth/signup
 POST /api/v1/auth/signup-with-invite
 POST /api/v1/budgets
+POST /api/v1/categories
 POST /api/v1/categorization-rules
 POST /api/v1/categorization-rules/apply
 POST /api/v1/categorization-rules/apply-runs/:id/undo

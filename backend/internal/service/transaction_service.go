@@ -139,7 +139,7 @@ func (s *TransactionService) Create(ctx context.Context, userID int64, in Create
 		return nil, err
 	}
 	if in.CategoryID != nil {
-		if err := s.assertCategoryExists(ctx, *in.CategoryID); err != nil {
+		if err := s.assertCategoryExists(ctx, userID, *in.CategoryID); err != nil {
 			return nil, err
 		}
 	}
@@ -243,7 +243,7 @@ func (s *TransactionService) Update(ctx context.Context, userID, id int64, in Up
 		t.CategoryID = nil
 		t.CategorizationMethod = nil
 	case in.CategoryID != nil:
-		if err := s.assertCategoryExists(ctx, *in.CategoryID); err != nil {
+		if err := s.assertCategoryExists(ctx, userID, *in.CategoryID); err != nil {
 			return nil, err
 		}
 		t.CategoryID = in.CategoryID
@@ -370,7 +370,7 @@ func (s *TransactionService) ReplaceSplits(ctx context.Context, userID, id int64
 				return nil, fmt.Errorf("%w: each line must be non-zero with the same sign as the transaction", ErrInvalidSplits)
 			}
 			if l.CategoryID != nil {
-				if err := s.assertCategoryExists(ctx, *l.CategoryID); err != nil {
+				if err := s.assertCategoryExists(ctx, userID, *l.CategoryID); err != nil {
 					return nil, err
 				}
 			}
@@ -457,7 +457,7 @@ func (s *TransactionService) BulkEdit(ctx context.Context, userID int64, ids []i
 		return nil, ErrInvalidBulkEdit
 	}
 	if in.CategoryID != nil {
-		if err := s.assertCategoryExists(ctx, *in.CategoryID); err != nil {
+		if err := s.assertCategoryExists(ctx, userID, *in.CategoryID); err != nil {
 			return nil, err
 		}
 	}
@@ -483,6 +483,13 @@ func (s *TransactionService) BulkUndo(ctx context.Context, userID int64, prior [
 	for _, p := range prior {
 		if p.CategorizationMethod != nil && !validCategorizationMethod[*p.CategorizationMethod] {
 			return 0, ErrInvalidBulkEdit
+		}
+		// The undo list is client-supplied: a restored category must be one
+		// the user may reference (#573), so a bad id is a 400, not an FK 500.
+		if p.CategoryID != nil {
+			if err := s.assertCategoryExists(ctx, userID, *p.CategoryID); err != nil {
+				return 0, err
+			}
 		}
 	}
 	n, err := s.repo.BulkRestore(ctx, userID, prior)
@@ -519,8 +526,10 @@ func (s *TransactionService) fetchOwnedAccount(ctx context.Context, userID, acco
 	return a, nil
 }
 
-func (s *TransactionService) assertCategoryExists(ctx context.Context, id int64) error {
-	if _, err := s.categoryRepo.GetByID(ctx, id); err != nil {
+// assertCategoryExists accepts a system category or one the user owns; any
+// other id (unknown, or another user's) is ErrInvalidCategory (#573).
+func (s *TransactionService) assertCategoryExists(ctx context.Context, userID, id int64) error {
+	if _, err := s.categoryRepo.GetVisible(ctx, &userID, id); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return ErrInvalidCategory
 		}
