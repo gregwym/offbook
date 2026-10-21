@@ -326,7 +326,11 @@ function BudgetFormModal({ mode, isHousehold, categories, budget, onClose, onSub
             onChange={(e) => setCategoryID(e.target.value === '' ? '' : Number(e.target.value))}
           >
             <option value="">— pick one —</option>
-            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {/* A shared budget is seen by every member, so it can only use
+                built-in categories, not one a member created (#573). */}
+            {categories
+              .filter((c) => !isHousehold || c.user_id == null)
+              .map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </Field>
         <div className="grid grid-cols-2 gap-3">

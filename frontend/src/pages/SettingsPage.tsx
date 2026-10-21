@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { usePlaidLink } from 'react-plaid-link'
 import { clearPendingLink, savePendingLink } from '../lib/plaidOAuth'
-import { AlertTriangle, Bot, Check, Info, Landmark, Plug, RefreshCw, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Bot, Check, Info, Landmark, Pencil, Plug, Plus, RefreshCw, Tag, Trash2, X } from 'lucide-react'
 import { TimeAgo } from '../components/TimeAgo'
 import {
   createLinkToken,
@@ -16,6 +16,8 @@ import {
 } from '../api/plaid'
 import { getHealth } from '../api/health'
 import { getUserSettings, updateUserSettings } from '../api/userSettings'
+import { useCategoriesStore } from '../store/categoriesStore'
+import type { Category } from '../types/category'
 import type { PlaidItem, PlaidSyncError } from '../types/plaid'
 import type { AIProvider, UpdateUserSettingsInput, UserSettingsView } from '../types/userSettings'
 
@@ -24,14 +26,258 @@ export function SettingsPage() {
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-semibold text-gray-900">Settings</h1>
-        <p className="mt-1 text-sm text-gray-500">AI provider, linked institutions, and preferences.</p>
+        <p className="mt-1 text-sm text-gray-500">Categories, AI provider, linked institutions, and preferences.</p>
       </div>
+      <CategoriesSection />
       <AISettingsSection />
       <PriceSettingsSection />
       <CategorizationSettingsSection />
       <LinkedInstitutionsSection />
       <AboutSection />
     </div>
+  )
+}
+
+// CategoriesSection lets a user add their own categories and rename them
+// (#573). Built-in categories stay available and read-only. New categories
+// land in the shared store, so Transactions, Rules and Budgets pickers see
+// them immediately.
+function CategoriesSection() {
+  const { categories, loaded, error: loadError, fetch, create, rename } = useCategoriesStore()
+  const [name, setName] = useState('')
+  const [parentID, setParentID] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [addError, setAddError] = useState<string | null>(null)
+  const [flash, setFlash] = useState<string | null>(null)
+
+  useEffect(() => { void fetch() }, [fetch])
+
+  const byID = new Map(categories.map((c) => [c.id, c]))
+  const mine = categories.filter((c) => c.user_id != null)
+  const builtIn = categories.filter((c) => c.user_id == null)
+  // Only top-level categories can be a group; the taxonomy is two levels.
+  const groups = categories.filter((c) => c.parent_id == null)
+
+  const showFlash = (msg: string) => {
+    setFlash(msg)
+    window.setTimeout(() => setFlash(null), 2500)
+  }
+
+  const add = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!name.trim()) {
+      setAddError('Enter a name for the category.')
+      return
+    }
+    setAdding(true)
+    setAddError(null)
+    try {
+      const c = await create({ name: name.trim(), parent_id: parentID ? Number(parentID) : null })
+      setName('')
+      setParentID('')
+      showFlash(`Added “${c.name}”`)
+    } catch (err) {
+      setFlash(null)
+      setAddError(categoryErr(err, name.trim()))
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  return (
+    <section id="categories" aria-labelledby="categories-heading" className="rounded-lg border border-gray-200 bg-white">
+      <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
+        <div className="flex items-center gap-2">
+          <Tag size={16} className="text-gray-500" />
+          <h2 id="categories-heading" className="text-base font-medium text-gray-900">Categories</h2>
+        </div>
+        {flash && (
+          <span role="status" className="inline-flex items-center gap-1 text-xs text-emerald-700">
+            <Check size={14} /> {flash}
+          </span>
+        )}
+      </div>
+
+      <div className="space-y-4 px-5 py-4">
+        <p className="text-sm text-gray-600">
+          Add your own categories to sort spending the way you think about it, such as Coffee or Pets.
+          They show up wherever you pick a category: transactions, rules and budgets.
+        </p>
+
+        <form onSubmit={(e) => void add(e)} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <label className="flex-1 text-sm">
+            <span className="mb-1 block font-medium text-gray-700">New category</span>
+            <input
+              type="text"
+              value={name}
+              maxLength={60}
+              onChange={(e) => { setName(e.target.value); if (addError) setAddError(null) }}
+              placeholder="e.g. Coffee"
+              aria-invalid={addError ? true : undefined}
+              aria-describedby={addError ? 'category-add-error' : undefined}
+              className="min-h-10 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="text-sm sm:w-56">
+            <span className="mb-1 block font-medium text-gray-700">Group under (optional)</span>
+            <select
+              value={parentID}
+              onChange={(e) => setParentID(e.target.value)}
+              className="min-h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+            >
+              <option value="">None</option>
+              {groups.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+          <button
+            type="submit"
+            disabled={adding}
+            className="inline-flex min-h-10 items-center justify-center gap-1 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+          >
+            <Plus size={16} /> {adding ? 'Adding…' : 'Add category'}
+          </button>
+        </form>
+        {addError && (
+          <p id="category-add-error" role="alert" className="text-sm text-red-700">{addError}</p>
+        )}
+
+        <div>
+          <h3 className="text-sm font-medium text-gray-900">Your categories</h3>
+          {!loaded && !loadError && <p className="mt-2 text-sm text-gray-400">Loading categories…</p>}
+          {loadError && <p className="mt-2 text-sm text-red-700">Couldn't load categories: {loadError}</p>}
+          {loaded && mine.length === 0 && (
+            <p className="mt-2 text-sm text-gray-500">
+              You haven't added any yet. The {builtIn.length} built-in categories below are always available.
+            </p>
+          )}
+          {mine.length > 0 && (
+            <ul className="mt-2 divide-y divide-gray-100 rounded-md border border-gray-200">
+              {mine.map((c) => (
+                <CategoryRow
+                  key={c.id}
+                  category={c}
+                  parentName={c.parent_id != null ? byID.get(c.parent_id)?.name : undefined}
+                  onRename={async (next) => {
+                    const r = await rename(c.id, next)
+                    showFlash(`Renamed to “${r.name}”`)
+                  }}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {builtIn.length > 0 && (
+          <details className="text-sm">
+            <summary className="cursor-pointer text-gray-700">Built-in categories ({builtIn.length})</summary>
+            <p className="mt-2 text-gray-600">{builtIn.map((c) => c.name).join(' · ')}</p>
+            <p className="mt-1 text-xs text-gray-500">Built-in categories can't be renamed.</p>
+          </details>
+        )}
+      </div>
+    </section>
+  )
+}
+
+// categoryErr turns a create/rename failure into a sentence the user can act
+// on; anything unrecognised falls back to the server's message.
+function categoryErr(err: unknown, name: string): string {
+  const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code
+  switch (code) {
+    case 'CATEGORY_NAME_TAKEN':
+      return `“${name}” already exists. Pick a different name.`
+    case 'INVALID_NAME':
+      return 'Use a name between 1 and 60 characters.'
+    case 'INVALID_PARENT':
+      return 'That group is no longer available. Pick another or choose None.'
+    default: {
+      const msg = errMsg(err)
+      return msg.charAt(0).toUpperCase() + msg.slice(1)
+    }
+  }
+}
+
+function CategoryRow({ category, parentName, onRename }: {
+  category: Category
+  parentName?: string
+  onRename: (name: string) => Promise<void>
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(category.name)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault()
+    if (draft.trim() === category.name) {
+      setEditing(false)
+      return
+    }
+    if (!draft.trim()) {
+      setError('Enter a name for the category.')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    try {
+      await onRename(draft.trim())
+      setEditing(false)
+    } catch (err) {
+      setError(categoryErr(err, draft.trim()))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (editing) {
+    return (
+      <li className="px-3 py-2">
+        <form onSubmit={(e) => void save(e)} className="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={draft}
+            maxLength={60}
+            autoFocus
+            aria-label={`New name for ${category.name}`}
+            onChange={(e) => { setDraft(e.target.value); if (error) setError(null) }}
+            onKeyDown={(e) => { if (e.key === 'Escape') { setEditing(false); setDraft(category.name); setError(null) } }}
+            className="min-h-9 min-w-0 flex-1 rounded-md border border-gray-300 px-2 py-1 text-sm"
+          />
+          <button
+            type="submit"
+            disabled={saving}
+            className="min-h-9 rounded-md bg-indigo-600 px-3 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setEditing(false); setDraft(category.name); setError(null) }}
+            className="min-h-9 rounded-md px-3 text-sm text-gray-700 hover:bg-gray-100"
+          >
+            Cancel
+          </button>
+        </form>
+        {error && <p role="alert" className="mt-1 text-sm text-red-700">{error}</p>}
+      </li>
+    )
+  }
+
+  return (
+    <li className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+      <span className="min-w-0">
+        <span className="font-medium text-gray-900">{category.name}</span>
+        {parentName && <span className="ml-2 text-xs text-gray-500">in {parentName}</span>}
+      </span>
+      <button
+        type="button"
+        onClick={() => { setDraft(category.name); setEditing(true) }}
+        aria-label={`Rename ${category.name}`}
+        className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-gray-700 hover:bg-gray-100"
+      >
+        <Pencil size={14} /> Rename
+      </button>
+    </li>
   )
 }
 

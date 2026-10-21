@@ -3,6 +3,7 @@ import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { server } from '../test/server'
 import { expectHealthySmoke, renderPage, resetStores } from '../test/testUtils'
+import { useCategoriesStore } from '../store/categoriesStore'
 import { SettingsPage } from './SettingsPage'
 
 const API = '/api/v1'
@@ -77,5 +78,74 @@ describe('SettingsPage smoke', () => {
     fireEvent.click(toggle)
 
     await waitFor(() => expect(toggle).toBeChecked())
+  })
+})
+
+// #573: a user adds a category (optionally grouped), sees it listed and
+// shared with every picker, renames it, and sees duplicate errors inline.
+describe('SettingsPage categories', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('adds a category under a group, then renames it', async () => {
+    const created = {
+      id: 99, user_id: 1, parent_id: 1, name: 'Coffee', slug: 'coffee', is_system: false,
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    }
+    let posted: unknown = null
+    server.use(
+      http.post(`${API}/categories`, async ({ request }) => {
+        posted = await request.json()
+        return HttpResponse.json({ data: created }, { status: 201 })
+      }),
+      http.patch(`${API}/categories/99`, async ({ request }) => {
+        const body = (await request.json()) as { name: string }
+        return HttpResponse.json({ data: { ...created, name: body.name } })
+      }),
+    )
+    renderPage(<SettingsPage />)
+
+    expect(await screen.findByText(/You haven't added any yet/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('New category'), { target: { value: 'Coffee' } })
+    fireEvent.change(screen.getByLabelText('Group under (optional)'), { target: { value: '1' } })
+    fireEvent.click(screen.getByRole('button', { name: /Add category/ }))
+
+    expect(await screen.findByText('in Groceries')).toBeInTheDocument()
+    expect(posted).toEqual({ name: 'Coffee', parent_id: 1 })
+    expect(useCategoriesStore.getState().categories.map((c) => c.name)).toContain('Coffee')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rename Coffee' }))
+    fireEvent.change(screen.getByLabelText('New name for Coffee'), { target: { value: 'Coffee shops' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('Coffee shops')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('Renamed to “Coffee shops”')
+    await expectHealthySmoke()
+  })
+
+  it('shows a duplicate name inline and keeps the typed name', async () => {
+    server.use(
+      http.post(`${API}/categories`, () =>
+        HttpResponse.json(
+          { error: 'a category with this name already exists', code: 'CATEGORY_NAME_TAKEN' },
+          { status: 409 },
+        ),
+      ),
+    )
+    renderPage(<SettingsPage />)
+
+    await screen.findByText(/You haven't added any yet/)
+    fireEvent.change(screen.getByLabelText('New category'), { target: { value: 'groceries' } })
+    fireEvent.click(screen.getByRole('button', { name: /Add category/ }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('“groceries” already exists. Pick a different name.')
+    expect(screen.getByLabelText('New category')).toHaveValue('groceries')
+  })
+
+  it('asks for a name instead of posting a blank one', async () => {
+    renderPage(<SettingsPage />)
+    await screen.findByText(/You haven't added any yet/)
+    fireEvent.click(screen.getByRole('button', { name: /Add category/ }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter a name for the category.')
   })
 })

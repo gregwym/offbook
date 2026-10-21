@@ -37,6 +37,7 @@ func seedTestUser(t *testing.T, g *gorm.DB) int64 {
 		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.SavingsGoal{})
 		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.CategorizationRule{})
 		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.Account{})
+		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.Category{})
 		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.AIThread{})
 		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.Session{})
 		g.Unscoped().Delete(&model.User{}, u.ID)
