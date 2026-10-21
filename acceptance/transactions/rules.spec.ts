@@ -500,6 +500,7 @@ test.describe('rule keeps the category', () => {
     await expect(dialog).toContainText('This rule would change nothing.')
     const tags = dialog.getByLabel('Also add tags (optional)')
     await tags.fill('reimbursable')
+    await expect(dialog).not.toContainText('This rule would change nothing.')
     await expect(dialog).toContainText('Applies to 2 of')
     await expect(dialog).toContainText('2 would be tagged. Tags: reimbursable. Categories stay as they are.')
     await expect(dialog).not.toContainText('would change category')

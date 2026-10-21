@@ -262,7 +262,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
             : 'Saving keeps this rule\u2019s place in the run order; reorder rules on the Rules page.'}{' '}
           This rule stops later rules from running on the same transaction.
         </p>
-        <Field label="Category" error={categoryError}>
+        <Field label="Category" error={categoryError === NO_ACTION_MESSAGE && hasOtherAction ? null : categoryError}>
           <select
             className={inputClass}
             value={categoryID === '' ? '' : String(categoryID)}

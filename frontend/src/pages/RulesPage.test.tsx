@@ -440,6 +440,7 @@ describe('RulesPage smoke', () => {
     expect(creates).toHaveLength(0)
 
     fireEvent.change(screen.getByLabelText(/Also add tags/), { target: { value: 'reimbursable' } })
+    expect(screen.queryByText(/This rule would change nothing/)).toBeNull()
     expect(await screen.findByText(/2 would be tagged\. Tags: reimbursable\. Categories stay as they are\./)).toBeTruthy()
     expect(previews.at(-1)).not.toHaveProperty('category_id')
 
