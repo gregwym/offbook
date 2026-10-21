@@ -77,7 +77,8 @@ function CategoriesSection() {
       setParentID('')
       showFlash(`Added “${c.name}”`)
     } catch (err) {
-      setAddError(errMsg(err))
+      setFlash(null)
+      setAddError(categoryErr(err, name.trim()))
     } finally {
       setAdding(false)
     }
@@ -178,6 +179,24 @@ function CategoriesSection() {
   )
 }
 
+// categoryErr turns a create/rename failure into a sentence the user can act
+// on; anything unrecognised falls back to the server's message.
+function categoryErr(err: unknown, name: string): string {
+  const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code
+  switch (code) {
+    case 'CATEGORY_NAME_TAKEN':
+      return `“${name}” already exists. Pick a different name.`
+    case 'INVALID_NAME':
+      return 'Use a name between 1 and 60 characters.'
+    case 'INVALID_PARENT':
+      return 'That group is no longer available. Pick another or choose None.'
+    default: {
+      const msg = errMsg(err)
+      return msg.charAt(0).toUpperCase() + msg.slice(1)
+    }
+  }
+}
+
 function CategoryRow({ category, parentName, onRename }: {
   category: Category
   parentName?: string
@@ -204,7 +223,7 @@ function CategoryRow({ category, parentName, onRename }: {
       await onRename(draft.trim())
       setEditing(false)
     } catch (err) {
-      setError(errMsg(err))
+      setError(categoryErr(err, draft.trim()))
     } finally {
       setSaving(false)
     }

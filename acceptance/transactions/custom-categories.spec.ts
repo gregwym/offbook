@@ -45,7 +45,8 @@ test.describe('custom categories', () => {
     // A name that already exists (any case, built-in included) is refused inline.
     await section.getByLabel('New category').fill('groceries')
     await add.click()
-    await expect(section.getByRole('alert')).toContainText('already exists')
+    await expect(section.getByRole('alert')).toContainText('“groceries” already exists. Pick a different name.')
+    await expect(section.getByRole('status')).toHaveCount(0)
     await expect(section.getByLabel('New category')).toHaveValue('groceries')
     await testInfo.attach(`${testInfo.project.name}-category-duplicate`, {
       body: await section.screenshot(), contentType: 'image/png',

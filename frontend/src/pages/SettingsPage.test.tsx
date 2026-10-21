@@ -138,7 +138,7 @@ describe('SettingsPage categories', () => {
     fireEvent.change(screen.getByLabelText('New category'), { target: { value: 'groceries' } })
     fireEvent.click(screen.getByRole('button', { name: /Add category/ }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('a category with this name already exists')
+    expect(await screen.findByRole('alert')).toHaveTextContent('“groceries” already exists. Pick a different name.')
     expect(screen.getByLabelText('New category')).toHaveValue('groceries')
   })
 
