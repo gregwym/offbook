@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { MoreHorizontal } from 'lucide-react'
 
 export type RowAction = {
@@ -12,8 +13,9 @@ export type RowAction = {
 }
 
 // RowActionsMenu folds a row's secondary actions behind one "More actions"
-// button (#554). The menu is fixed-positioned against the trigger so the
-// table's overflow wrapper cannot clip it, and it opens upward when the
+// button (#554). The menu is portalled to <body> and fixed-positioned against
+// the trigger, so neither the table's overflow wrapper nor a dimmed (hidden)
+// row's stacking context can clip or cover it. It opens upward when the
 // trigger is near the bottom of the screen. Focus moves to the first item on
 // open and back to the trigger on Escape or after a choice.
 export function RowActionsMenu({ label, actions }: { label: string; actions: RowAction[] }) {
@@ -90,7 +92,7 @@ export function RowActionsMenu({ label, actions }: { label: string; actions: Row
       >
         <MoreHorizontal size={18} />
       </button>
-      {open && (
+      {open && createPortal(
         <div
           ref={menuRef}
           role="menu"
@@ -114,7 +116,8 @@ export function RowActionsMenu({ label, actions }: { label: string; actions: Row
               {a.label}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   )

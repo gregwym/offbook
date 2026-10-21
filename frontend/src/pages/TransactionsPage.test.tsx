@@ -402,6 +402,8 @@ describe('TransactionsPage row actions menu (#554)', () => {
     expect(more).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(more)
     const menu = screen.getByRole('menu', { name: 'Actions for CORNER CAFE' })
+    // Portalled out of the table so a dimmed (hidden) row can't cover it.
+    expect(menu.closest('table')).toBeNull()
     const items = within(menu).getAllByRole('menuitem')
     expect(items.map((i) => i.getAttribute('aria-label'))).toEqual([
       'Create rule from CORNER CAFE',
