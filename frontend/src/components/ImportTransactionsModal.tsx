@@ -548,45 +548,50 @@ function PreviewSummary({ result, currency }: { result: ImportResult; currency?:
         <table className="w-full text-left text-sm">
           <thead className="bg-gray-50 text-xs uppercase text-gray-500">
             <tr>
-              <th className="px-3 py-1.5 font-medium">Date</th>
-              <th className="px-3 py-1.5 font-medium">Description</th>
-              <th className="px-3 py-1.5 text-right font-medium">Amount</th>
-              <th className="px-3 py-1.5 font-medium">Status</th>
+              <th className="hidden px-3 py-1.5 font-medium sm:table-cell">Date</th>
+              <th className="px-2 py-1.5 font-medium sm:px-3">Description</th>
+              <th className="px-2 py-1.5 text-right font-medium sm:px-3">Amount</th>
+              <th className="px-2 py-1.5 font-medium sm:px-3">Status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {sample.map((row) => (
-              <tr
-                key={row.line}
-                className={
-                  row.status === 'error'
-                    ? 'bg-red-50/40'
-                    : row.needs_review
-                      ? 'bg-amber-50/50'
-                      : undefined
-                }
-              >
-                <td className="whitespace-nowrap px-3 py-1.5 text-gray-700">
-                  {row.status === 'error' ? <span className="text-gray-400">line {row.line}</span> : <DateDisplay value={row.date} />}
-                </td>
-                <td className="px-3 py-1.5 text-gray-700">
-                  {row.status === 'error' ? <span className="text-red-600">{row.error}</span> : row.description || <span className="text-gray-400">—</span>}
-                </td>
-                <td className="whitespace-nowrap px-3 py-1.5 text-right">
-                  {row.status === 'error' ? '' : <AmountDisplay amount={row.amount} currency={currency} signed />}
-                </td>
-                <td className="px-3 py-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <StatusTag status={row.status} />
-                    {row.needs_review && row.status !== 'error' && (
-                      <span title={`low confidence: ${(row.confidence * 100).toFixed(0)}%`} className="text-amber-600">
-                        <AlertTriangle size={13} />
-                      </span>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {sample.map((row) => {
+              const dateCell = row.status === 'error' ? <span className="text-gray-400">line {row.line}</span> : <DateDisplay value={row.date} />
+              return (
+                <tr
+                  key={row.line}
+                  className={
+                    row.status === 'error'
+                      ? 'bg-red-50/40'
+                      : row.needs_review
+                        ? 'bg-amber-50/50'
+                        : undefined
+                  }
+                >
+                  <td className="hidden whitespace-nowrap px-3 py-1.5 text-gray-700 sm:table-cell">
+                    {dateCell}
+                  </td>
+                  <td className="px-2 py-1.5 text-gray-700 [overflow-wrap:anywhere] sm:px-3">
+                    {/* Phones drop the Date column so Status stays in view (#554). */}
+                    <div className="text-xs text-gray-500 sm:hidden">{dateCell}</div>
+                    {row.status === 'error' ? <span className="text-red-600">{row.error}</span> : row.description || <span className="text-gray-400">—</span>}
+                  </td>
+                  <td className="whitespace-nowrap px-2 py-1.5 text-right sm:px-3">
+                    {row.status === 'error' ? '' : <AmountDisplay amount={row.amount} currency={currency} signed />}
+                  </td>
+                  <td className="px-2 py-1.5 sm:px-3">
+                    <div className="flex items-center gap-1.5">
+                      <StatusTag status={row.status} />
+                      {row.needs_review && row.status !== 'error' && (
+                        <span title={`low confidence: ${(row.confidence * 100).toFixed(0)}%`} className="text-amber-600">
+                          <AlertTriangle size={13} />
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>

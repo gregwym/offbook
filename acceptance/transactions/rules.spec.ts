@@ -228,7 +228,7 @@ test.describe('rule hides matches', () => {
     })
 
     // Unhiding one row counts it again.
-    await page.getByRole('button', { name: 'Unhide QAHIDE SWEEP TO MMF 3' }).click()
+    await rowAction(page, 'QAHIDE SWEEP TO MMF 3', 'Unhide QAHIDE SWEEP TO MMF 3')
     await expect.poll(() => totalSpend(cookie)).toBe(240)
     await expect(page.locator('span:visible', { hasText: /^hidden$/ })).toHaveCount(2)
   })
@@ -447,6 +447,14 @@ test.describe('rule adds tags', () => {
     await page.getByRole('button', { name: 'Show transactions tagged reimbursable' }).first().click()
     await expect(page.locator('label', { hasText: /^Tag/ }).locator('select')).toHaveValue('reimbursable')
     await expect(page.getByText(/QATAGR UBER TRIP/).locator('visible=true')).toHaveCount(3)
+    const vp = page.viewportSize()!
+    if (vp.width < 768) {
+      // The filter stack stays collapsed; a chip says what is applied (#554).
+      await expect(page.getByRole('button', { name: /^Filters/ })).toHaveAttribute('aria-expanded', 'false')
+      await expect(page.getByRole('button', { name: 'Remove filter Tag: reimbursable' })).toBeVisible()
+      const first = (await page.locator('tbody tr').first().boundingBox())!
+      expect(first.y, 'first row starts on the first screen').toBeLessThan(vp.height)
+    }
     await expect(page.getByText('QATAGR Corner shop').locator('visible=true')).toHaveCount(0)
     await expectNoOverflow(page)
     await testInfo.attach(`${testInfo.project.name}-tags-filtered`, {
@@ -701,4 +709,16 @@ async function expectInViewport(page: Page, loc: ReturnType<Page['getByRole']> |
   expect(box, 'element rendered').not.toBeNull()
   expect(box!.x, 'left edge on screen').toBeGreaterThanOrEqual(0)
   expect(box!.x + box!.width, 'right edge on screen').toBeLessThanOrEqual(vw)
+}
+
+// #554: on a phone a row's secondary actions sit behind "More actions";
+// desktop keeps them as inline icon buttons with the same names.
+async function rowAction(page: Page, label: string, name: string) {
+  const more = page.getByRole('button', { name: `More actions for ${label}` })
+  if (await more.isVisible()) {
+    await more.click()
+    await page.getByRole('menu').getByRole('menuitem', { name, exact: true }).click()
+  } else {
+    await page.getByRole('button', { name, exact: true }).click()
+  }
 }

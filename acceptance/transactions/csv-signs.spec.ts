@@ -45,6 +45,20 @@ test.describe('CSV amount signs', () => {
     await expect(warning).toContainText('Money in 174.55 USD (2)')
     await expectInViewport(page, page.getByRole('checkbox', { name: 'Flip signs' }))
     await expectNoOverflow(page)
+    // #554: every preview column, Status included, sits inside the modal;
+    // the page-level overflow check can't see a column clipped inside it.
+    const dialog = page.getByRole('dialog')
+    const modal = (await dialog.boundingBox())!
+    for (const loc of [
+      dialog.getByRole('columnheader', { name: 'Status' }),
+      dialog.getByRole('columnheader', { name: 'Amount' }),
+      dialog.getByText('new', { exact: true }).first(),
+      dialog.getByText('Sign Restaurant').locator('visible=true').first(),
+    ]) {
+      const box = (await loc.boundingBox())!
+      expect(box.x, 'preview cell starts inside the modal').toBeGreaterThanOrEqual(modal.x)
+      expect(box.x + box.width, 'preview cell ends inside the modal').toBeLessThanOrEqual(modal.x + modal.width)
+    }
     await testInfo.attach(`${testInfo.project.name}-sign-warning`, {
       body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
     })

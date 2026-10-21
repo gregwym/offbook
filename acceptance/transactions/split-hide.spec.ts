@@ -31,7 +31,7 @@ test.describe('split and hide journey', () => {
     await expect(page.getByText('QASPLIT Superstore').first()).toBeVisible()
 
     // Split $100 into $70 groceries + $30 gas.
-    await page.getByRole('button', { name: 'Split QASPLIT Superstore' }).click()
+    await rowAction(page, 'QASPLIT Superstore', 'Split QASPLIT Superstore')
     const dlg = page.getByRole('dialog', { name: 'Split QASPLIT Superstore' })
     await expect(dlg).toBeVisible()
     // Over-allocating shows a formatted amount (#506).
@@ -43,7 +43,7 @@ test.describe('split and hide journey', () => {
     await expect(dlg).toBeHidden()
 
     // A fresh split auto-fills the last part: one number is enough (#506).
-    await page.getByRole('button', { name: 'Split QASPLIT Superstore' }).click()
+    await rowAction(page, 'QASPLIT Superstore', 'Split QASPLIT Superstore')
     await dlg.getByLabel('Amount for part 1').fill('70.00')
     await expect(dlg.getByLabel('Amount for part 2')).toHaveValue('30.00')
     await dlg.getByLabel('Category for part 2').selectOption({ label: gas.name })
@@ -59,7 +59,7 @@ test.describe('split and hide journey', () => {
     expect(spend.gas).toBe(70) // 30 from split + 40 gadget
 
     // Hide the gadget: gone from spending, still in the ledger, reversible.
-    await page.getByRole('button', { name: 'Hide QASPLIT One-off gadget' }).click()
+    await rowAction(page, 'QASPLIT One-off gadget', 'Hide QASPLIT One-off gadget')
     await expect(page.locator('span:visible', { hasText: /^hidden$/ }).first()).toBeVisible()
     await expect(page.getByText('QASPLIT One-off gadget').locator('visible=true').first()).toBeVisible()
     await expect.poll(async () => (await byCategory(cookie, now)).gas).toBe(30)
@@ -67,7 +67,7 @@ test.describe('split and hide journey', () => {
     await page.reload()
     await expect(page.locator('span:visible', { hasText: /^hidden$/ }).first()).toBeVisible()
 
-    await page.getByRole('button', { name: 'Unhide QASPLIT One-off gadget' }).click()
+    await rowAction(page, 'QASPLIT One-off gadget', 'Unhide QASPLIT One-off gadget')
     await expect.poll(async () => (await byCategory(cookie, now)).gas).toBe(70)
     await expect(page.locator('span:visible', { hasText: /^hidden$/ })).toHaveCount(0)
     await expectNoOverflow(page)
@@ -114,4 +114,16 @@ async function signIn(page: Page, email: string, password: string) {
 async function expectNoOverflow(page: Page) {
   const o = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)
   expect(o, 'no horizontal overflow').toBe(false)
+}
+
+// #554: on a phone a row's secondary actions sit behind "More actions";
+// desktop keeps them as inline icon buttons with the same names.
+async function rowAction(page: Page, label: string, name: string) {
+  const more = page.getByRole('button', { name: `More actions for ${label}` })
+  if (await more.isVisible()) {
+    await more.click()
+    await page.getByRole('menu').getByRole('menuitem', { name, exact: true }).click()
+  } else {
+    await page.getByRole('button', { name, exact: true }).click()
+  }
 }
