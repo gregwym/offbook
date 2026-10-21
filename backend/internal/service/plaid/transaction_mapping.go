@@ -120,7 +120,10 @@ func MergePlaidUpdate(existing model.Transaction, incoming PlaidTransaction, acc
 	merged.AssetID = mapped.AssetID
 	merged.Amount = mapped.Amount
 	merged.Description = mapped.Description
-	merged.MerchantName = mapped.MerchantName
+	// A merchant the user fixed by hand is pinned (#569).
+	if existing.MerchantEditedAt == nil {
+		merged.MerchantName = mapped.MerchantName
+	}
 	merged.TransactionDate = mapped.TransactionDate
 	merged.PostedDate = mapped.PostedDate
 	merged.Pending = mapped.Pending
@@ -136,7 +139,7 @@ func MergePlaidUpdate(existing model.Transaction, incoming PlaidTransaction, acc
 	// User-edited fields — preserve. Intentionally not enumerated as
 	// "deny-list overlay" because the safer default for unknown future
 	// fields is "leave it alone".
-	//   existing.Notes, existing.IsTransfer, existing.TransferPairID
-	// remain on `merged`.
+	//   existing.Notes, existing.IsTransfer, existing.TransferPairID,
+	//   existing.MerchantEditedAt remain on `merged`.
 	return merged, nil
 }

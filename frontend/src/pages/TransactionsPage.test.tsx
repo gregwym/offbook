@@ -384,6 +384,27 @@ describe('TransactionsPage tags (#544)', () => {
   })
 })
 
+// #569: a row with a note shows a "note" chip (tooltip on desktop, written
+// out on a phone) that opens Edit details.
+describe('TransactionsPage notes (#569)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('shows the note and opens Edit details from the chip', async () => {
+    const row = { ...fx.transaction1, id: 52, description: 'NOTE CAFE', notes: 'Coffee with Sam', tags: [] }
+    server.use(http.get(`${API}/transactions`, () => HttpResponse.json({ data: [row], total: 1 })))
+    renderPage(<TransactionsPage />)
+    await expectHealthySmoke()
+    const chip = await screen.findByRole('button', { name: 'Note: Coffee with Sam. Edit details for NOTE CAFE' })
+    expect(chip).toHaveAttribute('title', 'Coffee with Sam')
+    expect(screen.getByText('Coffee with Sam')).toBeInTheDocument()
+    fireEvent.click(chip)
+    expect(await screen.findByRole('dialog', { name: 'Edit details' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Notes')).toHaveValue('Coffee with Sam')
+  })
+})
+
 // #554: on a phone the row keeps category + reviewed inline and folds the
 // rest into one "More actions" menu with keyboard support.
 describe('TransactionsPage row actions menu (#554)', () => {
@@ -410,6 +431,7 @@ describe('TransactionsPage row actions menu (#554)', () => {
     expect(menu.closest('table')).toBeNull()
     const items = within(menu).getAllByRole('menuitem')
     expect(items.map((i) => i.getAttribute('aria-label'))).toEqual([
+      'Edit details for CORNER CAFE',
       'Create rule from CORNER CAFE',
       'Split CORNER CAFE',
       'Tags for CORNER CAFE',
@@ -418,10 +440,17 @@ describe('TransactionsPage row actions menu (#554)', () => {
     ])
     expect(items[0]).toHaveFocus()
     fireEvent.keyDown(menu, { key: 'ArrowUp' })
-    expect(items[4]).toHaveFocus()
+    expect(items[5]).toHaveFocus()
     fireEvent.keyDown(menu, { key: 'Escape' })
     expect(screen.queryByRole('menu')).toBeNull()
     expect(more).toHaveFocus()
+
+    // Edit details (#569) opens the merchant/notes dialog.
+    fireEvent.click(more)
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Edit details for CORNER CAFE' }))
+    expect(await screen.findByRole('dialog', { name: 'Edit details' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'Edit details' })).toBeNull()
 
     // Choosing an item closes the menu and runs the action.
     fireEvent.click(more)
@@ -451,6 +480,7 @@ describe('TransactionsPage desktop row actions (#563)', () => {
     ])
     fireEvent.click(within(desktopCell).getByRole('button', { name: 'More actions for DESK CAFE' }))
     expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((i) => i.getAttribute('aria-label'))).toEqual([
+      'Edit details for DESK CAFE',
       'Create rule from DESK CAFE',
       'Split DESK CAFE',
       'Tags for DESK CAFE',

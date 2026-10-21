@@ -63,6 +63,10 @@ type Transaction struct {
 	// HiddenAt (#465) marks a flow row the user excluded from spending, income,
 	// budgets and merchant reports. The ledger/balances are unaffected.
 	HiddenAt *time.Time `json:"hidden_at,omitempty"`
+	// MerchantEditedAt (#569) pins a merchant name the user fixed by hand:
+	// Plaid sync and rule renames keep it instead of overwriting it. Nil =
+	// bank/rule-owned; clearing the merchant un-pins it.
+	MerchantEditedAt *time.Time `json:"merchant_edited_at,omitempty"`
 	// Pending (#513) is true while the bank hasn't posted the row yet (Plaid
 	// `pending`). Bank-owned: sync overwrites it; the pending -> posted
 	// adoption clears it on the same row, keeping the user's edits.

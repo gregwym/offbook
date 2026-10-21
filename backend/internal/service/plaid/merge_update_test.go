@@ -338,3 +338,50 @@ func TestMergePlaidUpdate_RuleAddTagsOnAddOnly(t *testing.T) {
 		t.Errorf("merged tags = %v, want [] (user's choice survives)", merged.Tags)
 	}
 }
+
+// TestMergePlaidUpdate_PinnedMerchantSurvives (#569): a merchant the user
+// fixed by hand survives a modify / pending→posted (both go through
+// MergePlaidUpdate), even when a rename rule matches; an unpinned merchant
+// still follows the bank (or the rule).
+func TestMergePlaidUpdate_PinnedMerchantSurvives(t *testing.T) {
+	bank := "SQ *BLUE BOTTLE"
+	clean := "Coffee shop"
+	rules := categorization.Compile([]model.CategorizationRule{
+		{ID: 7, MatchType: "contains", Pattern: "BLUE BOTTLE", IsActive: true, RenameMerchant: &clean},
+	})
+	in := plaidsvc.PlaidTransaction{
+		PlaidTransactionID: "ptx-posted", PendingTransactionID: "ptx-pending", PlaidAccountID: "pa",
+		Amount: decimal.RequireFromString("6.50"), Name: "SQ *BLUE BOTTLE 123", MerchantName: &bank, Date: "2026-05-18",
+	}
+	edited := time.Date(2026, 5, 17, 8, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name  string
+		rules []categorization.CompiledRule
+		pin   *time.Time
+		want  string
+	}{
+		{"pinned, no rules", nil, &edited, "Blue Bottle Coffee"},
+		{"pinned beats rename rule", rules, &edited, "Blue Bottle Coffee"},
+		{"unpinned follows bank", nil, nil, bank},
+		{"unpinned follows rename rule", rules, nil, clean},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			existing := model.Transaction{ID: 3, UserID: 7, AccountID: 11, AssetID: 1, Source: "plaid", Pending: true,
+				PlaidTransactionID: ptr("ptx-pending"), TransactionDate: mustDate("2026-05-17"),
+				MerchantName: ptr("Blue Bottle Coffee"), MerchantEditedAt: tc.pin}
+			merged, err := plaidsvc.MergePlaidUpdate(existing, in, 11, 1, nil, tc.rules)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if merged.MerchantName == nil || *merged.MerchantName != tc.want {
+				t.Errorf("merchant = %v, want %q", merged.MerchantName, tc.want)
+			}
+			if (merged.MerchantEditedAt == nil) != (tc.pin == nil) {
+				t.Errorf("merchant_edited_at = %v, want %v", merged.MerchantEditedAt, tc.pin)
+			}
+			if !merged.Amount.Equal(decimal.RequireFromString("-6.50")) {
+				t.Errorf("amount = %s, want -6.50 (bank-owned)", merged.Amount)
+			}
+		})
+	}
+}
