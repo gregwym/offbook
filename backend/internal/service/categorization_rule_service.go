@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -30,6 +31,11 @@ var (
 	ErrUnknownRuleAccount = errors.New("account does not exist")
 	ErrInvalidAmountRange = errors.New("amount_min and amount_max must be >= 0 and amount_min <= amount_max")
 	ErrRuleHasNoAction    = errors.New("rule must set a category, rename the merchant, add tags, hide or mark reviewed")
+	// ErrRuleApplyRunNotFound: no such apply run for this user (#565).
+	ErrRuleApplyRunNotFound = errors.New("rule apply run not found")
+	// ErrRuleApplyNotUndoable: the run was already undone, or a newer run
+	// exists and must be undone first (#565).
+	ErrRuleApplyNotUndoable = errors.New("only your latest rules run can be undone, once")
 )
 
 // maxRenameMerchant bounds a rule's merchant rename; merchant names are
@@ -377,6 +383,9 @@ type ApplyResult struct {
 	// DryRun is true when nothing was written; Updated and the per-action
 	// counts then describe the rows that would change.
 	DryRun bool `json:"dry_run"`
+	// RunID identifies the committed run so it can be undone (#565). Nil on
+	// a dry run and when nothing changed.
+	RunID *int64 `json:"run_id,omitempty"`
 }
 
 // count adds the actions d takes on t to the per-action counters. Call it
@@ -457,6 +466,9 @@ func (s *CategorizationRuleService) apply(ctx context.Context, userID int64, sco
 		// tx-bound repo so all writes hit the same Postgres transaction.
 		err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			txRepo := repository.NewTransactionRepository(tx)
+			// Prior state of each row this chunk changes, recorded in the
+			// same transaction as the writes so the run can be undone (#565).
+			var changes []model.RuleApplyChange
 			for i := range batch {
 				row := &batch[i]
 				result.Scanned++
@@ -482,11 +494,28 @@ func (s *CategorizationRuleService) apply(ctx context.Context, userID int64, sco
 					result.Updated++
 					continue
 				}
+				change := model.ChangeFromTransaction(row)
 				d.SetActions(row)
 				if err := txRepo.Update(ctx, row); err != nil {
 					return fmt.Errorf("update transaction %d: %w", row.ID, err)
 				}
+				change.AppliedUpdatedAt = row.UpdatedAt
+				changes = append(changes, change)
 				result.Updated++
+			}
+			if len(changes) == 0 {
+				return nil
+			}
+			runRepo := repository.NewRuleApplyRunRepository(tx)
+			if result.RunID == nil {
+				run := &model.RuleApplyRun{UserID: userID, Scope: scope}
+				if err := runRepo.Create(ctx, run); err != nil {
+					return fmt.Errorf("record apply run: %w", err)
+				}
+				result.RunID = &run.ID
+			}
+			if err := runRepo.AddChanges(ctx, *result.RunID, changes); err != nil {
+				return fmt.Errorf("record apply changes: %w", err)
 			}
 			return nil
 		})
@@ -498,6 +527,66 @@ func (s *CategorizationRuleService) apply(ctx context.Context, userID int64, sco
 		}
 	}
 	return result, nil
+}
+
+// LatestApplyRun returns the user's most recent committed apply run (#565),
+// or ErrRuleApplyRunNotFound when there is none.
+func (s *CategorizationRuleService) LatestApplyRun(ctx context.Context, userID int64) (*model.RuleApplyRun, error) {
+	if s.db == nil {
+		return nil, ErrRuleApplyRunNotFound
+	}
+	run, err := repository.NewRuleApplyRunRepository(s.db).Latest(ctx, userID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, ErrRuleApplyRunNotFound
+	}
+	return run, err
+}
+
+// UndoApply reverts the user's latest apply run (#565): every row it changed
+// gets its prior category, provenance, merchant, hidden, review and tag state
+// back, in one DB transaction. A row modified since the run (a manual edit, a
+// sync merge, a later rule at import) is kept as it is and counted in
+// RowsKept. Amounts and balances are never touched — a rule run doesn't
+// change them. Undoing twice, or undoing a run that isn't the latest, is
+// ErrRuleApplyNotUndoable.
+func (s *CategorizationRuleService) UndoApply(ctx context.Context, userID, runID int64) (*model.RuleApplyRun, error) {
+	if s.db == nil {
+		return nil, ErrRuleApplyRunNotFound
+	}
+	var out *model.RuleApplyRun
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		runRepo := repository.NewRuleApplyRunRepository(tx)
+		run, err := runRepo.GetForUpdate(ctx, userID, runID)
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrRuleApplyRunNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if run.UndoneAt != nil {
+			return ErrRuleApplyNotUndoable
+		}
+		latest, err := runRepo.Latest(ctx, userID)
+		if err != nil {
+			return err
+		}
+		if latest.ID != run.ID {
+			return ErrRuleApplyNotUndoable
+		}
+		restored, err := runRepo.Restore(ctx, userID, run.ID)
+		if err != nil {
+			return fmt.Errorf("restore transactions: %w", err)
+		}
+		if err := runRepo.MarkUndone(ctx, run, time.Now().UTC(), restored, run.RowsChanged-restored); err != nil {
+			return fmt.Errorf("mark run undone: %w", err)
+		}
+		out = run
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // DraftRuleInput is an unsaved rule to evaluate. RuleID, when set, means the

@@ -77,6 +77,21 @@ export type ApplyResult = {
   // true when nothing was written; `updated` and the per-action counts then
   // describe what would change.
   dry_run?: boolean
+  // Id of the committed run, for undo (#565). Absent on a dry run and when
+  // nothing changed.
+  run_id?: number
+}
+
+// Mirrors model.RuleApplyRun — a committed apply run that can be undone
+// (#565). rows_restored/rows_kept are set once it is undone.
+export type RuleApplyRun = {
+  id: number
+  scope: ApplyScope
+  rows_changed: number
+  created_at: string
+  undone_at?: string
+  rows_restored?: number
+  rows_kept?: number
 }
 
 export type ApplyScope = 'all' | 'uncategorized' | 'plaid_default'

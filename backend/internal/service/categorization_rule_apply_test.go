@@ -830,6 +830,11 @@ func TestCategorizationRuleService_Apply_ActionCounts(t *testing.T) {
 			if err != nil {
 				t.Fatalf("run: %v", err)
 			}
+			// A committed run that changed rows carries an undo id (#565).
+			if wantRun := !got.DryRun && got.Updated > 0; (got.RunID != nil) != wantRun {
+				t.Errorf("run id = %v, want present=%v", got.RunID, wantRun)
+			}
+			got.RunID = nil
 			if got != tc.want {
 				t.Errorf("got %+v, want %+v", got, tc.want)
 			}

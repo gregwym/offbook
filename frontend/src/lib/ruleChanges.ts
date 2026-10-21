@@ -1,4 +1,4 @@
-import type { ApplyResult } from '../types/categorizationRule'
+import type { ApplyResult, RuleApplyRun } from '../types/categorizationRule'
 
 // Words for what rules change (#552), shared by the Rules page's
 // preview/apply banner and the rule form's live impact so both describe a
@@ -71,4 +71,26 @@ export function formatApplyResult(r: ApplyResult): string {
     if (manual) body += `; ${manual}`
   }
   return r.dry_run ? `${body}. Nothing has been changed.` : `${body}.`
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+
+// Says what undoing a re-apply did (#565), e.g. "Undone: 11 transactions
+// are back as they were; 1 transaction changed since then stays as it is."
+export function formatUndoResult(run: RuleApplyRun): string {
+  const restored = run.rows_restored ?? 0
+  const kept = run.rows_kept ?? 0
+  let body =
+    restored === 0
+      ? 'Undone: no transactions needed restoring'
+      : `Undone: ${plural(restored, 'transaction is', 'transactions are')} back as ${restored === 1 ? 'it was' : 'they were'}`
+  if (kept > 0) {
+    body += `; ${plural(kept, 'transaction', 'transactions')} changed since then ${kept === 1 ? 'stays as it is' : 'stay as they are'}`
+  }
+  return `${body}.`
+}
+
+// "Last re-apply changed 12 transactions." — the undo offer's lead (#565).
+export function describeApplyRun(run: RuleApplyRun): string {
+  return `Last re-apply changed ${plural(run.rows_changed, 'transaction', 'transactions')}.`
 }

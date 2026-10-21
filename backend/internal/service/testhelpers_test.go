@@ -30,6 +30,7 @@ func seedTestUser(t *testing.T, g *gorm.DB) int64 {
 	t.Cleanup(func() {
 		// Cascade scrub: child rows first, then the user. None of these
 		// tables have ON DELETE CASCADE, so order matters.
+		g.Exec("DELETE FROM rule_apply_runs WHERE user_id = ?", u.ID)
 		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.Transaction{})
 		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.Position{})
 		g.Unscoped().Where("user_id = ?", u.ID).Delete(&model.Budget{})

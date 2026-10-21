@@ -5,6 +5,7 @@ import type {
   CategorizationRule,
   CreateRuleInput,
   DraftPreview,
+  RuleApplyRun,
   UpdateRuleInput,
 } from '../types/categorizationRule'
 
@@ -39,6 +40,19 @@ export async function reorderRules(ruleIds: number[]): Promise<CategorizationRul
 export async function applyRules(scope?: ApplyScope, dryRun?: boolean): Promise<ApplyResult> {
   const body = { ...(scope ? { scope } : {}), ...(dryRun ? { dry_run: true } : {}) }
   const res = await apiClient.post<ApiItem<ApplyResult>>('/categorization-rules/apply', body)
+  return res.data.data
+}
+
+// The latest committed apply run, or null when rules were never applied
+// (#565).
+export async function getLatestApplyRun(): Promise<RuleApplyRun | null> {
+  const res = await apiClient.get<ApiItem<RuleApplyRun | null>>('/categorization-rules/apply-runs/latest')
+  return res.data.data
+}
+
+// Reverts the latest apply run; rows changed since it are kept (#565).
+export async function undoApplyRun(id: number): Promise<RuleApplyRun> {
+  const res = await apiClient.post<ApiItem<RuleApplyRun>>(`/categorization-rules/apply-runs/${id}/undo`)
   return res.data.data
 }
 
