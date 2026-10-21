@@ -85,7 +85,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	tradeHandler := handler.NewTradeHandler(tradeSvc)
 	assetHandler := handler.NewAssetHandler(assetRepo)
 
-	categorySvc := service.NewCategoryService(categoryRepo)
+	categorySvc := service.NewCategoryService(categoryRepo).WithDB(gormDB)
 	categoryHandler := handler.NewCategoryHandler(categorySvc)
 
 	ruleSvc := service.NewCategorizationRuleService(ruleRepo, categoryRepo).WithBulkApply(transactionRepo, gormDB).WithAccounts(accountRepo)

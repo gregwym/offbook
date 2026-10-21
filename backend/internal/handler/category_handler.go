@@ -23,6 +23,8 @@ func (h *CategoryHandler) Register(g *gin.RouterGroup) {
 	g.GET("/categories", h.List)
 	g.POST("/categories", h.Create)
 	g.PATCH("/categories/:id", h.Rename)
+	g.GET("/categories/:id/usage", h.Usage)
+	g.DELETE("/categories/:id", h.Delete)
 }
 
 func (h *CategoryHandler) List(c *gin.Context) {
@@ -77,6 +79,53 @@ func (h *CategoryHandler) Rename(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": cat})
 }
 
+// Usage handles GET /categories/:id/usage (#575): what deleting or merging
+// the category would move.
+func (h *CategoryHandler) Usage(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id", "code": "INVALID_ID"})
+		return
+	}
+	u, err := h.svc.Usage(c.Request.Context(), auth.MustUserID(c.Request.Context()), id)
+	if err != nil {
+		writeCategoryError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": u})
+}
+
+// Delete handles DELETE /categories/:id?replace_with=<id|none> (#575). The
+// replacement is required so nothing is moved to Uncategorized by accident;
+// a category id there merges this category into it.
+func (h *CategoryHandler) Delete(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id", "code": "INVALID_ID"})
+		return
+	}
+	var replaceWith *int64
+	switch raw := c.Query("replace_with"); raw {
+	case "":
+		c.JSON(http.StatusBadRequest, gin.H{"error": "replace_with is required: a category id, or none for Uncategorized", "code": "INVALID_REPLACEMENT"})
+		return
+	case "none":
+	default:
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "replace_with must be a category id or none", "code": "INVALID_REPLACEMENT"})
+			return
+		}
+		replaceWith = &v
+	}
+	moved, err := h.svc.Delete(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, replaceWith)
+	if err != nil {
+		writeCategoryError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": moved})
+}
+
 func writeCategoryError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, service.ErrInvalidCategoryName):
@@ -85,6 +134,8 @@ func writeCategoryError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_PARENT"})
 	case errors.Is(err, service.ErrCategoryNameTaken):
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "code": "CATEGORY_NAME_TAKEN"})
+	case errors.Is(err, service.ErrInvalidReplacement):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REPLACEMENT"})
 	case errors.Is(err, service.ErrCategoryReadOnly):
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "code": "CATEGORY_READ_ONLY"})
 	case errors.Is(err, service.ErrCategoryNotFound):
