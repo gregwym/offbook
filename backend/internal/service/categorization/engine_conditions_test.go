@@ -41,7 +41,7 @@ func TestMatch_AccountAndAmountConditions(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := tc.rule
-			r.ID, r.CategoryID, r.MatchType, r.Pattern, r.IsActive = 1, 9, "contains", "NETFLIX", true
+			r.ID, r.CategoryID, r.MatchType, r.Pattern, r.IsActive = 1, new(int64(9)), "contains", "NETFLIX", true
 			rules := categorization.Compile([]model.CategorizationRule{r})
 			tx := &model.Transaction{AccountID: tc.accountID, Amount: decimal.RequireFromString(tc.amount), Description: ptr("NETFLIX.COM")}
 			_, ok := categorization.Match(rules, tx)
@@ -56,8 +56,8 @@ func TestMatch_AccountAndAmountConditions(t *testing.T) {
 // route rows by amount band; a row outside both falls through.
 func TestMatch_AmountBandsSplitOneMerchant(t *testing.T) {
 	rules := categorization.Compile([]model.CategorizationRule{
-		{ID: 1, CategoryID: 10, MatchType: "contains", Pattern: "AMZN", AmountMax: dec("20"), IsActive: true},
-		{ID: 2, CategoryID: 20, MatchType: "contains", Pattern: "AMZN", AmountMin: dec("500"), IsActive: true},
+		{ID: 1, CategoryID: new(int64(10)), MatchType: "contains", Pattern: "AMZN", AmountMax: dec("20"), IsActive: true},
+		{ID: 2, CategoryID: new(int64(20)), MatchType: "contains", Pattern: "AMZN", AmountMin: dec("500"), IsActive: true},
 	})
 	cases := []struct {
 		amount  string
@@ -73,8 +73,8 @@ func TestMatch_AmountBandsSplitOneMerchant(t *testing.T) {
 		t.Run(tc.amount, func(t *testing.T) {
 			tx := &model.Transaction{AccountID: 1, Amount: decimal.RequireFromString(tc.amount), Description: ptr("AMZN Mktp US")}
 			d, ok := categorization.Match(rules, tx)
-			if ok != tc.wantOK || d.CategoryID != tc.wantCat {
-				t.Errorf("Match = (%d, %v), want (%d, %v)", d.CategoryID, ok, tc.wantCat, tc.wantOK)
+			if ok != tc.wantOK || catOf(d) != tc.wantCat {
+				t.Errorf("Match = (%d, %v), want (%d, %v)", catOf(d), ok, tc.wantCat, tc.wantOK)
 			}
 		})
 	}
@@ -84,8 +84,8 @@ func TestMatch_AmountBandsSplitOneMerchant(t *testing.T) {
 // so a conditioned rule must not fire there (it would over-match).
 func TestCategorize_SkipsConditionedRules(t *testing.T) {
 	rules := categorization.Compile([]model.CategorizationRule{
-		{ID: 1, CategoryID: 10, MatchType: "contains", Pattern: "VENMO", AccountID: i64(3), IsActive: true},
-		{ID: 2, CategoryID: 20, MatchType: "contains", Pattern: "VENMO", AmountMin: dec("1"), IsActive: true},
+		{ID: 1, CategoryID: new(int64(10)), MatchType: "contains", Pattern: "VENMO", AccountID: i64(3), IsActive: true},
+		{ID: 2, CategoryID: new(int64(20)), MatchType: "contains", Pattern: "VENMO", AmountMin: dec("1"), IsActive: true},
 	})
 	if _, ok := categorization.Categorize(rules, 0, nil, ptr("VENMO PAYMENT"), nil); ok {
 		t.Error("Categorize matched a conditioned rule without account/amount")
@@ -95,7 +95,7 @@ func TestCategorize_SkipsConditionedRules(t *testing.T) {
 // TestApply_UsesConditions: the import path (Apply) honors the conditions.
 func TestApply_UsesConditions(t *testing.T) {
 	rules := categorization.Compile([]model.CategorizationRule{
-		{ID: 1, CategoryID: 10, MatchType: "contains", Pattern: "VENMO", AccountID: i64(3), IsActive: true},
+		{ID: 1, CategoryID: new(int64(10)), MatchType: "contains", Pattern: "VENMO", AccountID: i64(3), IsActive: true},
 	})
 	joint := &model.Transaction{AccountID: 3, Amount: decimal.RequireFromString("-1800"), Description: ptr("VENMO PAYMENT")}
 	if _, ok := categorization.Apply(joint, rules); !ok || joint.CategoryID == nil || *joint.CategoryID != 10 {

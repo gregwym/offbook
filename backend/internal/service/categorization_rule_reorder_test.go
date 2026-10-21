@@ -29,7 +29,7 @@ func TestCategorizationRuleService_Reorder(t *testing.T) {
 	}
 	mk := func(pattern string, catID int64, priority int) *model.CategorizationRule {
 		r, err := svc.Create(ctx, userID, service.CreateRuleInput{
-			Pattern: pattern, MatchType: "contains", CategoryID: catID, Priority: priority,
+			Pattern: pattern, MatchType: "contains", CategoryID: new(catID), Priority: priority,
 		})
 		if err != nil {
 			t.Fatalf("create %s: %v", pattern, err)
@@ -80,7 +80,7 @@ func TestCategorizationRuleService_Reorder(t *testing.T) {
 
 	otherUser := seedTestUser(t, g)
 	foreign, err := svc.Create(ctx, otherUser, service.CreateRuleInput{
-		Pattern: "FOREIGN", MatchType: "contains", CategoryID: cats[0].ID, Priority: 1,
+		Pattern: "FOREIGN", MatchType: "contains", CategoryID: new(cats[0].ID), Priority: 1,
 	})
 	if err != nil {
 		t.Fatalf("create foreign: %v", err)

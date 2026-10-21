@@ -42,7 +42,7 @@ func TestCategorizationRuleService_Create_Validation(t *testing.T) {
 	base := service.CreateRuleInput{
 		Pattern:    "WHOLEFDS",
 		MatchType:  "contains",
-		CategoryID: catID,
+		CategoryID: new(catID),
 		Priority:   10,
 	}
 
@@ -63,7 +63,7 @@ func TestCategorizationRuleService_Create_Validation(t *testing.T) {
 			in.Pattern = `^AMZN\s`
 		}, nil},
 		{"negative priority", func(in *service.CreateRuleInput) { in.Priority = -1 }, service.ErrInvalidPriority},
-		{"unknown category", func(in *service.CreateRuleInput) { in.CategoryID = 9_999_999 }, service.ErrUnknownCategory},
+		{"unknown category", func(in *service.CreateRuleInput) { in.CategoryID = new(int64(9_999_999)) }, service.ErrUnknownCategory},
 	}
 
 	for _, tc := range cases {
@@ -97,7 +97,7 @@ func TestCategorizationRuleService_List_OrderAndScope(t *testing.T) {
 
 	mk := func(pattern string, priority int) *model.CategorizationRule {
 		r, err := svc.Create(ctx, userID, service.CreateRuleInput{
-			Pattern: pattern, MatchType: "contains", CategoryID: catID, Priority: priority,
+			Pattern: pattern, MatchType: "contains", CategoryID: new(catID), Priority: priority,
 		})
 		if err != nil {
 			t.Fatalf("create %s: %v", pattern, err)
@@ -148,7 +148,7 @@ func TestCategorizationRuleService_TenantIsolation(t *testing.T) {
 	catID := firstSystemCategory(t, g)
 
 	r, err := svc.Create(ctx, userA, service.CreateRuleInput{
-		Pattern: "TENANT-ISO", MatchType: "exact", CategoryID: catID, Priority: 5,
+		Pattern: "TENANT-ISO", MatchType: "exact", CategoryID: new(catID), Priority: 5,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -189,7 +189,7 @@ func TestCategorizationRuleService_Update_RevalidatesRegex(t *testing.T) {
 	catID := firstSystemCategory(t, g)
 
 	r, err := svc.Create(ctx, userID, service.CreateRuleInput{
-		Pattern: "WHOLEFDS", MatchType: "contains", CategoryID: catID, Priority: 10,
+		Pattern: "WHOLEFDS", MatchType: "contains", CategoryID: new(catID), Priority: 10,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)

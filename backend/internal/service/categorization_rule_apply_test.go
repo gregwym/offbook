@@ -112,7 +112,7 @@ func TestCategorizationRuleService_Apply_ScopeAll(t *testing.T) {
 	// Seed one rule.
 	rule := &model.CategorizationRule{
 		UserID: userID, Pattern: "WHOLEFDS", MatchType: "contains",
-		CategoryID: fixtureCat, Priority: 50, IsActive: true,
+		CategoryID: new(fixtureCat), Priority: 50, IsActive: true,
 	}
 	if err := g.Create(rule).Error; err != nil {
 		t.Fatalf("seed rule: %v", err)
@@ -196,7 +196,7 @@ func TestCategorizationRuleService_Apply_ScopeUncategorized(t *testing.T) {
 
 	rule := &model.CategorizationRule{
 		UserID: userID, Pattern: "WHOLEFDS", MatchType: "contains",
-		CategoryID: fixtureCat, Priority: 50, IsActive: true,
+		CategoryID: new(fixtureCat), Priority: 50, IsActive: true,
 	}
 	if err := g.Create(rule).Error; err != nil {
 		t.Fatalf("seed rule: %v", err)
@@ -263,7 +263,7 @@ func TestCategorizationRuleService_Apply_TenantIsolation(t *testing.T) {
 
 	ruleA := &model.CategorizationRule{
 		UserID: userA, Pattern: "WHOLEFDS", MatchType: "contains",
-		CategoryID: fixtureCat, Priority: 50, IsActive: true,
+		CategoryID: new(fixtureCat), Priority: 50, IsActive: true,
 	}
 	if err := g.Create(ruleA).Error; err != nil {
 		t.Fatalf("seed rule A: %v", err)
@@ -310,7 +310,7 @@ func TestCategorizationRuleService_Preview_WritesNothing(t *testing.T) {
 
 	rule := &model.CategorizationRule{
 		UserID: userID, Pattern: "WHOLEFDS", MatchType: "contains",
-		CategoryID: fixtureCat, Priority: 50, IsActive: true,
+		CategoryID: new(fixtureCat), Priority: 50, IsActive: true,
 	}
 	if err := g.Create(rule).Error; err != nil {
 		t.Fatalf("seed rule: %v", err)
@@ -358,7 +358,7 @@ func TestCategorizationRuleService_PreviewDraft(t *testing.T) {
 
 	rule := &model.CategorizationRule{
 		UserID: userID, Pattern: "WHOLEFDS", MatchType: "contains",
-		CategoryID: fixtureCat, Priority: 50, IsActive: true,
+		CategoryID: new(fixtureCat), Priority: 50, IsActive: true,
 	}
 	if err := g.Create(rule).Error; err != nil {
 		t.Fatalf("seed rule: %v", err)
@@ -372,7 +372,7 @@ func TestCategorizationRuleService_PreviewDraft(t *testing.T) {
 	mkTxn(t, g, userID, accountID, withDescription("SHELL GAS"))
 
 	draft := func(mut func(*service.DraftRuleInput)) service.DraftRuleInput {
-		in := service.DraftRuleInput{Pattern: "WHOLEFDS", MatchType: "contains", CategoryID: fixtureCat, Priority: 90, IsActive: true}
+		in := service.DraftRuleInput{Pattern: "WHOLEFDS", MatchType: "contains", CategoryID: new(fixtureCat), Priority: 90, IsActive: true}
 		mut(&in)
 		return in
 	}
@@ -431,7 +431,7 @@ func TestCategorizationRuleService_Apply_RenameMerchant(t *testing.T) {
 
 	rename := "  Amazon "
 	rule, err := svc.Create(ctx, userID, service.CreateRuleInput{
-		Pattern: "AMZN", MatchType: "contains", CategoryID: fixtureCat, Priority: 50, RenameMerchant: &rename,
+		Pattern: "AMZN", MatchType: "contains", CategoryID: new(fixtureCat), Priority: 50, RenameMerchant: &rename,
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -450,7 +450,7 @@ func TestCategorizationRuleService_Apply_RenameMerchant(t *testing.T) {
 	other := mkTxn(t, g, userID, accountID, withDescription("SHELL GAS"))
 
 	draft, err := svc.PreviewDraft(ctx, userID, service.DraftRuleInput{
-		RuleID: &rule.ID, Pattern: "AMZN", MatchType: "contains", CategoryID: fixtureCat, Priority: 50, IsActive: true, RenameMerchant: &rename,
+		RuleID: &rule.ID, Pattern: "AMZN", MatchType: "contains", CategoryID: new(fixtureCat), Priority: 50, IsActive: true, RenameMerchant: &rename,
 	})
 	if err != nil {
 		t.Fatalf("PreviewDraft: %v", err)
@@ -536,7 +536,7 @@ func TestCategorizationRuleService_Apply_HideMatches(t *testing.T) {
 	other := mkTxn(t, g, userID, accountID, withDescription("SHELL GAS"))
 
 	draft, err := svc.PreviewDraft(ctx, userID, service.DraftRuleInput{
-		Pattern: "SWEEP", MatchType: "contains", CategoryID: fixtureCat, Priority: 50, IsActive: true, HideMatches: true,
+		Pattern: "SWEEP", MatchType: "contains", CategoryID: new(fixtureCat), Priority: 50, IsActive: true, HideMatches: true,
 	})
 	if err != nil {
 		t.Fatalf("PreviewDraft: %v", err)
@@ -546,7 +546,7 @@ func TestCategorizationRuleService_Apply_HideMatches(t *testing.T) {
 	}
 
 	rule, err := svc.Create(ctx, userID, service.CreateRuleInput{
-		Pattern: "SWEEP", MatchType: "contains", CategoryID: fixtureCat, Priority: 50, HideMatches: true,
+		Pattern: "SWEEP", MatchType: "contains", CategoryID: new(fixtureCat), Priority: 50, HideMatches: true,
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -616,7 +616,7 @@ func TestCategorizationRuleService_Apply_MarkReviewed(t *testing.T) {
 	other := mkTxn(t, g, userID, accountID, withDescription("SHELL GAS"))
 
 	draft, err := svc.PreviewDraft(ctx, userID, service.DraftRuleInput{
-		Pattern: "PAYROLL", MatchType: "contains", CategoryID: fixtureCat, Priority: 50, IsActive: true, MarkReviewed: true,
+		Pattern: "PAYROLL", MatchType: "contains", CategoryID: new(fixtureCat), Priority: 50, IsActive: true, MarkReviewed: true,
 	})
 	if err != nil {
 		t.Fatalf("PreviewDraft: %v", err)
@@ -626,7 +626,7 @@ func TestCategorizationRuleService_Apply_MarkReviewed(t *testing.T) {
 	}
 
 	rule, err := svc.Create(ctx, userID, service.CreateRuleInput{
-		Pattern: "PAYROLL", MatchType: "contains", CategoryID: fixtureCat, Priority: 50, MarkReviewed: true,
+		Pattern: "PAYROLL", MatchType: "contains", CategoryID: new(fixtureCat), Priority: 50, MarkReviewed: true,
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -701,7 +701,7 @@ func TestCategorizationRuleService_Apply_AddTags(t *testing.T) {
 	}
 
 	draft, err := svc.PreviewDraft(ctx, userID, service.DraftRuleInput{
-		Pattern: "UBER", MatchType: "contains", CategoryID: fixtureCat, Priority: 50, IsActive: true,
+		Pattern: "UBER", MatchType: "contains", CategoryID: new(fixtureCat), Priority: 50, IsActive: true,
 		AddTags: []string{" work-travel ", "Reimbursable", "reimbursable"},
 	})
 	if err != nil {
@@ -712,13 +712,13 @@ func TestCategorizationRuleService_Apply_AddTags(t *testing.T) {
 	}
 
 	if _, err := svc.Create(ctx, userID, service.CreateRuleInput{
-		Pattern: "UBER", MatchType: "contains", CategoryID: fixtureCat, AddTags: []string{strings.Repeat("x", service.MaxTagLength+1)},
+		Pattern: "UBER", MatchType: "contains", CategoryID: new(fixtureCat), AddTags: []string{strings.Repeat("x", service.MaxTagLength+1)},
 	}); !errors.Is(err, service.ErrInvalidTags) {
 		t.Errorf("Create with an over-long tag: err = %v, want ErrInvalidTags", err)
 	}
 
 	rule, err := svc.Create(ctx, userID, service.CreateRuleInput{
-		Pattern: "UBER", MatchType: "contains", CategoryID: fixtureCat, Priority: 50,
+		Pattern: "UBER", MatchType: "contains", CategoryID: new(fixtureCat), Priority: 50,
 		AddTags: []string{" work-travel ", "Reimbursable", "reimbursable"},
 	})
 	if err != nil {
@@ -791,7 +791,7 @@ func TestCategorizationRuleService_Apply_ActionCounts(t *testing.T) {
 
 	rename := "Count Co"
 	in := service.CreateRuleInput{
-		Pattern: "QACOUNT", MatchType: "contains", CategoryID: fixtureCat, Priority: 50,
+		Pattern: "QACOUNT", MatchType: "contains", CategoryID: new(fixtureCat), Priority: 50,
 		RenameMerchant: &rename, HideMatches: true, MarkReviewed: true, AddTags: []string{"counted"},
 	}
 	draft, err := svc.PreviewDraft(ctx, userID, service.DraftRuleInput{

@@ -66,7 +66,7 @@ func TestCategorizationRuleService_AccountAndAmountConditions(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
 				in := tc.in
-				in.Pattern, in.MatchType, in.CategoryID = "X", "contains", smallCat
+				in.Pattern, in.MatchType, in.CategoryID = "X", "contains", new(smallCat)
 				if _, err := svc.Create(ctx, userID, in); !errors.Is(err, tc.want) {
 					t.Errorf("Create err = %v, want %v", err, tc.want)
 				}
@@ -79,7 +79,7 @@ func TestCategorizationRuleService_AccountAndAmountConditions(t *testing.T) {
 	mid := mkTxn(t, g, userID, joint, withDescription("AMZN Mktp US"), withAmount("-89.50"))
 	elsewhere := mkTxn(t, g, userID, other.ID, withDescription("AMZN Mktp US"), withAmount("-12.99"))
 
-	smallRule := service.CreateRuleInput{Pattern: "AMZN", MatchType: "contains", CategoryID: smallCat, AccountID: &joint, AmountMax: decPtr("20"), Priority: 20}
+	smallRule := service.CreateRuleInput{Pattern: "AMZN", MatchType: "contains", CategoryID: new(smallCat), AccountID: &joint, AmountMax: decPtr("20"), Priority: 20}
 	preview, err := svc.PreviewDraft(ctx, userID, service.DraftRuleInput{
 		Pattern: smallRule.Pattern, MatchType: smallRule.MatchType, CategoryID: smallRule.CategoryID,
 		AccountID: smallRule.AccountID, AmountMax: smallRule.AmountMax, Priority: smallRule.Priority, IsActive: true,
@@ -93,7 +93,7 @@ func TestCategorizationRuleService_AccountAndAmountConditions(t *testing.T) {
 	if _, err := svc.Create(ctx, userID, smallRule); err != nil {
 		t.Fatalf("create small rule: %v", err)
 	}
-	created, err := svc.Create(ctx, userID, service.CreateRuleInput{Pattern: "AMZN", MatchType: "contains", CategoryID: bigCat.ID, AmountMin: decPtr("500"), Priority: 10})
+	created, err := svc.Create(ctx, userID, service.CreateRuleInput{Pattern: "AMZN", MatchType: "contains", CategoryID: new(bigCat.ID), AmountMin: decPtr("500"), Priority: 10})
 	if err != nil {
 		t.Fatalf("create big rule: %v", err)
 	}

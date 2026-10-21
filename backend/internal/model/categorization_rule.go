@@ -8,10 +8,12 @@ import (
 )
 
 type CategorizationRule struct {
-	ID         int64  `gorm:"primaryKey" json:"id"`
-	UserID     int64  `gorm:"not null;index" json:"user_id"`
-	Pattern    string `gorm:"not null" json:"pattern"`
-	CategoryID int64  `gorm:"not null" json:"category_id"`
+	ID      int64  `gorm:"primaryKey" json:"id"`
+	UserID  int64  `gorm:"not null;index" json:"user_id"`
+	Pattern string `gorm:"not null" json:"pattern"`
+	// CategoryID is the category the rule sets. NULL means the rule keeps
+	// each matched row's category and only takes its other actions (#553).
+	CategoryID *int64 `json:"category_id"`
 	MatchType  string `gorm:"not null" json:"match_type"`
 	Priority   int    `gorm:"not null;default:0" json:"priority"`
 	IsActive   bool   `gorm:"not null;default:true" json:"is_active"`

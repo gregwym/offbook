@@ -78,10 +78,11 @@ func (h *CategorizationRuleHandler) Apply(c *gin.Context) {
 }
 
 type previewDraftRequest struct {
-	RuleID     *int64 `json:"rule_id"`
-	Pattern    string `json:"pattern"`
-	MatchType  string `json:"match_type"`
-	CategoryID int64  `json:"category_id"`
+	RuleID    *int64 `json:"rule_id"`
+	Pattern   string `json:"pattern"`
+	MatchType string `json:"match_type"`
+	// CategoryID: omit or null to keep each row's category (#553).
+	CategoryID *int64 `json:"category_id"`
 	AssetID    *int64 `json:"asset_id"`
 	// RenameMerchant: optional merchant rename on match (#534).
 	RenameMerchant *string `json:"rename_merchant"`
@@ -132,9 +133,10 @@ func (h *CategorizationRuleHandler) PreviewDraft(c *gin.Context) {
 }
 
 type createRuleRequest struct {
-	Pattern    string `json:"pattern"`
-	MatchType  string `json:"match_type"`
-	CategoryID int64  `json:"category_id"`
+	Pattern   string `json:"pattern"`
+	MatchType string `json:"match_type"`
+	// CategoryID: omit or null to keep each row's category (#553).
+	CategoryID *int64 `json:"category_id"`
 	AssetID    *int64 `json:"asset_id"`
 	// RenameMerchant: optional merchant rename on match (#534).
 	RenameMerchant *string `json:"rename_merchant"`
@@ -203,11 +205,13 @@ func (h *CategorizationRuleHandler) List(c *gin.Context) {
 }
 
 type updateRuleRequest struct {
-	Pattern      *string `json:"pattern"`
-	MatchType    *string `json:"match_type"`
-	CategoryID   *int64  `json:"category_id"`
-	AssetID      *int64  `json:"asset_id"`
-	ClearAssetID bool    `json:"clear_asset_id"`
+	Pattern    *string `json:"pattern"`
+	MatchType  *string `json:"match_type"`
+	CategoryID *int64  `json:"category_id"`
+	// ClearCategoryID: keep each row's category from now on (#553).
+	ClearCategoryID bool   `json:"clear_category_id"`
+	AssetID         *int64 `json:"asset_id"`
+	ClearAssetID    bool   `json:"clear_asset_id"`
 	// RenameMerchant: a blank string clears the rename (#534).
 	RenameMerchant *string `json:"rename_merchant"`
 	// HideMatches: turn hiding on or off (#536).
@@ -238,23 +242,24 @@ func (h *CategorizationRuleHandler) Update(c *gin.Context) {
 		return
 	}
 	r, err := h.svc.Update(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, service.UpdateRuleInput{
-		Pattern:        req.Pattern,
-		MatchType:      req.MatchType,
-		CategoryID:     req.CategoryID,
-		AssetID:        req.AssetID,
-		ClearAssetID:   req.ClearAssetID,
-		RenameMerchant: req.RenameMerchant,
-		HideMatches:    req.HideMatches,
-		MarkReviewed:   req.MarkReviewed,
-		AddTags:        req.AddTags,
-		AccountID:      req.AccountID,
-		ClearAccountID: req.ClearAccountID,
-		AmountMin:      req.AmountMin,
-		ClearAmountMin: req.ClearAmountMin,
-		AmountMax:      req.AmountMax,
-		ClearAmountMax: req.ClearAmountMax,
-		Priority:       req.Priority,
-		IsActive:       req.IsActive,
+		Pattern:         req.Pattern,
+		MatchType:       req.MatchType,
+		CategoryID:      req.CategoryID,
+		ClearCategoryID: req.ClearCategoryID,
+		AssetID:         req.AssetID,
+		ClearAssetID:    req.ClearAssetID,
+		RenameMerchant:  req.RenameMerchant,
+		HideMatches:     req.HideMatches,
+		MarkReviewed:    req.MarkReviewed,
+		AddTags:         req.AddTags,
+		AccountID:       req.AccountID,
+		ClearAccountID:  req.ClearAccountID,
+		AmountMin:       req.AmountMin,
+		ClearAmountMin:  req.ClearAmountMin,
+		AmountMax:       req.AmountMax,
+		ClearAmountMax:  req.ClearAmountMax,
+		Priority:        req.Priority,
+		IsActive:        req.IsActive,
 	})
 	if err != nil {
 		h.writeServiceError(c, err)
@@ -289,6 +294,8 @@ func (h *CategorizationRuleHandler) writeServiceError(c *gin.Context, err error)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "UNKNOWN_ACCOUNT"})
 	case errors.Is(err, service.ErrInvalidTags):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_TAGS"})
+	case errors.Is(err, service.ErrRuleHasNoAction):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "RULE_HAS_NO_ACTION"})
 	case errors.Is(err, service.ErrInvalidApplyScope):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_SCOPE"})
 	case errors.Is(err, service.ErrEmptyPattern),

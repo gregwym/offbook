@@ -190,7 +190,7 @@ func TestMergePlaidUpdate_RuleRenameSurvivesModify(t *testing.T) {
 	raw := "AMZN Mktp US"
 	clean := "Amazon"
 	rules := categorization.Compile([]model.CategorizationRule{
-		{ID: 5, CategoryID: 9, MatchType: "contains", Pattern: "AMZN", IsActive: true, RenameMerchant: &clean},
+		{ID: 5, CategoryID: new(int64(9)), MatchType: "contains", Pattern: "AMZN", IsActive: true, RenameMerchant: &clean},
 	})
 	in := plaidsvc.PlaidTransaction{
 		PlaidTransactionID: "ptx-r", PlaidAccountID: "pa", Amount: decimal.RequireFromString("12.34"),
@@ -221,7 +221,7 @@ func TestMergePlaidUpdate_RuleRenameSurvivesModify(t *testing.T) {
 // row's hidden state is now — a row the user unhid stays visible.
 func TestMergePlaidUpdate_RuleHideOnAddOnly(t *testing.T) {
 	rules := categorization.Compile([]model.CategorizationRule{
-		{ID: 6, CategoryID: 9, MatchType: "contains", Pattern: "SWEEP", IsActive: true, HideMatches: true},
+		{ID: 6, CategoryID: new(int64(9)), MatchType: "contains", Pattern: "SWEEP", IsActive: true, HideMatches: true},
 	})
 	in := plaidsvc.PlaidTransaction{
 		PlaidTransactionID: "ptx-h", PlaidAccountID: "pa", Amount: decimal.RequireFromString("500"),
@@ -252,7 +252,7 @@ func TestMergePlaidUpdate_RuleHideOnAddOnly(t *testing.T) {
 // back to Needs review stays there.
 func TestMergePlaidUpdate_RuleMarkReviewedOnAddOnly(t *testing.T) {
 	rules := categorization.Compile([]model.CategorizationRule{
-		{ID: 7, CategoryID: 9, MatchType: "contains", Pattern: "PAYROLL", IsActive: true, MarkReviewed: true},
+		{ID: 7, CategoryID: new(int64(9)), MatchType: "contains", Pattern: "PAYROLL", IsActive: true, MarkReviewed: true},
 	})
 	in := plaidsvc.PlaidTransaction{
 		PlaidTransactionID: "ptx-r", PlaidAccountID: "pa", Amount: decimal.RequireFromString("-2500"),
@@ -314,7 +314,7 @@ func TestMergePlaidUpdate_PreservesTags(t *testing.T) {
 // row's current tags — a tag the user removed stays removed.
 func TestMergePlaidUpdate_RuleAddTagsOnAddOnly(t *testing.T) {
 	rules := categorization.Compile([]model.CategorizationRule{
-		{ID: 7, CategoryID: 9, MatchType: "contains", Pattern: "UBER", IsActive: true, AddTags: model.Tags{"work-travel"}},
+		{ID: 7, CategoryID: new(int64(9)), MatchType: "contains", Pattern: "UBER", IsActive: true, AddTags: model.Tags{"work-travel"}},
 	})
 	in := plaidsvc.PlaidTransaction{
 		PlaidTransactionID: "ptx-t", PlaidAccountID: "pa", Amount: decimal.RequireFromString("18.40"),
