@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 
 	"github.com/gregwym/offbook/backend/internal/model"
@@ -17,15 +18,17 @@ import (
 )
 
 var (
-	ErrRuleNotFound      = errors.New("categorization rule not found")
-	ErrEmptyPattern      = errors.New("pattern must not be empty")
-	ErrInvalidMatchType  = errors.New("match_type must be one of: contains, regex, exact")
-	ErrInvalidRegex      = errors.New("pattern is not a valid regular expression")
-	ErrInvalidPriority   = errors.New("priority must be >= 0")
-	ErrInvalidRuleOrder  = errors.New("rule order must list each of your rules exactly once")
-	ErrUnknownCategory   = errors.New("category does not exist")
-	ErrInvalidApplyScope = errors.New("scope must be one of: all, uncategorized, plaid_default")
-	ErrRenameTooLong     = errors.New("rename_merchant must be at most 200 characters")
+	ErrRuleNotFound       = errors.New("categorization rule not found")
+	ErrEmptyPattern       = errors.New("pattern must not be empty")
+	ErrInvalidMatchType   = errors.New("match_type must be one of: contains, regex, exact")
+	ErrInvalidRegex       = errors.New("pattern is not a valid regular expression")
+	ErrInvalidPriority    = errors.New("priority must be >= 0")
+	ErrInvalidRuleOrder   = errors.New("rule order must list each of your rules exactly once")
+	ErrUnknownCategory    = errors.New("category does not exist")
+	ErrInvalidApplyScope  = errors.New("scope must be one of: all, uncategorized, plaid_default")
+	ErrRenameTooLong      = errors.New("rename_merchant must be at most 200 characters")
+	ErrUnknownRuleAccount = errors.New("account does not exist")
+	ErrInvalidAmountRange = errors.New("amount_min and amount_max must be >= 0 and amount_min <= amount_max")
 )
 
 // maxRenameMerchant bounds a rule's merchant rename; merchant names are
@@ -54,9 +57,14 @@ type CreateRuleInput struct {
 	// MarkReviewed marks the flow rows the rule wins reviewed (#538).
 	MarkReviewed bool
 	// AddTags are added to the flow rows the rule wins (#546).
-	AddTags  []string
-	Priority int
-	IsActive *bool
+	AddTags []string
+	// AccountID narrows the rule to one of the user's accounts (#550).
+	AccountID *int64
+	// AmountMin / AmountMax bound |amount|, inclusive (#550).
+	AmountMin *decimal.Decimal
+	AmountMax *decimal.Decimal
+	Priority  int
+	IsActive  *bool
 }
 
 // UpdateRuleInput is a sparse patch. Nil pointer = leave alone.
@@ -78,9 +86,17 @@ type UpdateRuleInput struct {
 	MarkReviewed *bool
 	// AddTags replaces the rule's tags (#546); nil leaves them alone, an
 	// empty list clears them. Rows keep tags the rule already added.
-	AddTags  *[]string
-	Priority *int
-	IsActive *bool
+	AddTags *[]string
+	// AccountID / AmountMin / AmountMax set a condition (#550); the Clear*
+	// flags drop it. Nil and false leave it alone.
+	AccountID      *int64
+	ClearAccountID bool
+	AmountMin      *decimal.Decimal
+	ClearAmountMin bool
+	AmountMax      *decimal.Decimal
+	ClearAmountMax bool
+	Priority       *int
+	IsActive       *bool
 }
 
 // normRename trims a rename and maps blank to nil (no rename).
@@ -104,10 +120,11 @@ func normRename(p *string) *string {
 // work without them; if Apply is called and they're nil, it returns
 // ErrInvalidApplyScope so the router can fail loudly during wiring.
 type CategorizationRuleService struct {
-	repo    repository.CategorizationRuleRepository
-	catRepo repository.CategoryRepository
-	txRepo  repository.TransactionRepository
-	db      *gorm.DB
+	repo     repository.CategorizationRuleRepository
+	catRepo  repository.CategoryRepository
+	txRepo   repository.TransactionRepository
+	acctRepo repository.AccountRepository
+	db       *gorm.DB
 }
 
 func NewCategorizationRuleService(
@@ -127,6 +144,13 @@ func (s *CategorizationRuleService) WithBulkApply(txRepo repository.TransactionR
 	return s
 }
 
+// WithAccounts wires the account repository used to check that a rule's
+// account condition (#550) names one of the caller's own accounts.
+func (s *CategorizationRuleService) WithAccounts(acctRepo repository.AccountRepository) *CategorizationRuleService {
+	s.acctRepo = acctRepo
+	return s
+}
+
 func (s *CategorizationRuleService) Create(ctx context.Context, userID int64, in CreateRuleInput) (*model.CategorizationRule, error) {
 	r := &model.CategorizationRule{
 		UserID:         userID,
@@ -139,6 +163,9 @@ func (s *CategorizationRuleService) Create(ctx context.Context, userID int64, in
 		RenameMerchant: normRename(in.RenameMerchant),
 		HideMatches:    in.HideMatches,
 		MarkReviewed:   in.MarkReviewed,
+		AccountID:      in.AccountID,
+		AmountMin:      in.AmountMin,
+		AmountMax:      in.AmountMax,
 	}
 	if in.IsActive != nil {
 		r.IsActive = *in.IsActive
@@ -147,6 +174,9 @@ func (s *CategorizationRuleService) Create(ctx context.Context, userID int64, in
 		return nil, err
 	}
 	if err := s.validate(ctx, r); err != nil {
+		return nil, err
+	}
+	if err := s.validateAccount(ctx, userID, r.AccountID); err != nil {
 		return nil, err
 	}
 	if err := s.repo.Create(ctx, r); err != nil {
@@ -206,6 +236,29 @@ func (s *CategorizationRuleService) Update(ctx context.Context, userID, id int64
 		if err := s.setAddTags(ctx, r, *in.AddTags); err != nil {
 			return nil, err
 		}
+	}
+	switch {
+	case in.ClearAccountID:
+		r.AccountID = nil
+	case in.AccountID != nil:
+		if r.AccountID == nil || *r.AccountID != *in.AccountID {
+			if err := s.validateAccount(ctx, userID, in.AccountID); err != nil {
+				return nil, err
+			}
+		}
+		r.AccountID = in.AccountID
+	}
+	switch {
+	case in.ClearAmountMin:
+		r.AmountMin = nil
+	case in.AmountMin != nil:
+		r.AmountMin = in.AmountMin
+	}
+	switch {
+	case in.ClearAmountMax:
+		r.AmountMax = nil
+	case in.AmountMax != nil:
+		r.AmountMax = in.AmountMax
 	}
 	if in.Priority != nil {
 		r.Priority = *in.Priority
@@ -379,7 +432,7 @@ func (s *CategorizationRuleService) apply(ctx context.Context, userID int64, sco
 				if len(rules) == 0 {
 					continue
 				}
-				d, ok := categorization.Categorize(rules, row.AssetID, row.DescriptionClean, row.Description, row.MerchantName)
+				d, ok := categorization.Match(rules, row)
 				if !ok {
 					continue
 				}
@@ -430,9 +483,13 @@ type DraftRuleInput struct {
 	// MarkReviewed as on CreateRuleInput (#538).
 	MarkReviewed bool
 	// AddTags as on CreateRuleInput (#546).
-	AddTags  []string
-	Priority int
-	IsActive bool
+	AddTags []string
+	// AccountID / AmountMin / AmountMax as on CreateRuleInput (#550).
+	AccountID *int64
+	AmountMin *decimal.Decimal
+	AmountMax *decimal.Decimal
+	Priority  int
+	IsActive  bool
 }
 
 // DraftPreview reports a draft rule's impact against the user's existing
@@ -483,15 +540,28 @@ func (s *CategorizationRuleService) PreviewDraft(ctx context.Context, userID int
 		RenameMerchant: normRename(in.RenameMerchant),
 		HideMatches:    in.HideMatches,
 		MarkReviewed:   in.MarkReviewed,
+		AccountID:      in.AccountID,
+		AmountMin:      in.AmountMin,
+		AmountMax:      in.AmountMax,
 	}
+	checkAccount := in.AccountID != nil
 	if in.RuleID != nil {
-		if _, err := s.repo.GetByID(ctx, userID, *in.RuleID); err != nil {
+		existing, err := s.repo.GetByID(ctx, userID, *in.RuleID)
+		if err != nil {
 			if errors.Is(err, repository.ErrNotFound) {
 				return DraftPreview{}, ErrRuleNotFound
 			}
 			return DraftPreview{}, err
 		}
 		draft.ID = *in.RuleID
+		if checkAccount && existing.AccountID != nil && *existing.AccountID == *in.AccountID {
+			checkAccount = false
+		}
+	}
+	if checkAccount {
+		if err := s.validateAccount(ctx, userID, in.AccountID); err != nil {
+			return DraftPreview{}, err
+		}
 	}
 	if err := s.setAddTags(ctx, draft, in.AddTags); err != nil {
 		return DraftPreview{}, err
@@ -535,7 +605,7 @@ func (s *CategorizationRuleService) PreviewDraft(ctx context.Context, userID int
 				out.SkippedManual++
 				continue
 			}
-			d, ok := categorization.Categorize(rules, row.AssetID, row.DescriptionClean, row.Description, row.MerchantName)
+			d, ok := categorization.Match(rules, row)
 			if !ok || d.RuleID != draft.ID {
 				continue
 			}
@@ -576,6 +646,27 @@ func draftSampleText(t *model.Transaction) string {
 	return "(no description)"
 }
 
+// validateAccount checks that an account condition (#550) names one of the
+// user's own live accounts. It runs when the condition is set or changed, so
+// a rule whose account was later deleted can still be edited (it just never
+// matches again).
+func (s *CategorizationRuleService) validateAccount(ctx context.Context, userID int64, accountID *int64) error {
+	if accountID == nil {
+		return nil
+	}
+	if s.acctRepo == nil {
+		return errors.New("validate account: account repository not wired")
+	}
+	// GetByID is user-scoped: another user's account reads as not found.
+	if _, err := s.acctRepo.GetByID(ctx, userID, *accountID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrUnknownRuleAccount
+		}
+		return fmt.Errorf("validate account: %w", err)
+	}
+	return nil
+}
+
 func (s *CategorizationRuleService) validate(ctx context.Context, r *model.CategorizationRule) error {
 	// A rule needs *something* to match on. Asset-only rules are valid
 	// (e.g. "every AAPL leg → Investments"); pattern-only rules are the
@@ -601,6 +692,12 @@ func (s *CategorizationRuleService) validate(ctx context.Context, r *model.Categ
 	if r.RenameMerchant != nil && len([]rune(*r.RenameMerchant)) > maxRenameMerchant {
 		return ErrRenameTooLong
 	}
+	if (r.AmountMin != nil && r.AmountMin.IsNegative()) ||
+		(r.AmountMax != nil && r.AmountMax.IsNegative()) ||
+		(r.AmountMin != nil && r.AmountMax != nil && r.AmountMin.GreaterThan(*r.AmountMax)) {
+		return ErrInvalidAmountRange
+	}
+
 	if _, err := s.catRepo.GetByID(ctx, r.CategoryID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return ErrUnknownCategory

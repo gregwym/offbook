@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/gregwym/offbook/backend/internal/model"
 )
 
@@ -39,7 +41,12 @@ type CompiledRule struct {
 	// MarkReviewed, when true, marks the flow rows this rule wins reviewed (#538).
 	MarkReviewed bool
 	// AddTags are added to the flow rows this rule wins (#546).
-	AddTags   []string
+	AddTags []string
+	// AccountID, AmountMin and AmountMax narrow the rule to one account
+	// and to a band of |amount|, inclusive (#550). Nil = unconstrained.
+	AccountID *int64
+	AmountMin *decimal.Decimal
+	AmountMax *decimal.Decimal
 	patternCI string // pattern uppercased once, for contains/exact fast path
 	Re        *regexp.Regexp
 }
@@ -142,6 +149,9 @@ func Compile(rules []model.CategorizationRule) []CompiledRule {
 			MatchType:  r.MatchType,
 			Pattern:    r.Pattern,
 			AssetID:    r.AssetID,
+			AccountID:  r.AccountID,
+			AmountMin:  r.AmountMin,
+			AmountMax:  r.AmountMax,
 			patternCI:  strings.ToUpper(r.Pattern),
 		}
 		if r.RenameMerchant != nil {
@@ -175,16 +185,44 @@ func Compile(rules []model.CategorizationRule) []CompiledRule {
 // CompiledRule.AssetID only fire on a matching assetID. Rules with a nil
 // AssetID stay asset-agnostic. Pass 0 to skip the asset filter entirely
 // (matches the M2-era behavior for callers that pre-date the column).
+//
+// Categorize knows no account or amount, so rules with an account or amount
+// condition (#550) never fire here. Callers holding a transaction use Match.
 func Categorize(rules []CompiledRule, assetID int64, descriptionClean, description, merchantName *string) (Decision, bool) {
+	return categorize(rules, subject{assetID: assetID}, descriptionClean, description, merchantName)
+}
+
+// Match is Categorize for a stored or about-to-be-stored transaction: it
+// also checks each rule's account and amount conditions against t.
+func Match(rules []CompiledRule, t *model.Transaction) (Decision, bool) {
+	if t == nil {
+		return Decision{}, false
+	}
+	amount := t.Amount
+	return categorize(rules, subject{assetID: t.AssetID, accountID: t.AccountID, amount: &amount}, t.DescriptionClean, t.Description, t.MerchantName)
+}
+
+// subject is the non-text part of what a rule matches against. accountID 0
+// and a nil amount mean unknown: rules conditioned on them don't fire.
+type subject struct {
+	assetID   int64
+	accountID int64
+	amount    *decimal.Decimal
+}
+
+func categorize(rules []CompiledRule, sub subject, descriptionClean, description, merchantName *string) (Decision, bool) {
 	if len(rules) == 0 {
 		return Decision{}, false
 	}
 	fields := collectFields(descriptionClean, description, merchantName)
 	for _, r := range rules {
 		if r.AssetID != nil {
-			if assetID == 0 || *r.AssetID != assetID {
+			if sub.assetID == 0 || *r.AssetID != sub.assetID {
 				continue
 			}
+		}
+		if !r.conditionsMatch(sub) {
+			continue
 		}
 		// Asset-bound rules with no pattern match purely on asset_id —
 		// useful for "all AAPL legs → Investments". collectFields can
@@ -203,6 +241,29 @@ func Categorize(rules []CompiledRule, assetID int64, descriptionClean, descripti
 	return Decision{}, false
 }
 
+// conditionsMatch checks the rule's account and amount conditions (#550).
+// Amounts compare the magnitude, so a $15.49 band matches both the charge
+// (-15.49) and its refund (+15.49); both bounds are inclusive.
+func (r CompiledRule) conditionsMatch(sub subject) bool {
+	if r.AccountID != nil && (sub.accountID == 0 || *r.AccountID != sub.accountID) {
+		return false
+	}
+	if r.AmountMin == nil && r.AmountMax == nil {
+		return true
+	}
+	if sub.amount == nil {
+		return false
+	}
+	mag := sub.amount.Abs()
+	if r.AmountMin != nil && mag.LessThan(*r.AmountMin) {
+		return false
+	}
+	if r.AmountMax != nil && mag.GreaterThan(*r.AmountMax) {
+		return false
+	}
+	return true
+}
+
 func (r CompiledRule) decision() Decision {
 	return Decision{RuleID: r.ID, CategoryID: r.CategoryID, RenameMerchant: r.RenameMerchant, Hide: r.Hide, MarkReviewed: r.MarkReviewed, AddTags: r.AddTags}
 }
@@ -217,7 +278,7 @@ func Apply(tx *model.Transaction, rules []CompiledRule) (Decision, bool) {
 	if tx == nil {
 		return Decision{}, false
 	}
-	d, ok := Categorize(rules, tx.AssetID, tx.DescriptionClean, tx.Description, tx.MerchantName)
+	d, ok := Match(rules, tx)
 	if !ok {
 		return Decision{}, false
 	}

@@ -88,7 +88,7 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 	categorySvc := service.NewCategoryService(categoryRepo)
 	categoryHandler := handler.NewCategoryHandler(categorySvc)
 
-	ruleSvc := service.NewCategorizationRuleService(ruleRepo, categoryRepo).WithBulkApply(transactionRepo, gormDB)
+	ruleSvc := service.NewCategorizationRuleService(ruleRepo, categoryRepo).WithBulkApply(transactionRepo, gormDB).WithAccounts(accountRepo)
 	ruleHandler := handler.NewCategorizationRuleHandler(ruleSvc)
 
 	// AI verdict cache (#366, ADR-0022 §6): read-only, populated by the

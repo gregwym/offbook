@@ -22,6 +22,12 @@ export type CategorizationRule = {
   // Tags added to every flow transaction this rule wins, skipping ones it
   // already has (#546). Never removes a tag.
   add_tags?: string[]
+  // Conditions ANDed with the pattern (#550): only this account, and only
+  // when |amount| is within [amount_min, amount_max] (decimal strings,
+  // inclusive). Absent = no condition.
+  account_id?: number | null
+  amount_min?: string | null
+  amount_max?: string | null
   created_at: string
   updated_at: string
 }
@@ -38,9 +44,18 @@ export type CreateRuleInput = {
   mark_reviewed?: boolean
   // [] clears the rule's tags on update (#546).
   add_tags?: string[]
+  // Optional conditions (#550); amounts are non-negative decimal strings.
+  account_id?: number
+  amount_min?: string
+  amount_max?: string
 }
 
-export type UpdateRuleInput = Partial<CreateRuleInput>
+export type UpdateRuleInput = Partial<CreateRuleInput> & {
+  // Drop a condition on update (#550).
+  clear_account_id?: boolean
+  clear_amount_min?: boolean
+  clear_amount_max?: boolean
+}
 
 // Mirrors service.ApplyResult — three counts returned by POST /apply.
 export type ApplyResult = {
