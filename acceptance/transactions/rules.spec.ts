@@ -31,19 +31,22 @@ test.describe('categorization rules journey', () => {
 
     await signIn(page, user.email, user.password)
     await page.goto('/rules')
-    await expect(page.getByRole('heading', { name: 'Categorization rules' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Rules', exact: true })).toBeVisible()
 
     // Primary actions must be reachable at any width (not clipped off-screen).
     await expectInViewport(page, page.getByRole('button', { name: 'New rule' }))
     await page.getByRole('button', { name: 'New rule' }).click()
     const dialog = page.locator('div.fixed.inset-0')
     await expect(dialog).toContainText('Fill in pattern and category')
+    // Run order is set only in the list (#552): no Priority field here.
+    await expect(dialog.getByLabel(/Priority/)).toHaveCount(0)
+    await expect(dialog).toContainText('New rules run first; reorder them on the Rules page.')
     await dialog.getByPlaceholder('e.g. WHOLEFDS').fill('QARULE MART')
     await dialog.getByLabel('Category').selectOption({ label: groceries.name })
-    // Live impact: 3 match, 2 would change, the manual pick is protected.
-    await expect(dialog).toContainText('Would categorize')
-    await expect(dialog).toContainText('2 would change')
-    await expect(dialog).toContainText('1 manual picks are never overridden')
+    // Live impact: 2 would change category, the manual pick is protected.
+    await expect(dialog).toContainText('Applies to 2 of')
+    await expect(dialog).toContainText('2 would change category')
+    await expect(dialog).toContainText('1 manual pick stays as it is')
     await expect(dialog).toContainText('Nothing changes until you save')
     await dialog.getByRole('button', { name: 'Create', exact: true }).click()
     await expect(page.getByText('QARULE MART', { exact: true }).first()).toBeVisible()
@@ -52,7 +55,7 @@ test.describe('categorization rules journey', () => {
 
     // Dry run reports without changing anything.
     await page.getByRole('button', { name: 'Preview changes' }).click()
-    await expect(page.getByText(/would be re-categorized/)).toBeVisible()
+    await expect(page.getByText(/Preview \(2 of \d+ transactions\): 2 would change category; 1 manual pick stays as it is/)).toBeVisible()
     await expect(page.getByText(/Nothing has been changed/)).toBeVisible()
     let rows = await get(cookie, `/transactions?search=QARULE&limit=50`)
     expect(rows.data.filter((t: { category_id: number | null }) => t.category_id === groceries.id)).toHaveLength(0)
@@ -98,7 +101,8 @@ test.describe('rule renames the merchant', () => {
     const rename = dialog.getByLabel(/Rename merchant to/)
     await expectInViewport(page, rename)
     await rename.fill('Amazon')
-    await expect(dialog).toContainText('2 would show merchant \u201cAmazon\u201d')
+    await expect(dialog).toContainText('2 would change category, 2 renamed')
+    await expect(dialog).toContainText('Renamed ones show merchant \u201cAmazon\u201d')
     await testInfo.attach(`${testInfo.project.name}-rename-draft`, {
       body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
     })
@@ -119,6 +123,25 @@ test.describe('rule renames the merchant', () => {
     // Re-applying is a no-op.
     const again = await api(cookie, '/categorization-rules/apply', {})
     expect(again.data.updated).toBe(0)
+
+    // A rename-only change reads as a rename, not a re-categorization (#552).
+    await page.getByRole('button', { name: 'Edit' }).first().click()
+    const edit = page.locator('div.fixed.inset-0')
+    await expect(edit).toContainText('Saving keeps this rule\u2019s place in the run order')
+    await edit.getByLabel(/Rename merchant to/).fill('Amazon.com')
+    await expect(edit).toContainText('2 would be renamed')
+    await expect(edit).not.toContainText('change category')
+    await edit.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(page.getByText('Renames to Amazon.com')).toBeVisible()
+    await page.getByRole('button', { name: 'Preview changes' }).click()
+    const banner = page.getByText(/Preview \(2 of \d+ transactions\)/)
+    await expect(banner).toContainText('2 would be renamed. Nothing has been changed.')
+    await expect(banner).not.toContainText(/re-categorized|category/)
+    await testInfo.attach(`${testInfo.project.name}-rename-only-preview`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+    await page.getByRole('button', { name: 'Apply now' }).click()
+    await expect(page.getByText(/Updated 2 of \d+ transactions: 2 renamed\./)).toBeVisible()
 
     await page.goto('/transactions')
     await expect(page.locator('tr', { hasText: 'AMZN MKTP US*2K4' })).toContainText('Amazon')
@@ -173,7 +196,8 @@ test.describe('rule hides matches', () => {
     const hide = dialog.getByLabel('Also hide matching transactions')
     await expectInViewport(page, hide)
     await hide.check()
-    await expect(dialog).toContainText('2 would be hidden from spending and budgets')
+    await expect(dialog).toContainText('2 would change category, 2 hidden')
+    await expect(dialog).toContainText('Hidden ones leave spending and budgets')
     await testInfo.attach(`${testInfo.project.name}-hide-draft`, {
       body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
     })
@@ -238,7 +262,7 @@ test.describe('rule marks matches reviewed', () => {
     await mark.scrollIntoViewIfNeeded()
     await expectInViewport(page, mark)
     await mark.check()
-    await expect(dialog).toContainText('2 would be marked reviewed')
+    await expect(dialog).toContainText('2 would change category, 2 marked reviewed')
     await testInfo.attach(`${testInfo.project.name}-review-draft`, {
       body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
     })
@@ -337,7 +361,7 @@ test.describe('rule run order', () => {
     })
 
     await page.getByRole('button', { name: 'Preview changes' }).click()
-    await expect(page.getByText(/1 of \d+ transactions would be re-categorized/)).toBeVisible()
+    await expect(page.getByText(/Preview \(1 of \d+ transactions\): 1 would change category\./)).toBeVisible()
     await page.getByRole('button', { name: 'Apply now' }).click()
     await expect.poll(categoryOf).toBe(subs.id)
 
@@ -346,6 +370,17 @@ test.describe('rule run order', () => {
       account_id: acct, amount: '-14.99', description: 'QAORD AMAZON PRIME*7Q1', transaction_date: today, source: 'csv',
     })).data
     expect(fresh.category_id).toBe(subs.id)
+
+    // A rule made in the form lands at the top of the list (#552).
+    await page.getByRole('button', { name: 'New rule' }).click()
+    const dialog = page.locator('div.fixed.inset-0')
+    await expect(dialog.getByLabel(/Priority/)).toHaveCount(0)
+    await dialog.getByPlaceholder('e.g. WHOLEFDS').fill('QAORD NEWEST')
+    await dialog.getByLabel('Category').selectOption({ label: shopping.name })
+    await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect.poll(patterns).toEqual(['QAORD NEWEST', 'AMAZON PRIME', 'AMAZON'])
+    await page.reload()
+    await expect.poll(patterns).toEqual(['QAORD NEWEST', 'AMAZON PRIME', 'AMAZON'])
   })
 })
 
@@ -380,7 +415,8 @@ test.describe('rule adds tags', () => {
     await tags.scrollIntoViewIfNeeded()
     await expectInViewport(page, tags)
     await tags.fill('work TRIP, reimbursable')
-    await expect(dialog).toContainText('2 would be tagged Work trip, reimbursable')
+    await expect(dialog).toContainText('2 would change category, 2 tagged')
+    await expect(dialog).toContainText('Tags: Work trip, reimbursable')
     // The modal scrolls inside, so Create stays on screen even on a phone.
     await expect(dialog.getByRole('button', { name: 'Create', exact: true })).toBeInViewport()
     await testInfo.attach(`${testInfo.project.name}-tags-draft`, {
@@ -465,7 +501,7 @@ test.describe('rule conditions', () => {
     await high.fill('20')
     await expect(dialog.getByRole('alert')).toContainText('lower amount must not be more')
     await low.fill('')
-    await expect(dialog).toContainText('Would categorize 1 of')
+    await expect(dialog).toContainText('Applies to 1 of')
     await expect(dialog.getByRole('listitem')).toHaveText(['QACOND AMZN Mktp US 1'])
     await expect(dialog.getByRole('button', { name: 'Create', exact: true })).toBeInViewport()
     await testInfo.attach(`${testInfo.project.name}-conditions-draft`, {
@@ -481,7 +517,7 @@ test.describe('rule conditions', () => {
     await dialog.getByPlaceholder('e.g. WHOLEFDS').fill('QACOND AMZN')
     await dialog.getByLabel('Category').selectOption({ label: shopping.name })
     await dialog.getByLabel('Lowest amount').fill('$500')
-    await expect(dialog).toContainText('Would categorize 1 of')
+    await expect(dialog).toContainText('Applies to 1 of')
     await dialog.getByRole('button', { name: 'Create', exact: true }).click()
     await expect(page.getByText('Amount 500.00 USD or more')).toBeVisible()
     await expectNoOverflow(page)
@@ -490,7 +526,7 @@ test.describe('rule conditions', () => {
     })
 
     await page.getByRole('button', { name: 'Preview changes' }).click()
-    await expect(page.getByText(/2 of \d+ transactions would be re-categorized/)).toBeVisible()
+    await expect(page.getByText(/Preview \(2 of \d+ transactions\): 2 would change category\./)).toBeVisible()
     await page.getByRole('button', { name: 'Apply now' }).click()
     await expect.poll(() => categoryOf(small.id)).toBe(subs.id)
     expect(await categoryOf(big.id)).toBe(shopping.id)

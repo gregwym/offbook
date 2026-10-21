@@ -775,3 +775,64 @@ func TestCategorizationRuleService_Apply_AddTags(t *testing.T) {
 		t.Errorf("row tags after clear = %q, want kept", got)
 	}
 }
+
+// TestCategorizationRuleService_Apply_ActionCounts (#552): preview and apply
+// report per-action counts from the same decision diff, so a row that is
+// already in the rule's category counts as renamed/hidden/reviewed/tagged
+// but not re-categorized, and the draft preview agrees.
+func TestCategorizationRuleService_Apply_ActionCounts(t *testing.T) {
+	svc, userID, accountID, fixtureCat, g := newRuleApplySvc(t)
+	ctx := context.Background()
+
+	mkTxn(t, g, userID, accountID, withDescription("QACOUNT A"))
+	mkTxn(t, g, userID, accountID, withDescription("QACOUNT B"), withPlaidDefaultCategory(fixtureCat))
+	mkTxn(t, g, userID, accountID, withDescription("QACOUNT manual"), withManualCategory(fixtureCat))
+	mkTxn(t, g, userID, accountID, withDescription("SHELL GAS"))
+
+	rename := "Count Co"
+	in := service.CreateRuleInput{
+		Pattern: "QACOUNT", MatchType: "contains", CategoryID: fixtureCat, Priority: 50,
+		RenameMerchant: &rename, HideMatches: true, MarkReviewed: true, AddTags: []string{"counted"},
+	}
+	draft, err := svc.PreviewDraft(ctx, userID, service.DraftRuleInput{
+		Pattern: in.Pattern, MatchType: in.MatchType, CategoryID: in.CategoryID, Priority: in.Priority, IsActive: true,
+		RenameMerchant: in.RenameMerchant, HideMatches: true, MarkReviewed: true, AddTags: in.AddTags,
+	})
+	if err != nil {
+		t.Fatalf("PreviewDraft: %v", err)
+	}
+	if draft.WouldChange != 2 || draft.WouldRecategorize != 1 || draft.WouldRename != 2 {
+		t.Errorf("draft = %+v, want would_change 2, would_recategorize 1, would_rename 2", draft)
+	}
+
+	rule, err := svc.Create(ctx, userID, in)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.CategorizationRule{}, rule.ID) })
+
+	want := service.ApplyResult{
+		Scanned: 4, Updated: 2, SkippedManual: 1,
+		Recategorized: 1, Renamed: 2, Hidden: 2, MarkedReviewed: 2, Tagged: 2,
+	}
+	tests := []struct {
+		name string
+		run  func(context.Context, int64, string) (service.ApplyResult, error)
+		want service.ApplyResult
+	}{
+		{"preview", svc.Preview, func() service.ApplyResult { w := want; w.DryRun = true; return w }()},
+		{"apply", svc.Apply, want},
+		{"re-apply is a no-op", svc.Apply, service.ApplyResult{Scanned: 4, SkippedManual: 1}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tc.run(ctx, userID, "")
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}

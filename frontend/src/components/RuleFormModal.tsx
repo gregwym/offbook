@@ -3,6 +3,7 @@ import { listAccounts } from '../api/accounts'
 import { previewDraftRule } from '../api/categorizationRules'
 import { listTransactionTags } from '../api/transactions'
 import { MAX_TAG_LENGTH, mergeTags } from '../lib/tags'
+import { describeManualPicks, describeRuleChanges } from '../lib/ruleChanges'
 import type { Account } from '../types/account'
 import type { TagCount } from '../types/transaction'
 import type { Category } from '../types/category'
@@ -54,9 +55,10 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   const [categoryID, setCategoryID] = useState<number | ''>(
     rule?.category_id ?? defaults?.category_id ?? '',
   )
-  const [priority, setPriority] = useState<number>(
-    rule?.priority ?? defaults?.priority ?? 10,
-  )
+  // Run order is set only by the Rules list's Move up/down (#552): a new
+  // rule takes the caller's default (top of the list) and an edit keeps its
+  // place. The draft preview still needs it to rank the draft.
+  const priority = rule?.priority ?? defaults?.priority ?? 10
   const [isActive, setIsActive] = useState(rule?.is_active ?? defaults?.is_active ?? true)
   const [renameMerchant, setRenameMerchant] = useState(
     rule?.rename_merchant ?? defaults?.rename_merchant ?? '',
@@ -115,7 +117,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   // never blocks saving. Results are keyed by the draft they describe, so a
   // result for an older draft reads as "loading" rather than stale.
   const cat = Number(categoryID)
-  const draftReady = pattern.trim() !== '' && Number.isInteger(cat) && cat > 0 && priority >= 0 && conditionsOK
+  const draftReady = pattern.trim() !== '' && Number.isInteger(cat) && cat > 0 && conditionsOK
   const draftKey = JSON.stringify([pattern.trim(), matchType, cat, priority, isActive, rename, hideMatches, markReviewed, tagsKey, accountID, amountMin, amountMax, rule?.id ?? null])
   const [impact, setImpact] = useState<{ key: string; data: DraftPreview | null } | null>(null)
   useEffect(() => {
@@ -167,10 +169,6 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
       setCategoryError('Pick a category.')
       return
     }
-    if (priority < 0) {
-      setError('Priority must be >= 0.')
-      return
-    }
     if (rename.length > MAX_RENAME) {
       setRenameError(`Keep the merchant name to ${MAX_RENAME} characters or fewer.`)
       return
@@ -182,7 +180,8 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
         pattern: pattern.trim(),
         match_type: matchType,
         category_id: Number(categoryID),
-        priority,
+        // Editing never moves the rule; only create places it.
+        ...(mode === 'create' ? { priority } : {}),
         is_active: isActive,
         // Editing sends '' to clear a rename; creating omits a blank one.
         ...(rename || rule?.rename_merchant ? { rename_merchant: rename } : {}),
@@ -232,24 +231,18 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
             {matchType === 'regex' && 'Go regexp; case-sensitive unless you prefix (?i).'}
           </p>
         </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Match type">
-            <select className={inputClass} value={matchType} onChange={(e) => setMatchType(e.target.value as MatchType)}>
-              {MATCH_TYPES.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Priority (higher runs first)">
-            <input
-              className={inputClass}
-              type="number"
-              min={0}
-              value={priority}
-              onChange={(e) => setPriority(Number(e.target.value))}
-            />
-          </Field>
-        </div>
+        <Field label="Match type">
+          <select className={inputClass} value={matchType} onChange={(e) => setMatchType(e.target.value as MatchType)}>
+            {MATCH_TYPES.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </Field>
+        <p className="text-xs text-gray-500">
+          {mode === 'create'
+            ? 'New rules run first; reorder them on the Rules page.'
+            : 'Saving keeps this rule\u2019s place in the run order; reorder rules on the Rules page.'}
+        </p>
         <Field label="Category" error={categoryError}>
           <select
             className={inputClass}
@@ -374,25 +367,12 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
         </label>
         <div aria-live="polite" className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-700">
           {!isActive ? (
-            'Inactive rules don\u2019t categorize anything.'
+            'Inactive rules don\u2019t change anything.'
           ) : impactLoading ? (
             'Checking which transactions this would affect\u2026'
           ) : impactData ? (
             <>
-              <p>
-                {impactData.matched === 0
-                  ? 'No existing transactions would use this rule.'
-                  : `Would categorize ${impactData.matched} of ${impactData.scanned} existing transactions (${impactData.would_change} would change).`}
-                {rename && impactData.would_rename > 0 &&
-                  ` ${impactData.would_rename} would show merchant “${rename}”.`}
-                {hideMatches && impactData.would_hide > 0 &&
-                  ` ${impactData.would_hide} would be hidden from spending and budgets.`}
-                {markReviewed && impactData.would_mark_reviewed > 0 &&
-                  ` ${impactData.would_mark_reviewed} would be marked reviewed.`}
-                {ruleTags.length > 0 && impactData.would_tag > 0 &&
-                  ` ${impactData.would_tag} would be tagged ${ruleTags.join(', ')}.`}
-                {impactData.skipped_manual > 0 && ` ${impactData.skipped_manual} manual picks are never overridden.`}
-              </p>
+              <p>{describeDraftImpact(impactData, { rename, tags: ruleTags })}</p>
               {impactData.samples.length > 0 && (
                 <ul className="mt-1 list-disc pl-4 text-gray-500">
                   {impactData.samples.map((s, i) => (
@@ -422,6 +402,32 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
       </div>
     </ModalShell>
   )
+}
+
+// The live impact sentence, in the same action words as the Rules page's
+// preview/apply banner (#552), plus what each action means for this draft.
+function describeDraftImpact(d: DraftPreview, draft: { rename: string; tags: string[] }): string {
+  if (d.matched === 0) return 'No existing transactions would use this rule.'
+  const changes = describeRuleChanges(
+    {
+      category: d.would_recategorize ?? 0,
+      renamed: d.would_rename,
+      hidden: d.would_hide,
+      reviewed: d.would_mark_reviewed,
+      tagged: d.would_tag,
+    },
+    'would',
+  )
+  let out = `Applies to ${d.matched} of ${d.scanned} existing transactions`
+  if (changes) out += `: ${changes}.`
+  else if (d.would_change > 0) out += '; they would only record this rule as their source.'
+  else out += '; they already look like this.'
+  if (draft.rename && d.would_rename > 0) out += ` Renamed ones show merchant \u201c${draft.rename}\u201d.`
+  if (d.would_hide > 0) out += ' Hidden ones leave spending and budgets.'
+  if (draft.tags.length > 0 && d.would_tag > 0) out += ` Tags: ${draft.tags.join(', ')}.`
+  const manual = describeManualPicks(d.skipped_manual, 'would')
+  if (manual) out += ` ${manual[0].toUpperCase()}${manual.slice(1)}.`
+  return out
 }
 
 const inputClass = 'w-full rounded border border-gray-300 px-2 py-1 text-sm'

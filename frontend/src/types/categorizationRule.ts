@@ -62,7 +62,14 @@ export type ApplyResult = {
   scanned: number
   updated: number
   skipped_manual: number
-  // true when nothing was written; `updated` is then the would-change count.
+  // Per-action subsets of `updated` (#552); a row counts once per action.
+  recategorized?: number
+  renamed?: number
+  hidden?: number
+  marked_reviewed?: number
+  tagged?: number
+  // true when nothing was written; `updated` and the per-action counts then
+  // describe what would change.
   dry_run?: boolean
 }
 
@@ -73,6 +80,8 @@ export type DraftPreview = {
   scanned: number
   matched: number
   would_change: number
+  // Matched rows whose category the draft would change (#552).
+  would_recategorize: number
   // Matched rows whose merchant the draft's rename would change (#534).
   would_rename: number
   // Matched rows the draft would hide (#536).

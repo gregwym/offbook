@@ -72,6 +72,12 @@ func (d Decision) MerchantChanged(merchantName *string) bool {
 	return d.RenameMerchant != nil && (merchantName == nil || *merchantName != *d.RenameMerchant)
 }
 
+// CategoryChanged reports whether applying d would change t's category.
+// Provenance (rule id, method) is not a category change.
+func (d Decision) CategoryChanged(t *model.Transaction) bool {
+	return t.CategoryID == nil || *t.CategoryID != d.CategoryID
+}
+
 // HideChanged reports whether applying d would hide t: the rule hides, t is
 // a flow row (ledger rows like trades or adjustments are never hidden) and
 // t isn't hidden yet. A rule never unhides.

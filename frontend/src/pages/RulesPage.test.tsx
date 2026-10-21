@@ -82,17 +82,19 @@ describe('RulesPage smoke', () => {
         const body = (await request.json()) as { dry_run?: boolean }
         bodies.push(body)
         return HttpResponse.json({
-          data: { scanned: 40, updated: 7, skipped_manual: 2, dry_run: !!body.dry_run },
+          data: { scanned: 40, updated: 7, skipped_manual: 2, recategorized: 0, renamed: 7, hidden: 0, marked_reviewed: 0, tagged: 3, dry_run: !!body.dry_run },
         })
       }),
     )
     renderPage(<RulesPage />)
     fireEvent.click(await screen.findByRole('button', { name: 'Preview changes' }))
-    expect(await screen.findByText(/7 of 40 transactions would be re-categorized/)).toBeTruthy()
+    // A rename-and-tag rule reads as such, not as "re-categorized" (#552).
+    expect(await screen.findByText(/Preview \(7 of 40 transactions\): 7 would be renamed, 3 tagged; 2 manual picks stay as they are\. Nothing has been changed\./)).toBeTruthy()
+    expect(screen.queryByText(/re-categorized|change category/)).toBeNull()
     expect(bodies).toEqual([{ dry_run: true }])
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply now' }))
-    await waitFor(() => expect(screen.getByText(/Scanned 40, updated 7/)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Updated 7 of 40 transactions: 7 renamed, 3 tagged; 2 manual picks stayed as they were.')).toBeTruthy())
     expect(bodies[1]).toEqual({})
     expect(screen.queryByRole('button', { name: 'Apply now' })).toBeNull()
   })
@@ -103,7 +105,7 @@ describe('RulesPage smoke', () => {
       http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
         bodies.push((await request.json()) as Record<string, unknown>)
         return HttpResponse.json({
-          data: { scanned: 40, matched: 3, would_change: 2, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, would_tag: 0, skipped_manual: 1, samples: ['WHOLEFDS #1', 'WHOLEFDS #2'] },
+          data: { scanned: 40, matched: 3, would_change: 2, would_recategorize: 2, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, would_tag: 0, skipped_manual: 1, samples: ['WHOLEFDS #1', 'WHOLEFDS #2'] },
         })
       }),
     )
@@ -115,8 +117,7 @@ describe('RulesPage smoke', () => {
     const select = screen.getAllByRole('combobox').find((el) => el.textContent?.includes('pick one'))!
     fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[1].value) } })
 
-    expect(await screen.findByText(/Would categorize 3 of 40 existing transactions \(2 would change\)/)).toBeTruthy()
-    expect(screen.getByText(/1 manual picks are never overridden/)).toBeTruthy()
+    expect(await screen.findByText(/Applies to 3 of 40 existing transactions: 2 would change category\. 1 manual pick stays as it is\./)).toBeTruthy()
     expect(screen.getByText('WHOLEFDS #1')).toBeTruthy()
     expect(bodies).toHaveLength(1)
     expect(bodies[0]).toMatchObject({ pattern: 'WHOLEFDS', match_type: 'contains' })
@@ -136,7 +137,7 @@ describe('RulesPage smoke', () => {
       http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
         previews.push((await request.json()) as Record<string, unknown>)
         return HttpResponse.json({
-          data: { scanned: 10, matched: 2, would_change: 2, would_rename: 2, would_hide: 0, would_mark_reviewed: 0, would_tag: 0, skipped_manual: 0, samples: ['AMZN MKTP US*2K4'] },
+          data: { scanned: 10, matched: 2, would_change: 2, would_recategorize: 0, would_rename: 2, would_hide: 0, would_mark_reviewed: 0, would_tag: 0, skipped_manual: 0, samples: ['AMZN MKTP US*2K4'] },
         })
       }),
       http.post(`${API}/categorization-rules`, async ({ request }) => {
@@ -159,13 +160,17 @@ describe('RulesPage smoke', () => {
     const select = screen.getAllByRole('combobox').find((el) => el.textContent?.includes('pick one'))!
     fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[1].value) } })
     fireEvent.change(screen.getByLabelText(/Rename merchant to/), { target: { value: '  Amazon ' } })
+    // Run order lives only in the list (#552): no Priority field, and the
+    // form says where a new rule lands.
+    expect(screen.queryByLabelText(/Priority/)).toBeNull()
+    expect(screen.getByText('New rules run first; reorder them on the Rules page.')).toBeTruthy()
 
-    expect(await screen.findByText(/2 would show merchant “Amazon”/)).toBeTruthy()
+    expect(await screen.findByText(/2 would be renamed\. Renamed ones show merchant “Amazon”/)).toBeTruthy()
     expect(previews.at(-1)).toMatchObject({ pattern: 'AMZN', rename_merchant: 'Amazon' })
 
     fireEvent.click(screen.getByRole('button', { name: 'Create' }))
     expect(await screen.findByText('Renames to Amazon')).toBeTruthy()
-    expect(creates[0]).toMatchObject({ pattern: 'AMZN', rename_merchant: 'Amazon' })
+    expect(creates[0]).toMatchObject({ pattern: 'AMZN', rename_merchant: 'Amazon', priority: 10 })
 
     const row = screen.getByText('Renames to Amazon').closest('tr')!
     fireEvent.click(within(row).getByRole('button', { name: /edit/i }))
@@ -175,6 +180,8 @@ describe('RulesPage smoke', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(screen.queryByText('Renames to Amazon')).toBeNull())
     expect(patches[0]).toMatchObject({ rename_merchant: '' })
+    // Editing never moves the rule.
+    expect(patches[0]).not.toHaveProperty('priority')
   })
 
   // #536: a rule can also hide its matches. The draft preview carries the
@@ -191,7 +198,7 @@ describe('RulesPage smoke', () => {
         const body = (await request.json()) as Record<string, unknown>
         previews.push(body)
         return HttpResponse.json({
-          data: { scanned: 10, matched: 3, would_change: 3, would_rename: 0, would_hide: body.hide_matches ? 3 : 0, would_mark_reviewed: 0, would_tag: 0, skipped_manual: 0, samples: ['CASH SWEEP'] },
+          data: { scanned: 10, matched: 3, would_change: 3, would_recategorize: 0, would_rename: 0, would_hide: body.hide_matches ? 3 : 0, would_mark_reviewed: 0, would_tag: 0, skipped_manual: 0, samples: ['CASH SWEEP'] },
         })
       }),
       http.post(`${API}/categorization-rules`, async ({ request }) => {
@@ -215,7 +222,7 @@ describe('RulesPage smoke', () => {
     fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[1].value) } })
     fireEvent.click(screen.getByLabelText(/Also hide matching transactions/))
 
-    expect(await screen.findByText(/3 would be hidden from spending and budgets/)).toBeTruthy()
+    expect(await screen.findByText(/3 would be hidden\. Hidden ones leave spending and budgets/)).toBeTruthy()
     expect(previews.at(-1)).toMatchObject({ pattern: 'SWEEP', hide_matches: true })
 
     fireEvent.click(screen.getByRole('button', { name: 'Create' }))
@@ -246,7 +253,7 @@ describe('RulesPage smoke', () => {
         const body = (await request.json()) as Record<string, unknown>
         previews.push(body)
         return HttpResponse.json({
-          data: { scanned: 10, matched: 2, would_change: 2, would_rename: 0, would_hide: 0, would_mark_reviewed: body.mark_reviewed ? 2 : 0, would_tag: 0, skipped_manual: 0, samples: ['ACME PAYROLL'] },
+          data: { scanned: 10, matched: 2, would_change: 2, would_recategorize: 0, would_rename: 0, would_hide: 0, would_mark_reviewed: body.mark_reviewed ? 2 : 0, would_tag: 0, skipped_manual: 0, samples: ['ACME PAYROLL'] },
         })
       }),
       http.post(`${API}/categorization-rules`, async ({ request }) => {
@@ -348,7 +355,7 @@ describe('RulesPage smoke', () => {
         const body = (await request.json()) as Record<string, unknown>
         previews.push(body)
         return HttpResponse.json({
-          data: { scanned: 10, matched: 3, would_change: 3, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, would_tag: body.add_tags ? 3 : 0, skipped_manual: 0, samples: ['UBER TRIP'] },
+          data: { scanned: 10, matched: 3, would_change: 3, would_recategorize: 0, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, would_tag: body.add_tags ? 3 : 0, skipped_manual: 0, samples: ['UBER TRIP'] },
         })
       }),
       http.post(`${API}/categorization-rules`, async ({ request }) => {
@@ -373,7 +380,7 @@ describe('RulesPage smoke', () => {
     fireEvent.change(screen.getByLabelText(/Also add tags/), { target: { value: 'work trip, reimbursable, Reimbursable' } })
     fireEvent.click(await screen.findByRole('button', { name: 'Add tag vacation to this rule' }))
 
-    expect(await screen.findByText(/3 would be tagged Work trip, reimbursable, vacation/)).toBeTruthy()
+    expect(await screen.findByText(/3 would be tagged\. Tags: Work trip, reimbursable, vacation/)).toBeTruthy()
     expect(previews.at(-1)).toMatchObject({ pattern: 'UBER', add_tags: ['Work trip', 'reimbursable', 'vacation'] })
 
     fireEvent.click(screen.getByRole('button', { name: 'Create' }))
@@ -408,7 +415,7 @@ describe('RulesPage smoke', () => {
       http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
         previews.push((await request.json()) as Record<string, unknown>)
         return HttpResponse.json({
-          data: { scanned: 10, matched: 1, would_change: 1, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, would_tag: 0, skipped_manual: 0, samples: ['AMZN Mktp US'] },
+          data: { scanned: 10, matched: 1, would_change: 1, would_recategorize: 0, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, would_tag: 0, skipped_manual: 0, samples: ['AMZN Mktp US'] },
         })
       }),
       http.post(`${API}/categorization-rules`, async ({ request }) => {
@@ -444,7 +451,7 @@ describe('RulesPage smoke', () => {
     expect(await screen.findByText(/lower amount must not be more/)).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Lowest amount'), { target: { value: '10' } })
 
-    expect(await screen.findByText(/Would categorize 1 of 10/)).toBeTruthy()
+    expect(await screen.findByText(/Applies to 1 of 10/)).toBeTruthy()
     expect(previews.at(-1)).toMatchObject({ pattern: 'AMZN', account_id: fx.account1.id, amount_min: '10', amount_max: '20' })
 
     fireEvent.click(screen.getByRole('button', { name: 'Create' }))
