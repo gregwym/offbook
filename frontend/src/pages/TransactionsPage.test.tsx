@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import * as fx from '../test/fixtures'
@@ -183,7 +183,8 @@ describe('TransactionsPage review inbox (#424)', () => {
     fireEvent.click(await screen.findByRole('button', { name: /needs review/i }))
     await screen.findByText('3 to review')
 
-    fireEvent.click(await screen.findByRole('button', { name: /mark merchant 2 reviewed/i }))
+    // Phone and desktop render the same toggle; only one shows at a time.
+    fireEvent.click((await screen.findAllByRole('button', { name: /mark merchant 2 reviewed/i }))[0])
     await screen.findByText('2 to review')
     expect(reviewBodies).toEqual([{ ids: [2], reviewed: true }])
   })
@@ -195,7 +196,8 @@ describe('TransactionsPage review inbox (#424)', () => {
     fireEvent.click(await screen.findByRole('button', { name: /needs review/i }))
     await screen.findByText('3 to review')
 
-    fireEvent.click(await screen.findByRole('button', { name: /mark merchant 1 reviewed/i }))
+    // Phone and desktop render the same toggle; only one shows at a time.
+    fireEvent.click((await screen.findAllByRole('button', { name: /mark merchant 1 reviewed/i }))[0])
     expect(await screen.findByText('boom')).toBeInTheDocument()
     expect(screen.getByText('3 to review')).toBeInTheDocument()
     expect(screen.getByText('MERCHANT 1')).toBeInTheDocument()
@@ -313,11 +315,20 @@ describe('TransactionsPage mobile filter toggle (#518)', () => {
     expect(toggle).toHaveTextContent('· 1')
   })
 
-  it('starts open when a secondary filter is already set', async () => {
-    useTransactionsStore.setState({ filter: { account_id: 1 } })
+  // #554: an active filter no longer re-opens the stack; a removable chip
+  // says what is applied instead.
+  it('stays collapsed with a filter set and shows a removable chip', async () => {
+    useTransactionsStore.setState({ filter: { tag: 'reimbursable' } })
     renderPage(<TransactionsPage />)
     await expectHealthySmoke()
-    expect(screen.getByRole('button', { name: /^filters/i })).toHaveAttribute('aria-expanded', 'true')
+    const toggle = screen.getByRole('button', { name: /^filters/i })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).toHaveTextContent('· 1')
+    const chips = screen.getByRole('list', { name: 'Active filters' })
+    expect(chips).toHaveClass('md:hidden')
+    fireEvent.click(within(chips).getByRole('button', { name: 'Remove filter Tag: reimbursable' }))
+    expect(screen.queryByRole('list', { name: 'Active filters' })).not.toBeInTheDocument()
+    expect(toggle).not.toHaveTextContent('· 1')
   })
 })
 
@@ -369,5 +380,49 @@ describe('TransactionsPage tags (#544)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save tags' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(patched).toEqual({ tags: ['Work trip'] })
+  })
+})
+
+// #554: on a phone the row keeps category + reviewed inline and folds the
+// rest into one "More actions" menu with keyboard support.
+describe('TransactionsPage row actions menu (#554)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('opens a menu of secondary actions, moves focus in and back out', async () => {
+    const row = { ...fx.transaction1, id: 51, description: 'CORNER CAFE', tags: [] }
+    server.use(http.get(`${API}/transactions`, () => HttpResponse.json({ data: [row], total: 1 })))
+    renderPage(<TransactionsPage />)
+    await expectHealthySmoke()
+    await screen.findAllByText('CORNER CAFE')
+
+    const more = screen.getByRole('button', { name: 'More actions for CORNER CAFE' })
+    expect(more).toHaveAttribute('aria-haspopup', 'menu')
+    expect(more).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(more)
+    const menu = screen.getByRole('menu', { name: 'Actions for CORNER CAFE' })
+    // Portalled out of the table so a dimmed (hidden) row can't cover it.
+    expect(menu.closest('table')).toBeNull()
+    const items = within(menu).getAllByRole('menuitem')
+    expect(items.map((i) => i.getAttribute('aria-label'))).toEqual([
+      'Create rule from CORNER CAFE',
+      'Split CORNER CAFE',
+      'Tags for CORNER CAFE',
+      'Hide CORNER CAFE',
+      'Delete CORNER CAFE',
+    ])
+    expect(items[0]).toHaveFocus()
+    fireEvent.keyDown(menu, { key: 'ArrowUp' })
+    expect(items[4]).toHaveFocus()
+    fireEvent.keyDown(menu, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(more).toHaveFocus()
+
+    // Choosing an item closes the menu and runs the action.
+    fireEvent.click(more)
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Tags for CORNER CAFE' }))
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(await screen.findByRole('dialog', { name: 'Tags for CORNER CAFE' })).toBeInTheDocument()
   })
 })

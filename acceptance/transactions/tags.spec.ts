@@ -31,10 +31,42 @@ test.describe('tags journey', () => {
     await expect(page.getByText('QATAG Corner grocer').first()).toBeVisible()
 
     // First tag: typed and added, with the explainer copy visible.
-    const tagsFor = (label: string) => page.getByRole('button', { name: `Tags for ${label}` })
-    // The newest row's Tags action is on the first screen at both widths.
-    await expect(tagsFor('QATAG Corner grocer')).toBeInViewport()
-    await tagsFor('QATAG Hotel Roma').click()
+    const vp = page.viewportSize()!
+    const mobile = vp.width < 768
+    const openTags = async (label: string) => {
+      if (mobile) {
+        await page.getByRole('button', { name: `More actions for ${label}` }).click()
+        await page.getByRole('menu').getByRole('menuitem', { name: `Tags for ${label}` }).click()
+      } else {
+        await page.getByRole('button', { name: `Tags for ${label}` }).click()
+      }
+    }
+    // The newest row's Tags action is on the first screen at both widths
+    // (behind "More actions" on a phone, #554).
+    await expect(page.getByRole('button', { name: mobile ? 'More actions for QATAG Corner grocer' : 'Tags for QATAG Corner grocer' })).toBeInViewport()
+    if (mobile) {
+      // #554: an untagged row is compact, so several fit on one screen;
+      // category and the reviewed toggle stay one tap away.
+      const row = page.locator('tbody tr').filter({ hasText: 'QATAG Corner grocer' })
+      const box = (await row.boundingBox())!
+      expect(box.height, 'transaction row height on a phone').toBeLessThanOrEqual(120)
+      await expect(row.getByRole('combobox', { name: 'Category for QATAG Corner grocer' }).locator('visible=true')).toBeVisible()
+      await expect(row.getByRole('button', { name: /QATAG Corner grocer.*review/ }).locator('visible=true')).toBeVisible()
+      const more = row.getByRole('button', { name: 'More actions for QATAG Corner grocer' })
+      const mb = (await more.boundingBox())!
+      expect(Math.min(mb.width, mb.height), 'More actions target size').toBeGreaterThanOrEqual(44)
+      await testInfo.attach(`${testInfo.project.name}-compact-rows`, { body: await page.screenshot(), contentType: 'image/png' })
+      await more.click()
+      const menu = page.getByRole('menu', { name: 'Actions for QATAG Corner grocer' })
+      await expect(menu.getByRole('menuitem')).toHaveText(['Create rule', 'Split', 'Tags', 'Hide from spending', 'Delete'])
+      await expect(menu.getByRole('menuitem').first()).toBeFocused()
+      await expect(menu).toBeInViewport()
+      await testInfo.attach(`${testInfo.project.name}-row-menu`, { body: await page.screenshot(), contentType: 'image/png' })
+      await page.keyboard.press('Escape')
+      await expect(menu).toBeHidden()
+      await expect(more).toBeFocused()
+    }
+    await openTags('QATAG Hotel Roma')
     let dlg = page.getByRole('dialog', { name: 'Tags for QATAG Hotel Roma' })
     await expect(dlg).toContainText('They don’t change spending, budgets or balances.')
     await expect(dlg).toContainText('No tags yet.')
@@ -48,7 +80,7 @@ test.describe('tags journey', () => {
 
     // Second tag in another case: typed then saved directly; the server
     // keeps the user's existing spelling, so there is still one tag.
-    await tagsFor('QATAG Trattoria').click()
+    await openTags('QATAG Trattoria')
     dlg = page.getByRole('dialog', { name: 'Tags for QATAG Trattoria' })
     await expect(dlg.getByRole('button', { name: 'Add tag Rome trip' })).toBeVisible()
     await dlg.getByLabel('New tag').fill('rome TRIP')
@@ -66,12 +98,23 @@ test.describe('tags journey', () => {
     const tagFilter = page.locator('label', { hasText: /^Tag/ }).locator('select')
     await expect(tagFilter).toHaveValue('Rome trip')
     await expect(tagFilter.locator('option', { hasText: 'Rome trip (2)' })).toHaveCount(1)
-    await expect(tagFilter).toBeInViewport()
+    const chip = page.getByRole('button', { name: 'Remove filter Tag: Rome trip' })
+    if (mobile) {
+      // #554: the filter stack stays shut; a chip shows the active filter and
+      // the list still starts on the first screen.
+      await expect(page.getByRole('button', { name: /^Filters/ })).toHaveAttribute('aria-expanded', 'false')
+      await expect(chip).toBeInViewport()
+      const first = (await page.locator('tbody tr').first().boundingBox())!
+      expect(first.y, 'first row starts on the first screen').toBeLessThan(vp.height)
+    } else {
+      await expect(tagFilter).toBeInViewport()
+    }
     await testInfo.attach(`${testInfo.project.name}-tag-filtered`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
     await expectNoOverflow(page)
 
     // Clearing the filter brings everything back; spending never moved.
-    await tagFilter.selectOption('')
+    if (mobile) await chip.click()
+    else await tagFilter.selectOption('')
     await expect(page.getByText('QATAG Corner grocer').locator('visible=true').first()).toBeVisible()
     expect(await spending(cookie)).toBe(spendBefore)
   })

@@ -56,7 +56,17 @@ test.describe('transactions filters journey', () => {
     await accountSelect.selectOption({ label: 'Filter Savings' })
     await expect(interest).toBeVisible()
     await expect(page.getByText('QAFILT Corner Cafe').locator('visible=true')).toHaveCount(0)
-    if (vp.width < 768) await expect(toggle).toContainText('· 1')
+    if (vp.width < 768) {
+      await expect(toggle).toContainText('· 1')
+      // #554: folding the panel leaves a removable chip for the live filter,
+      // and the filtered list starts on the first screen.
+      await toggle.click()
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      await expect(page.getByRole('button', { name: 'Remove filter Account: Filter Savings' })).toBeVisible()
+      const box = (await interest.boundingBox())!
+      expect(box.y + box.height, 'filtered row inside the first viewport').toBeLessThanOrEqual(vp.height)
+      await testInfo.attach(`${testInfo.project.name}-filter-chip`, { body: await page.screenshot(), contentType: 'image/png' })
+    }
     await testInfo.attach(`${testInfo.project.name}-filters-applied`, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
 
     // Search stays up front and combines with the account filter.

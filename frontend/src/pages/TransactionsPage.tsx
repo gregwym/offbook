@@ -24,6 +24,7 @@ import type { CreateRuleInput } from '../types/categorizationRule'
 import type { CreateTransactionInput, TagCount, Transaction, TransactionSource } from '../types/transaction'
 import { TRANSACTION_SOURCES } from '../types/transaction'
 import { ModalShell } from '../components/ModalShell'
+import { RowActionsMenu, type RowAction } from '../components/RowActionsMenu'
 
 export function TransactionsPage() {
   const {
@@ -66,11 +67,28 @@ export function TransactionsPage() {
   const filtersActive = Boolean(accountID || categoryID || from || to || searchInput || tag)
   // Below md only Search is shown up front; Account/Category/From/To sit
   // behind a "Filters" toggle so the list isn't pushed below the fold (#518).
-  // Starts open when one of them is already set, so a live filter is never
-  // hidden. Desktop ignores this and always shows all five inline.
+  // The panel starts collapsed even with one of them set: removable chips
+  // summarise what is applied instead, so a live filter is never hidden and
+  // the list still starts on the first screen (#554). Desktop ignores this
+  // and always shows all five inline.
   const moreFilterCount = [accountID, categoryID, from, to, tag].filter(Boolean).length
-  const [moreFiltersOpen, setMoreFiltersOpen] = useState(moreFilterCount > 0)
+  const [moreFiltersOpen, setMoreFiltersOpen] = useState(false)
   const moreFilterClass = moreFiltersOpen ? 'block' : 'hidden md:block'
+  const activeFilterChips = [
+    accountID && {
+      key: 'account',
+      text: `Account: ${accounts.find((a) => String(a.id) === accountID)?.name ?? accountID}`,
+      clear: () => setAccountID(''),
+    },
+    categoryID && {
+      key: 'category',
+      text: `Category: ${categoryID === 'null' ? 'Uncategorized' : categories.find((c) => String(c.id) === categoryID)?.name ?? categoryID}`,
+      clear: () => setCategoryID(''),
+    },
+    from && { key: 'from', text: `From: ${from}`, clear: () => setFrom('') },
+    to && { key: 'to', text: `To: ${to}`, clear: () => setTo('') },
+    tag && { key: 'tag', text: `Tag: ${tag}`, clear: () => setTag('') },
+  ].filter((c): c is { key: string; text: string; clear: () => void } => Boolean(c))
   const clearFilters = () => {
     setAccountID('')
     setCategoryID('')
@@ -429,6 +447,24 @@ export function TransactionsPage() {
         </button>
       </div>
 
+      {moreFilterCount > 0 && !moreFiltersOpen && (
+        <ul aria-label="Active filters" className="mt-2 flex flex-wrap gap-1.5 md:hidden">
+          {activeFilterChips.map((c) => (
+            <li key={c.key}>
+              <button
+                type="button"
+                onClick={c.clear}
+                aria-label={`Remove filter ${c.text}`}
+                className="inline-flex min-h-8 max-w-full items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 text-xs font-medium text-indigo-800 hover:bg-indigo-100"
+              >
+                <span className="truncate">{c.text}</span>
+                <X size={12} aria-hidden="true" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
       <div id="transaction-filters" className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-6">
         <Field label="Account" className={moreFilterClass}>
           <select className={inputClass} value={accountID} onChange={(e) => setAccountID(e.target.value)}>
@@ -615,7 +651,7 @@ export function TransactionsPage() {
                   onSplit={() => setSplitting(t)}
                   onToggleHidden={() => { update(t.id, { hidden: t.hidden_at == null }).catch(() => {}) }}
                   onEditTags={() => setTagging(t)}
-                  onTagClick={(name) => { setTag(name); setMoreFiltersOpen(true) }}
+                  onTagClick={(name) => setTag(name)}
                   onDelete={async () => {
                     if (window.confirm('Delete this transaction?')) {
                       await remove(t.id)
@@ -869,6 +905,22 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
       {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
     </select>
   )
+  const mobileActions: RowAction[] = [
+    { key: 'rule', ariaLabel: `Create rule from ${label}`, label: <><Sparkles size={16} /> Create rule</>, onSelect: onCreateRule },
+    ...(splittable && splitCount === 0 && onSplit
+      ? [{ key: 'split', ariaLabel: `Split ${label}`, label: <><Scissors size={16} /> Split</>, onSelect: onSplit }]
+      : []),
+    ...(onEditTags ? [{ key: 'tags', ariaLabel: `Tags for ${label}`, label: <><Tag size={16} /> Tags</>, onSelect: onEditTags }] : []),
+    ...(hideable && onToggleHidden
+      ? [{
+          key: 'hide',
+          ariaLabel: hidden ? `Unhide ${label}` : `Hide ${label}`,
+          label: hidden ? <><Eye size={16} /> Unhide</> : <><EyeOff size={16} /> Hide from spending</>,
+          onSelect: onToggleHidden,
+        }]
+      : []),
+    { key: 'delete', ariaLabel: `Delete ${label}`, label: <><Trash2 size={16} /> Delete</>, onSelect: () => { void onDelete() }, danger: true },
+  ]
   return (
     <tr className={`hover:bg-gray-50 ${isReconciling ? 'bg-amber-50/60' : ''} ${unreviewed ? 'border-l-2 border-l-amber-400' : ''} ${hidden ? 'text-gray-500 opacity-60' : ''}`}>
       <td className="px-2 py-2 align-top md:px-3">
@@ -959,40 +1011,26 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
           </div>
           {/* No hover on touch screens: spell out what the chip's tooltip says. */}
           {tx.pending && <div className="text-xs text-sky-700">{PENDING_HINT}</div>}
-          {categorySelect}
-          <div className="flex flex-wrap gap-x-3 text-xs">
+          {/* Daily review stays inline: category, reviewed, then one menu
+              for the rest, so a row stays short on a phone (#554). */}
+          <div className="flex items-center gap-1.5">
+            <div className="min-w-0 flex-1">{categorySelect}</div>
             {reviewable && (
               <button
                 type="button"
                 onClick={onToggleReviewed}
-                title={unreviewed ? undefined : 'Reviewed — tap to move back to review'}
-                className={`inline-flex min-h-9 items-center gap-1 font-medium ${unreviewed ? 'text-emerald-700' : 'text-gray-500'}`}
+                aria-label={unreviewed ? `Mark ${label} reviewed` : `Reviewed: ${label} — tap to move back to review`}
+                title={unreviewed ? 'Mark reviewed' : 'Reviewed — tap to move back to review'}
+                className={`inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md border ${
+                  unreviewed
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                    : 'border-transparent text-emerald-600'
+                }`}
               >
-                <Check size={14} />
-                {unreviewed ? 'Mark as reviewed' : 'Reviewed'}
+                <Check size={18} />
               </button>
             )}
-            <button type="button" onClick={onCreateRule} aria-label={`Create rule from ${label}`} className="min-h-9 text-indigo-700 underline">
-              Create rule
-            </button>
-            {splittable && splitCount === 0 && (
-              <button type="button" onClick={onSplit} aria-label={`Split ${label}`} className="min-h-9 text-indigo-700 underline">
-                Split
-              </button>
-            )}
-            {onEditTags && (
-              <button type="button" onClick={onEditTags} aria-label={`Tags for ${label}`} className="min-h-9 text-indigo-700 underline">
-                Tags
-              </button>
-            )}
-            {hideable && (
-              <button type="button" onClick={onToggleHidden} aria-label={hidden ? `Unhide ${label}` : `Hide ${label}`} className="min-h-9 text-indigo-700 underline">
-                {hidden ? 'Unhide' : 'Hide'}
-              </button>
-            )}
-            <button type="button" onClick={onDelete} aria-label={`Delete ${label}`} className="min-h-9 text-red-700 underline">
-              Delete
-            </button>
+            <RowActionsMenu label={label} actions={mobileActions} />
           </div>
         </div>
       </td>
