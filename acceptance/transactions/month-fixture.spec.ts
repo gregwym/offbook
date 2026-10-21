@@ -1,5 +1,6 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test'
 import { acceptanceAPIURL } from '../fixtures/env.mjs'
+import { expectNoClipping } from '../fixtures/layout.mjs'
 import { createThrowawayUser } from '../fixtures/state.mjs'
 
 // Daily Driver acceptance month (#526, gates 1/3/5): a seeded, deterministic
@@ -126,6 +127,13 @@ test.describe('acceptance month fixture', () => {
       })
     }
 
+    // A goal and a rule so their pages have rows to lay out. The rule is not
+    // applied, so no seeded figure changes.
+    await api(cookie, '/savings-goals', { name: 'QAM Emergency fund with a fairly long goal name', target_amount: money(1000000), account_id: acct.savings })
+    await api(cookie, '/categorization-rules', {
+      pattern: 'QAM GROCER LONG MERCHANT NAME', match_type: 'contains', category_id: cat('groceries').id, priority: 0,
+    })
+
     await signIn(page, user.email, user.password)
 
     // Insights: headline net worth + spending, and per-category spend.
@@ -139,7 +147,7 @@ test.describe('acceptance month fixture', () => {
     for (const slug of budgeted) {
       await expect(band.getByRole('listitem').filter({ hasText: cat(slug).name }).first()).toContainText(fmt(spend[slug]))
     }
-    await expectNoOverflow(page)
+    await expectNoClipping(page, 'insights')
     await snap(page, testInfo, 'insights')
 
     // Budgets: each actual equals the fixture; 500.00 remaining on each.
@@ -149,14 +157,28 @@ test.describe('acceptance month fixture', () => {
       await expect(card).toContainText(fmt(spend[slug]))
       await expect(card).toContainText('500.00 USD remaining')
     }
-    await expectNoOverflow(page)
+    await expectNoClipping(page, 'budgets')
     await snap(page, testInfo, 'budgets')
 
     // Transactions at volume: the list renders and the page stays in bounds.
     await page.goto('/transactions')
     await expect(page.getByText(`${PREFIX} `).locator('visible=true').first()).toBeVisible()
-    await expectNoOverflow(page)
+    await expectNoClipping(page, 'transactions')
     await snap(page, testInfo, 'transactions')
+
+    // Every other core page at volume: nothing clipped inside a wrapper (#561).
+    for (const [name, path, ready] of [
+      ['accounts', '/accounts', 'QAM Checking'],
+      ['reconciliation', `/accounts/${acct.checking}/reconciliation`, 'QAM Checking'],
+      ['goals', '/savings-goals', 'QAM Emergency fund'],
+      ['rules', '/rules', 'QAM GROCER LONG MERCHANT NAME'],
+      ['settings', '/settings', 'Settings'],
+    ] as const) {
+      await page.goto(path)
+      await expect(page.getByText(ready).locator('visible=true').first()).toBeVisible()
+      await expectNoClipping(page, name)
+      await snap(page, testInfo, name)
+    }
 
     // A reload changes nothing.
     await page.goto('/insights')
@@ -289,9 +311,4 @@ async function signIn(page: Page, email: string, password: string) {
   await page.getByLabel(/password/i).fill(password)
   await page.getByRole('button', { name: /sign in/i }).click()
   await page.waitForURL(/\/insights|\/h\/insights|\/accounts/)
-}
-
-async function expectNoOverflow(page: Page) {
-  const o = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)
-  expect(o, 'no horizontal overflow').toBe(false)
 }
