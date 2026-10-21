@@ -711,14 +711,9 @@ async function expectInViewport(page: Page, loc: ReturnType<Page['getByRole']> |
   expect(box!.x + box!.width, 'right edge on screen').toBeLessThanOrEqual(vw)
 }
 
-// #554: on a phone a row's secondary actions sit behind "More actions";
-// desktop keeps them as inline icon buttons with the same names.
+// A row's secondary actions sit behind "More actions" at every width
+// (#554 phone, #563 desktop).
 async function rowAction(page: Page, label: string, name: string) {
-  const more = page.getByRole('button', { name: `More actions for ${label}` })
-  if (await more.isVisible()) {
-    await more.click()
-    await page.getByRole('menu').getByRole('menuitem', { name, exact: true }).click()
-  } else {
-    await page.getByRole('button', { name, exact: true }).click()
-  }
+  await page.getByRole('button', { name: `More actions for ${label}` }).locator('visible=true').click()
+  await page.getByRole('menu').getByRole('menuitem', { name, exact: true }).click()
 }

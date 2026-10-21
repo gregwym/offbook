@@ -265,10 +265,11 @@ describe('TransactionsPage unpaired transfer chip (#463)', () => {
     await screen.findByText('ONE OFF')
     expect(screen.queryByText('hidden')).toBeNull()
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Hide ONE OFF' })[0])
+    chooseRowAction('ONE OFF', 'Hide ONE OFF')
     await screen.findByText('hidden')
     expect(body).toEqual({ hidden: true })
-    expect(screen.getAllByRole('button', { name: 'Unhide ONE OFF' }).length).toBeGreaterThan(0)
+    fireEvent.click(screen.getAllByRole('button', { name: 'More actions for ONE OFF' })[0])
+    expect(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Unhide ONE OFF' })).toBeInTheDocument()
   })
 
   // ONB-01: an empty ledger with no filters is a first-run state with a next
@@ -373,7 +374,7 @@ describe('TransactionsPage tags (#544)', () => {
     fireEvent.change(tagSelect, { target: { value: '' } })
     await screen.findByText('GROCER')
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Tags for GROCER' })[0])
+    chooseRowAction('GROCER', 'Tags for GROCER')
     const dialog = await screen.findByRole('dialog', { name: 'Tags for GROCER' })
     expect(dialog).toHaveTextContent('No tags yet.')
     fireEvent.click(screen.getByRole('button', { name: 'Add tag Work trip' }))
@@ -397,7 +398,10 @@ describe('TransactionsPage row actions menu (#554)', () => {
     await expectHealthySmoke()
     await screen.findAllByText('CORNER CAFE')
 
-    const more = screen.getByRole('button', { name: 'More actions for CORNER CAFE' })
+    // One trigger per layout (phone block + desktop cell); jsdom renders both.
+    const triggers = screen.getAllByRole('button', { name: 'More actions for CORNER CAFE' })
+    expect(triggers).toHaveLength(2)
+    const more = triggers[0]
     expect(more).toHaveAttribute('aria-haspopup', 'menu')
     expect(more).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(more)
@@ -426,3 +430,37 @@ describe('TransactionsPage row actions menu (#554)', () => {
     expect(await screen.findByRole('dialog', { name: 'Tags for CORNER CAFE' })).toBeInTheDocument()
   })
 })
+
+// #563: desktop keeps only Reviewed inline; every other row action sits in
+// the same menu as on a phone, so the actions cell is one line of controls.
+describe('TransactionsPage desktop row actions (#563)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('shows Reviewed and More actions inline, nothing else', async () => {
+    const row = { ...fx.transaction1, id: 52, description: 'DESK CAFE', tags: [], reviewed_at: null }
+    server.use(http.get(`${API}/transactions`, () => HttpResponse.json({ data: [row], total: 1 })))
+    renderPage(<TransactionsPage />)
+    await screen.findAllByText('DESK CAFE')
+
+    const desktopCell = screen.getAllByRole('button', { name: 'More actions for DESK CAFE' })[1].closest('td')!
+    expect(within(desktopCell).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Mark DESK CAFE reviewed',
+      'More actions for DESK CAFE',
+    ])
+    fireEvent.click(within(desktopCell).getByRole('button', { name: 'More actions for DESK CAFE' }))
+    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((i) => i.getAttribute('aria-label'))).toEqual([
+      'Create rule from DESK CAFE',
+      'Split DESK CAFE',
+      'Tags for DESK CAFE',
+      'Hide DESK CAFE',
+      'Delete DESK CAFE',
+    ])
+  })
+})
+
+function chooseRowAction(label: string, name: string) {
+  fireEvent.click(screen.getAllByRole('button', { name: `More actions for ${label}` })[0])
+  fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name }))
+}

@@ -525,7 +525,7 @@ function SpendingBand({ data }: { data: InsightsData }) {
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <span className="w-24 shrink-0 text-right text-gray-700">
+                <span className="min-w-28 shrink-0 text-right text-gray-700">
                   <AmountDisplay amount={r.amount} />
                   {isNetRefund && (
                     <span className="block text-xs text-gray-400">net refund</span>

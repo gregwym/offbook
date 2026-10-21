@@ -4,8 +4,8 @@ import { MoreHorizontal } from 'lucide-react'
 
 export type RowAction = {
   key: string
-  // Accessible name; matches the row's inline desktop button so a journey
-  // finds the same action by name at either width.
+  // Accessible name; the same at every width, so a journey finds the
+  // action by name on desktop and on a phone.
   ariaLabel: string
   label: ReactNode
   onSelect: () => void
@@ -17,8 +17,9 @@ export type RowAction = {
 // the trigger, so neither the table's overflow wrapper nor a dimmed (hidden)
 // row's stacking context can clip or cover it. It opens upward when the
 // trigger is near the bottom of the screen. Focus moves to the first item on
-// open and back to the trigger on Escape or after a choice.
-export function RowActionsMenu({ label, actions }: { label: string; actions: RowAction[] }) {
+// open and back to the trigger on Escape or after a choice. `compact` sizes
+// the trigger for a pointer (desktop table, #563) instead of a 44px tap.
+export function RowActionsMenu({ label, actions, compact }: { label: string; actions: RowAction[]; compact?: boolean }) {
   const [open, setOpen] = useState(false)
   const [style, setStyle] = useState<CSSProperties>({})
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -88,9 +89,10 @@ export function RowActionsMenu({ label, actions }: { label: string; actions: Row
         aria-label={`More actions for ${label}`}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md border border-gray-300 text-gray-600 hover:bg-gray-100"
+        title={compact ? 'More actions' : undefined}
+        className={`inline-flex shrink-0 items-center justify-center rounded-md border border-gray-300 text-gray-600 hover:bg-gray-100 ${compact ? 'min-h-8 min-w-8' : 'min-h-11 min-w-11'}`}
       >
-        <MoreHorizontal size={18} />
+        <MoreHorizontal size={compact ? 16 : 18} />
       </button>
       {open && createPortal(
         <div

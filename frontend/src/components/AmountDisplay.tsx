@@ -27,7 +27,8 @@ export function AmountDisplay({ amount, currency = 'USD', fractionDigits, signed
   const negative = amount.trim().startsWith('-')
   const text = formatDecimal(amount, fraction, currency)
   const color = signed && negative ? 'text-red-700' : signed && !negative ? 'text-emerald-700' : ''
-  return <span className={[color, className ?? ''].join(' ').trim()}>{text}</span>
+  // Never break between the number and its currency ("3,226.28 / USD", #563).
+  return <span className={['whitespace-nowrap', color, className ?? ''].join(' ').trim()}>{text}</span>
 }
 
 function formatDecimal(value: string, fraction: number, currency: string): string {
