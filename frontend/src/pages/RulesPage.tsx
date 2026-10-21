@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, Pencil, Plus, RefreshCw, Sparkles, Trash2 } from 'lucide-react'
+import { AmountDisplay } from '../components/AmountDisplay'
 import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
 import { listCategorizationVerdicts } from '../api/aiCategorizationVerdicts'
+import { useAccountsStore } from '../store/accountsStore'
 import { useCategoriesStore } from '../store/categoriesStore'
 import { useRulesStore } from '../store/rulesStore'
 import type { AICategorizationVerdict } from '../types/aiCategorizationVerdict'
@@ -15,6 +17,7 @@ import type {
 export function RulesPage() {
   const { rules, loading, error, fetch, create, update, remove, move, apply, clearError } = useRulesStore()
   const { categories, fetch: fetchCategories } = useCategoriesStore()
+  const { accounts, fetch: fetchAccounts } = useAccountsStore()
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<CategorizationRule | null>(null)
   const [applying, setApplying] = useState(false)
@@ -28,13 +31,14 @@ export function RulesPage() {
   useEffect(() => {
     void fetch()
     void fetchCategories()
+    void fetchAccounts()
     listCategorizationVerdicts()
       .then(setVerdicts)
       .catch(() => {
         // Best-effort — the AI suggestions panel just stays empty; the core
         // rules table/functionality doesn't depend on it.
       })
-  }, [fetch, fetchCategories])
+  }, [fetch, fetchCategories, fetchAccounts])
 
   const visibleVerdicts = useMemo(
     () => verdicts.filter((v) => !promotedKeys.has(v.merchant_key)),
@@ -46,6 +50,8 @@ export function RulesPage() {
     for (const c of categories) m.set(c.id, c)
     return m
   }, [categories])
+
+  const accountsById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
 
   // Next priority = (max existing) + 10, or 10 if no rules yet. Matches the
   // backend's tie-break (priority DESC, id ASC) — new rules outrank old ones
@@ -209,6 +215,20 @@ export function RulesPage() {
                 <td className="px-2 py-2 sm:px-4 font-mono text-gray-900">
                   {r.pattern}
                   {!r.is_active && <span className="ml-2 text-xs text-gray-400 sm:hidden">(inactive)</span>}
+                  {r.account_id && (
+                    <span className="block font-sans text-xs text-gray-500">
+                      Only in {accountsById.get(r.account_id)?.name ?? 'a deleted account'}
+                    </span>
+                  )}
+                  {(r.amount_min || r.amount_max) && (
+                    <span className="block font-sans text-xs text-gray-500">
+                      <RuleAmountCondition
+                        min={r.amount_min}
+                        max={r.amount_max}
+                        currency={r.account_id ? accountsById.get(r.account_id)?.currency : undefined}
+                      />
+                    </span>
+                  )}
                   {r.rename_merchant && (
                     <span className="block font-sans text-xs text-gray-500">Renames to {r.rename_merchant}</span>
                   )}
@@ -318,6 +338,15 @@ export function RulesPage() {
       )}
     </div>
   )
+}
+
+// States a rule's amount condition (#550) in words; amounts ignore the sign.
+function RuleAmountCondition({ min, max, currency }: { min?: string | null; max?: string | null; currency?: string }) {
+  if (min && max) {
+    return <>Amount <AmountDisplay amount={min} currency={currency} /> to <AmountDisplay amount={max} currency={currency} /></>
+  }
+  if (min) return <>Amount <AmountDisplay amount={min} currency={currency} /> or more</>
+  return <>Amount up to <AmountDisplay amount={max} currency={currency} /></>
 }
 
 function formatApplyResult(r: ApplyResult): string {

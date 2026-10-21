@@ -396,4 +396,70 @@ describe('RulesPage smoke', () => {
     fireEvent.change(screen.getByLabelText(/Also add tags/), { target: { value: 'x'.repeat(41) } })
     expect(await screen.findByText(/Keep each tag to 40 characters or fewer/)).toBeTruthy()
   })
+  // #550: account + amount-band conditions round-trip through the form, the
+  // draft preview, the rules list wording, and clear_* on edit.
+  it('narrows a rule to an account and an amount band, then clears the band on edit', async () => {
+    const previews: Record<string, unknown>[] = []
+    const creates: Record<string, unknown>[] = []
+    const patches: Record<string, unknown>[] = []
+    let stored = [...fx.rules]
+    server.use(
+      http.get(`${API}/categorization-rules`, () => HttpResponse.json({ data: stored, total: stored.length })),
+      http.post(`${API}/categorization-rules/preview`, async ({ request }) => {
+        previews.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json({
+          data: { scanned: 10, matched: 1, would_change: 1, would_rename: 0, would_hide: 0, would_mark_reviewed: 0, would_tag: 0, skipped_manual: 0, samples: ['AMZN Mktp US'] },
+        })
+      }),
+      http.post(`${API}/categorization-rules`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        creates.push(body)
+        const r = {
+          ...fx.rule1, id: 6, pattern: 'AMZN',
+          account_id: body.account_id as number,
+          amount_min: '10.000000000000000000', amount_max: '20.000000000000000000',
+        }
+        stored = [...stored, r]
+        return HttpResponse.json({ data: r }, { status: 201 })
+      }),
+      http.patch(`${API}/categorization-rules/:id`, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        patches.push(body)
+        stored = stored.map((r) => (r.id === 6 ? { ...r, amount_min: null, amount_max: null } : r))
+        return HttpResponse.json({ data: stored.find((r) => r.id === 6) })
+      }),
+    )
+    renderPage(<RulesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /new rule/i }))
+    fireEvent.change(screen.getByPlaceholderText('e.g. WHOLEFDS'), { target: { value: 'AMZN' } })
+    const select = screen.getAllByRole('combobox').find((el) => el.textContent?.includes('pick one'))!
+    fireEvent.change(select, { target: { value: String((select as HTMLSelectElement).options[1].value) } })
+    const accountSelect = screen.getByLabelText('Account') as HTMLSelectElement
+    await waitFor(() => expect(accountSelect.options.length).toBeGreaterThan(1))
+    fireEvent.change(accountSelect, { target: { value: String(fx.account1.id) } })
+
+    // An inverted band is caught before anything is sent.
+    fireEvent.change(screen.getByLabelText('Lowest amount'), { target: { value: '30' } })
+    fireEvent.change(screen.getByLabelText('Highest amount'), { target: { value: '$20' } })
+    expect(await screen.findByText(/lower amount must not be more/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Lowest amount'), { target: { value: '10' } })
+
+    expect(await screen.findByText(/Would categorize 1 of 10/)).toBeTruthy()
+    expect(previews.at(-1)).toMatchObject({ pattern: 'AMZN', account_id: fx.account1.id, amount_min: '10', amount_max: '20' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }))
+    expect(await screen.findByText(`Only in ${fx.account1.name}`)).toBeTruthy()
+    expect(screen.getByText(`Only in ${fx.account1.name}`).closest('td')!.textContent).toMatch(/Amount 10\.00 USD to 20\.00 USD/)
+    expect(creates[0]).toMatchObject({ account_id: fx.account1.id, amount_min: '10', amount_max: '20' })
+
+    const row = screen.getByText(`Only in ${fx.account1.name}`).closest('tr')!
+    fireEvent.click(within(row).getByRole('button', { name: /edit/i }))
+    const low = screen.getByLabelText('Lowest amount') as HTMLInputElement
+    expect(low.value).toBe('10')
+    fireEvent.change(low, { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('Highest amount'), { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(screen.getByText(`Only in ${fx.account1.name}`).closest('td')!.textContent).not.toMatch(/Amount/))
+    expect(patches[0]).toMatchObject({ account_id: fx.account1.id, clear_amount_min: true, clear_amount_max: true })
+  })
 })

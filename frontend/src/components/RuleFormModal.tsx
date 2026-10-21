@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { listAccounts } from '../api/accounts'
 import { previewDraftRule } from '../api/categorizationRules'
 import { listTransactionTags } from '../api/transactions'
 import { MAX_TAG_LENGTH, mergeTags } from '../lib/tags'
+import type { Account } from '../types/account'
 import type { TagCount } from '../types/transaction'
 import type { Category } from '../types/category'
 import { ModalShell } from './ModalShell'
@@ -29,6 +31,7 @@ export type RuleFormDefaults = {
   hide_matches?: boolean
   mark_reviewed?: boolean
   add_tags?: string[]
+  account_id?: number
 }
 
 // Mirrors the backend's maxRenameMerchant.
@@ -78,6 +81,27 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   const tagsKey = ruleTags.join('\n')
   const tagSuggestions = knownTags.filter((k) => !ruleTags.some((t) => t.toLowerCase() === k.name.toLowerCase())).slice(0, 8)
   const addSuggestion = (name: string) => setTagsText((cur) => (cur.trim() ? `${cur.trim().replace(/,$/, '')}, ${name}` : name))
+  // Optional conditions (#550): one account, and a band of |amount|.
+  const [accountID, setAccountID] = useState<number | ''>(rule?.account_id ?? defaults?.account_id ?? '')
+  const [accounts, setAccounts] = useState<Account[]>([])
+  useEffect(() => {
+    let live = true
+    listAccounts({ limit: 200 })
+      .then(({ items }) => { if (live) setAccounts(items) })
+      .catch(() => {})
+    return () => { live = false }
+  }, [])
+  const [amountMinText, setAmountMinText] = useState(trimDecimal(rule?.amount_min))
+  const [amountMaxText, setAmountMaxText] = useState(trimDecimal(rule?.amount_max))
+  const amountMin = amountMinText.trim().replace(/[$,]/g, '')
+  const amountMax = amountMaxText.trim().replace(/[$,]/g, '')
+  const amountError =
+    (amountMin !== '' && !DECIMAL_RE.test(amountMin)) || (amountMax !== '' && !DECIMAL_RE.test(amountMax))
+      ? 'Enter amounts like 12.50, without a minus sign.'
+      : amountMin !== '' && amountMax !== '' && compareDecimal(amountMin, amountMax) > 0
+        ? 'The lower amount must not be more than the upper amount.'
+        : null
+  const conditionsOK = amountError === null
   const [submitting, setSubmitting] = useState(false)
   // We split form errors by field when the backend gives us a code; otherwise
   // surface as a generic banner above the form.
@@ -91,8 +115,8 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   // never blocks saving. Results are keyed by the draft they describe, so a
   // result for an older draft reads as "loading" rather than stale.
   const cat = Number(categoryID)
-  const draftReady = pattern.trim() !== '' && Number.isInteger(cat) && cat > 0 && priority >= 0
-  const draftKey = JSON.stringify([pattern.trim(), matchType, cat, priority, isActive, rename, hideMatches, markReviewed, tagsKey, rule?.id ?? null])
+  const draftReady = pattern.trim() !== '' && Number.isInteger(cat) && cat > 0 && priority >= 0 && conditionsOK
+  const draftKey = JSON.stringify([pattern.trim(), matchType, cat, priority, isActive, rename, hideMatches, markReviewed, tagsKey, accountID, amountMin, amountMax, rule?.id ?? null])
   const [impact, setImpact] = useState<{ key: string; data: DraftPreview | null } | null>(null)
   useEffect(() => {
     if (!draftReady) return
@@ -109,6 +133,9 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
           ...(hideMatches ? { hide_matches: true } : {}),
           ...(markReviewed ? { mark_reviewed: true } : {}),
           ...(tagsKey ? { add_tags: tagsKey.split('\n') } : {}),
+          ...(accountID !== '' ? { account_id: accountID } : {}),
+          ...(amountMin ? { amount_min: amountMin } : {}),
+          ...(amountMax ? { amount_max: amountMax } : {}),
         },
         rule?.id,
         ctrl.signal,
@@ -122,7 +149,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
       clearTimeout(timer)
       ctrl.abort()
     }
-  }, [draftKey, draftReady, pattern, matchType, cat, priority, isActive, rename, hideMatches, markReviewed, tagsKey, rule?.id])
+  }, [draftKey, draftReady, pattern, matchType, cat, priority, isActive, rename, hideMatches, markReviewed, tagsKey, accountID, amountMin, amountMax, rule?.id])
   const current = draftReady && impact?.key === draftKey ? impact : null
   const impactData = current?.data ?? null
   const impactLoading = draftReady && isActive && current === null
@@ -148,7 +175,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
       setRenameError(`Keep the merchant name to ${MAX_RENAME} characters or fewer.`)
       return
     }
-    if (tagsError) return
+    if (tagsError || amountError) return
     setSubmitting(true)
     try {
       await onSubmit({
@@ -162,6 +189,10 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
         hide_matches: hideMatches,
         mark_reviewed: markReviewed,
         add_tags: ruleTags,
+        // Editing sends clear_* to drop a condition; creating omits a blank one.
+        ...(accountID !== '' ? { account_id: accountID } : rule?.account_id ? { clear_account_id: true } : {}),
+        ...(amountMin ? { amount_min: amountMin } : rule?.amount_min ? { clear_amount_min: true } : {}),
+        ...(amountMax ? { amount_max: amountMax } : rule?.amount_max ? { clear_amount_max: true } : {}),
       })
     } catch (err) {
       const { code, message } = extractErr(err)
@@ -169,6 +200,8 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
         setPatternError(message)
       } else if (code === 'UNKNOWN_CATEGORY') {
         setCategoryError(message)
+      } else if (code === 'UNKNOWN_ACCOUNT') {
+        setError('That account no longer exists. Pick another account or "Any account".')
       } else {
         setError(message)
       }
@@ -229,6 +262,52 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
             ))}
           </select>
         </Field>
+        <fieldset className="rounded-md border border-gray-200 px-3 pb-3 pt-1">
+          <legend className="px-1 text-xs font-medium text-gray-600">Only when (optional)</legend>
+          <Field label="Account">
+            <select
+              className={inputClass}
+              value={accountID === '' ? '' : String(accountID)}
+              onChange={(e) => setAccountID(e.target.value === '' ? '' : Number(e.target.value))}
+            >
+              <option value="">Any account</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+              {accountID !== '' && accounts.length > 0 && !accounts.some((a) => a.id === accountID) && (
+                <option value={accountID}>Deleted account</option>
+              )}
+            </select>
+          </Field>
+          <div className="mt-2">
+            <span id="rule-amount-label" className="mb-1 block text-xs font-medium text-gray-600">Amount between</span>
+            <div className="flex items-center gap-2" role="group" aria-labelledby="rule-amount-label">
+              <input
+                className={inputClass}
+                inputMode="decimal"
+                value={amountMinText}
+                onChange={(e) => setAmountMinText(e.target.value)}
+                placeholder="Any"
+                aria-label="Lowest amount"
+                aria-invalid={amountError ? true : undefined}
+              />
+              <span className="text-xs text-gray-500">and</span>
+              <input
+                className={inputClass}
+                inputMode="decimal"
+                value={amountMaxText}
+                onChange={(e) => setAmountMaxText(e.target.value)}
+                placeholder="Any"
+                aria-label="Highest amount"
+                aria-invalid={amountError ? true : undefined}
+              />
+            </div>
+            {amountError && <span role="alert" className="mt-1 block text-xs text-red-600">{amountError}</span>}
+          </div>
+          <p className="mt-1 text-xs text-gray-500">
+            Amounts ignore the sign, so a refund of the same size matches too. Both ends are included. Use two rules on one merchant to send small and large charges to different categories.
+          </p>
+        </fieldset>
         <Field label="Rename merchant to (optional)" error={renameError}>
           <input
             className={inputClass}
@@ -346,6 +425,29 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
 }
 
 const inputClass = 'w-full rounded border border-gray-300 px-2 py-1 text-sm'
+
+// A non-negative decimal as typed (after stripping $ and commas).
+const DECIMAL_RE = /^\d+(\.\d+)?$/
+
+// Compares two non-negative decimal strings exactly (no float conversion).
+function compareDecimal(a: string, b: string): number {
+  const [ai, af = ''] = a.split('.')
+  const [bi, bf = ''] = b.split('.')
+  const aInt = ai.replace(/^0+(?=\d)/, '')
+  const bInt = bi.replace(/^0+(?=\d)/, '')
+  if (aInt.length !== bInt.length) return aInt.length < bInt.length ? -1 : 1
+  if (aInt !== bInt) return aInt < bInt ? -1 : 1
+  const n = Math.max(af.length, bf.length)
+  const aF = af.padEnd(n, '0')
+  const bF = bf.padEnd(n, '0')
+  return aF === bF ? 0 : aF < bF ? -1 : 1
+}
+
+// Shows a stored NUMERIC(30,18) amount without trailing zeros ("15.490000…" → "15.49").
+function trimDecimal(v: string | null | undefined): string {
+  if (!v) return ''
+  return v.includes('.') ? v.replace(/0+$/, '').replace(/\.$/, '') : v
+}
 
 function Field({ label, error, children }: { label: string; error?: string | null; children: ReactNode }) {
   return (

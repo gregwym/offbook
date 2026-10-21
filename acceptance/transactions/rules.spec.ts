@@ -8,7 +8,7 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 // (#534) has a rule rename the merchant, so the list and Insights Top
 // merchants read one clean name. Throwaway user; runs under both desktop and
 // mobile projects. Later journeys cover hide (#536), mark reviewed (#538) and
-// run order (#540) and tags (#546).
+// run order (#540), tags (#546) and account/amount conditions (#550).
 
 test.describe('categorization rules journey', () => {
   test('rule impact preview, dry-run, apply, manual picks win', async ({ page }, testInfo) => {
@@ -419,6 +419,102 @@ test.describe('rule adds tags', () => {
 
     // Tags are labels only: spending is unchanged apart from the new row.
     expect((await totalSpend(cookie)) - spendBefore).toBeCloseTo(11, 2)
+  })
+})
+
+test.describe('rule conditions', () => {
+  test('account and amount bands split one merchant; other accounts and mid-size rows are left alone', async ({ page }, testInfo) => {
+    process.env.OFFBOOK_ROLE = process.env.OFFBOOK_ROLE ?? 'qa'
+    const user = await createThrowawayUser({ suite: `rules-cond-${testInfo.project.name}` })
+    const cookie = await apiSignin(user.email, user.password)
+    const cats = await get(cookie, '/categories')
+    const pick = (slug: string, i: number) => (cats.data.find((x: { slug: string }) => x.slug === slug) ?? cats.data[i]) as { id: number; name: string }
+    const shopping = pick('shopping', 0)
+    const subs = pick('subscriptions', 1)
+    const mk = async (name: string) => (await api(cookie, '/accounts', {
+      name, institution_slug: 'manual', account_type: 'checking', currency: 'USD',
+    })).data.id as number
+    const joint = await mk('Joint Checking')
+    const card = await mk('Travel Card')
+    const today = new Date().toISOString().slice(0, 10)
+    const tx = async (account_id: number, description: string, amount: string) =>
+      (await api(cookie, '/transactions', { account_id, amount, description, transaction_date: today, source: 'csv' })).data
+    const small = await tx(joint, 'QACOND AMZN Mktp US 1', '-12.99')
+    const big = await tx(joint, 'QACOND AMZN Mktp US 2', '-649.00')
+    const mid = await tx(joint, 'QACOND AMZN Mktp US 3', '-89.50')
+    const elsewhere = await tx(card, 'QACOND AMZN Mktp US 4', '-12.99')
+    const categoryOf = async (id: number) => (await get(cookie, `/transactions/${id}`)).data.category_id as number | null
+
+    await signIn(page, user.email, user.password)
+    await page.goto('/rules')
+
+    // Small Amazon charges on the joint account only → Subscriptions.
+    await page.getByRole('button', { name: 'New rule' }).click()
+    let dialog = page.locator('div.fixed.inset-0')
+    await dialog.getByPlaceholder('e.g. WHOLEFDS').fill('QACOND AMZN')
+    await dialog.getByLabel('Category').selectOption({ label: subs.name })
+    const account = dialog.getByLabel('Account', { exact: true })
+    await account.scrollIntoViewIfNeeded()
+    await expectInViewport(page, account)
+    await account.selectOption({ label: 'Joint Checking' })
+    const low = dialog.getByLabel('Lowest amount')
+    const high = dialog.getByLabel('Highest amount')
+    await expectInViewport(page, high)
+    // An inverted band is explained inline and not previewed.
+    await low.fill('30')
+    await high.fill('20')
+    await expect(dialog.getByRole('alert')).toContainText('lower amount must not be more')
+    await low.fill('')
+    await expect(dialog).toContainText('Would categorize 1 of')
+    await expect(dialog.getByRole('listitem')).toHaveText(['QACOND AMZN Mktp US 1'])
+    await expect(dialog.getByRole('button', { name: 'Create', exact: true })).toBeInViewport()
+    await testInfo.attach(`${testInfo.project.name}-conditions-draft`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+    await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(page.getByText('Only in Joint Checking')).toBeVisible()
+    await expect(page.getByText('Only in Joint Checking').locator('xpath=..')).toContainText('Amount up to 20.00 USD')
+
+    // Large ones anywhere → Shopping.
+    await page.getByRole('button', { name: 'New rule' }).click()
+    dialog = page.locator('div.fixed.inset-0')
+    await dialog.getByPlaceholder('e.g. WHOLEFDS').fill('QACOND AMZN')
+    await dialog.getByLabel('Category').selectOption({ label: shopping.name })
+    await dialog.getByLabel('Lowest amount').fill('$500')
+    await expect(dialog).toContainText('Would categorize 1 of')
+    await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(page.getByText('Amount 500.00 USD or more')).toBeVisible()
+    await expectNoOverflow(page)
+    await testInfo.attach(`${testInfo.project.name}-conditions-rules-list`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+
+    await page.getByRole('button', { name: 'Preview changes' }).click()
+    await expect(page.getByText(/2 of \d+ transactions would be re-categorized/)).toBeVisible()
+    await page.getByRole('button', { name: 'Apply now' }).click()
+    await expect.poll(() => categoryOf(small.id)).toBe(subs.id)
+    expect(await categoryOf(big.id)).toBe(shopping.id)
+    expect(await categoryOf(mid.id)).toBeNull()
+    expect(await categoryOf(elsewhere.id)).toBeNull()
+    const again = await api(cookie, '/categorization-rules/apply', {})
+    expect(again.data.updated).toBe(0)
+
+    // New rows follow the same conditions on import.
+    expect((await tx(joint, 'QACOND AMZN Mktp US 5', '-7.25')).category_id).toBe(subs.id)
+    expect((await tx(card, 'QACOND AMZN Mktp US 6', '-7.25')).category_id).toBeNull()
+    expect((await tx(card, 'QACOND AMZN Mktp US 7', '-1200.00')).category_id).toBe(shopping.id)
+
+    // Editing shows the stored band and can drop the account condition.
+    const row = page.locator('tbody tr', { hasText: 'Only in Joint Checking' })
+    await row.getByRole('button', { name: 'Edit' }).click()
+    dialog = page.locator('div.fixed.inset-0')
+    await expect(dialog.getByLabel('Highest amount')).toHaveValue('20')
+    await dialog.getByLabel('Account', { exact: true }).selectOption({ label: 'Any account' })
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click()
+    await expect(page.getByText('Only in Joint Checking')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Preview changes' }).click()
+    await page.getByRole('button', { name: 'Apply now' }).click()
+    await expect.poll(() => categoryOf(elsewhere.id)).toBe(subs.id)
   })
 })
 

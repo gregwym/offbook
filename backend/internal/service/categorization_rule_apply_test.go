@@ -52,7 +52,8 @@ func newRuleApplySvc(t *testing.T) (svc *service.CategorizationRuleService, user
 	svc = service.NewCategorizationRuleService(
 		repository.NewCategorizationRuleRepository(g),
 		repository.NewCategoryRepository(g),
-	).WithBulkApply(repository.NewTransactionRepository(g), g)
+	).WithBulkApply(repository.NewTransactionRepository(g), g).
+		WithAccounts(repository.NewAccountRepository(g))
 
 	return svc, userID, acc.ID, cat.ID, g
 }

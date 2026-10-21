@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 
 	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/auth"
@@ -89,9 +90,13 @@ type previewDraftRequest struct {
 	// MarkReviewed: mark matching transactions reviewed (#538).
 	MarkReviewed bool `json:"mark_reviewed"`
 	// AddTags: tags to add to matching transactions (#546).
-	AddTags  []string `json:"add_tags"`
-	Priority int      `json:"priority"`
-	IsActive *bool    `json:"is_active"`
+	AddTags []string `json:"add_tags"`
+	// AccountID / AmountMin / AmountMax: optional conditions (#550).
+	AccountID *int64           `json:"account_id"`
+	AmountMin *decimal.Decimal `json:"amount_min"`
+	AmountMax *decimal.Decimal `json:"amount_max"`
+	Priority  int              `json:"priority"`
+	IsActive  *bool            `json:"is_active"`
 }
 
 // PreviewDraft reports the impact of an unsaved rule (create or edit)
@@ -113,6 +118,9 @@ func (h *CategorizationRuleHandler) PreviewDraft(c *gin.Context) {
 		HideMatches:    req.HideMatches,
 		MarkReviewed:   req.MarkReviewed,
 		AddTags:        req.AddTags,
+		AccountID:      req.AccountID,
+		AmountMin:      req.AmountMin,
+		AmountMax:      req.AmountMax,
 		Priority:       req.Priority,
 		IsActive:       active,
 	})
@@ -135,9 +143,13 @@ type createRuleRequest struct {
 	// MarkReviewed: mark matching transactions reviewed (#538).
 	MarkReviewed bool `json:"mark_reviewed"`
 	// AddTags: tags to add to matching transactions (#546).
-	AddTags  []string `json:"add_tags"`
-	Priority int      `json:"priority"`
-	IsActive *bool    `json:"is_active"`
+	AddTags []string `json:"add_tags"`
+	// AccountID / AmountMin / AmountMax: optional conditions (#550).
+	AccountID *int64           `json:"account_id"`
+	AmountMin *decimal.Decimal `json:"amount_min"`
+	AmountMax *decimal.Decimal `json:"amount_max"`
+	Priority  int              `json:"priority"`
+	IsActive  *bool            `json:"is_active"`
 }
 
 func (h *CategorizationRuleHandler) Create(c *gin.Context) {
@@ -155,6 +167,9 @@ func (h *CategorizationRuleHandler) Create(c *gin.Context) {
 		HideMatches:    req.HideMatches,
 		MarkReviewed:   req.MarkReviewed,
 		AddTags:        req.AddTags,
+		AccountID:      req.AccountID,
+		AmountMin:      req.AmountMin,
+		AmountMax:      req.AmountMax,
 		Priority:       req.Priority,
 		IsActive:       req.IsActive,
 	})
@@ -200,9 +215,16 @@ type updateRuleRequest struct {
 	// MarkReviewed: turn review marking on or off (#538).
 	MarkReviewed *bool `json:"mark_reviewed"`
 	// AddTags: replace the rule's tags; [] clears them (#546).
-	AddTags  *[]string `json:"add_tags"`
-	Priority *int      `json:"priority"`
-	IsActive *bool     `json:"is_active"`
+	AddTags *[]string `json:"add_tags"`
+	// Conditions (#550): set a value, or send clear_* true to drop it.
+	AccountID      *int64           `json:"account_id"`
+	ClearAccountID bool             `json:"clear_account_id"`
+	AmountMin      *decimal.Decimal `json:"amount_min"`
+	ClearAmountMin bool             `json:"clear_amount_min"`
+	AmountMax      *decimal.Decimal `json:"amount_max"`
+	ClearAmountMax bool             `json:"clear_amount_max"`
+	Priority       *int             `json:"priority"`
+	IsActive       *bool            `json:"is_active"`
 }
 
 func (h *CategorizationRuleHandler) Update(c *gin.Context) {
@@ -225,6 +247,12 @@ func (h *CategorizationRuleHandler) Update(c *gin.Context) {
 		HideMatches:    req.HideMatches,
 		MarkReviewed:   req.MarkReviewed,
 		AddTags:        req.AddTags,
+		AccountID:      req.AccountID,
+		ClearAccountID: req.ClearAccountID,
+		AmountMin:      req.AmountMin,
+		ClearAmountMin: req.ClearAmountMin,
+		AmountMax:      req.AmountMax,
+		ClearAmountMax: req.ClearAmountMax,
 		Priority:       req.Priority,
 		IsActive:       req.IsActive,
 	})
@@ -257,6 +285,8 @@ func (h *CategorizationRuleHandler) writeServiceError(c *gin.Context, err error)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "UNKNOWN_CATEGORY"})
 	case errors.Is(err, service.ErrInvalidRuleOrder):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_RULE_ORDER"})
+	case errors.Is(err, service.ErrUnknownRuleAccount):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "UNKNOWN_ACCOUNT"})
 	case errors.Is(err, service.ErrInvalidTags):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_TAGS"})
 	case errors.Is(err, service.ErrInvalidApplyScope):
@@ -264,7 +294,8 @@ func (h *CategorizationRuleHandler) writeServiceError(c *gin.Context, err error)
 	case errors.Is(err, service.ErrEmptyPattern),
 		errors.Is(err, service.ErrInvalidMatchType),
 		errors.Is(err, service.ErrInvalidPriority),
-		errors.Is(err, service.ErrRenameTooLong):
+		errors.Is(err, service.ErrRenameTooLong),
+		errors.Is(err, service.ErrInvalidAmountRange):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_RULE"})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
