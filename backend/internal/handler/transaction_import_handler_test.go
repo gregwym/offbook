@@ -156,6 +156,14 @@ func TestReviewEndpoints_Validation(t *testing.T) {
 		{"empty ids", http.MethodPost, "/api/v1/transactions/review", `{"ids":[],"reviewed":true}`},
 		{"too many ids", http.MethodPost, "/api/v1/transactions/review", `{"ids":[` + strings.Repeat("1,", 500) + `1],"reviewed":true}`},
 		{"bad reviewed query", http.MethodGet, "/api/v1/transactions?reviewed=maybe", ""},
+		// Bulk edit (#567): exactly one action over 1–500 ids.
+		{"bulk edit without action", http.MethodPost, "/api/v1/transactions/bulk-edit", `{"ids":[1]}`},
+		{"bulk edit with two actions", http.MethodPost, "/api/v1/transactions/bulk-edit", `{"ids":[1],"category_id":2,"hidden":true}`},
+		{"bulk edit empty ids", http.MethodPost, "/api/v1/transactions/bulk-edit", `{"ids":[],"hidden":true}`},
+		{"bulk edit too many ids", http.MethodPost, "/api/v1/transactions/bulk-edit", `{"ids":[` + strings.Repeat("1,", 500) + `1],"hidden":true}`},
+		{"bulk edit malformed", http.MethodPost, "/api/v1/transactions/bulk-edit", `{"ids":"x"}`},
+		{"bulk undo empty", http.MethodPost, "/api/v1/transactions/bulk-edit/undo", `{"undo":[]}`},
+		{"bulk undo bogus method", http.MethodPost, "/api/v1/transactions/bulk-edit/undo", `{"undo":[{"id":1,"categorization_method":"made_up","updated_at":"2026-10-21T00:00:00Z"}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))

@@ -129,6 +129,17 @@ type TransactionRepository interface {
 	// given rows, scoped to the user, and returns the number of rows changed.
 	// Ids belonging to other users / deleted rows are silently not matched.
 	SetReviewed(ctx context.Context, userID int64, ids []int64, reviewedAt *time.Time) (int64, error)
+	// BulkEdit applies one edit to the user's live flow rows among ids in a
+	// single DB transaction (#567) and returns the prior state of every row it
+	// actually changed, so the edit can be undone. Ids of other users, deleted
+	// or non-flow rows are not matched. A category edit skips split parents
+	// (their category lives on the lines) and reports how many it skipped.
+	BulkEdit(ctx context.Context, userID int64, ids []int64, edit BulkEdit) ([]BulkEditPrior, int, error)
+	// BulkRestore writes each prior state back in one DB transaction (#567),
+	// skipping rows modified since the edit (updated_at no longer equals
+	// prior.UpdatedAt) and deleted rows. A rule id the user doesn't own is
+	// dropped. Returns the rows restored.
+	BulkRestore(ctx context.Context, userID int64, prior []BulkEditPrior) (int, error)
 	// AcknowledgeAdjustment marks an adjustment transaction reviewed (#370)
 	// without altering ledger fields (amount/kind/quantity facts are
 	// untouched — same category as the existing Notes field). Only rows with
@@ -824,6 +835,161 @@ func (r *transactionRepo) ListUnacknowledgedAdjustments(ctx context.Context, use
 		return nil, err
 	}
 	return out, nil
+}
+
+// BulkEdit is exactly one bulk action (#567): set or clear the category, or
+// set the hidden state.
+type BulkEdit struct {
+	CategoryID    *int64
+	ClearCategory bool
+	Hidden        *bool
+}
+
+// BulkEditPrior is a row's state before a bulk edit (#567). UpdatedAt is the
+// row's updated_at *after* the edit: undo restores only rows still at it.
+type BulkEditPrior struct {
+	ID                   int64      `json:"id"`
+	CategoryID           *int64     `json:"category_id"`
+	CategorizationMethod *string    `json:"categorization_method"`
+	CategorizationRuleID *int64     `json:"categorization_rule_id"`
+	HiddenAt             *time.Time `json:"hidden_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
+func (r *transactionRepo) BulkEdit(ctx context.Context, userID int64, ids []int64, edit BulkEdit) ([]BulkEditPrior, int, error) {
+	if len(ids) == 0 {
+		return nil, 0, nil
+	}
+	var changed []BulkEditPrior
+	skipped := 0
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		type row struct {
+			BulkEditPrior
+			HasSplits bool
+		}
+		var rows []row
+		if err := tx.Raw(`
+			SELECT t.id, t.category_id, t.categorization_method, t.categorization_rule_id, t.hidden_at,
+			       EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id) AS has_splits
+			FROM transactions t
+			WHERE t.user_id = ? AND t.id IN ? AND t.deleted_at IS NULL AND t.kind = ?
+			ORDER BY t.id
+			FOR UPDATE OF t`, userID, ids, model.KindFlow).Scan(&rows).Error; err != nil {
+			return err
+		}
+		var target []int64
+		prior := map[int64]BulkEditPrior{}
+		for _, rw := range rows {
+			change := false
+			switch {
+			case edit.CategoryID != nil || edit.ClearCategory:
+				if rw.HasSplits {
+					skipped++
+					continue
+				}
+				if edit.ClearCategory {
+					change = rw.CategoryID != nil
+				} else {
+					change = rw.CategoryID == nil || *rw.CategoryID != *edit.CategoryID ||
+						rw.CategorizationMethod == nil || *rw.CategorizationMethod != "manual"
+				}
+			case edit.Hidden != nil:
+				change = (rw.HiddenAt == nil) == *edit.Hidden
+			}
+			if change {
+				target = append(target, rw.ID)
+				prior[rw.ID] = rw.BulkEditPrior
+			}
+		}
+		if len(target) == 0 {
+			return nil
+		}
+		var set string
+		var args []any
+		switch {
+		case edit.ClearCategory:
+			set = "category_id = NULL, categorization_method = NULL, categorization_rule_id = NULL"
+		case edit.CategoryID != nil:
+			set = "category_id = ?, categorization_method = 'manual', categorization_rule_id = NULL"
+			args = append(args, *edit.CategoryID)
+		case *edit.Hidden:
+			set = "hidden_at = NOW()"
+		default:
+			set = "hidden_at = NULL"
+		}
+		var after []struct {
+			ID        int64
+			UpdatedAt time.Time
+		}
+		args = append(args, userID, target)
+		if err := tx.Raw(`UPDATE transactions SET `+set+`, updated_at = NOW()
+			WHERE user_id = ? AND id IN ?
+			RETURNING id, updated_at`, args...).Scan(&after).Error; err != nil {
+			return err
+		}
+		for _, a := range after {
+			p := prior[a.ID]
+			p.UpdatedAt = a.UpdatedAt
+			changed = append(changed, p)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return changed, skipped, nil
+}
+
+func (r *transactionRepo) BulkRestore(ctx context.Context, userID int64, prior []BulkEditPrior) (int, error) {
+	if len(prior) == 0 {
+		return 0, nil
+	}
+	restored := 0
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// A restored rule id must be one of the user's own rules.
+		var ruleIDs []int64
+		for _, p := range prior {
+			if p.CategorizationRuleID != nil {
+				ruleIDs = append(ruleIDs, *p.CategorizationRuleID)
+			}
+		}
+		owned := map[int64]bool{}
+		if len(ruleIDs) > 0 {
+			var ids []int64
+			if err := tx.Model(&model.CategorizationRule{}).
+				Where("user_id = ? AND id IN ?", userID, ruleIDs).
+				Pluck("id", &ids).Error; err != nil {
+				return err
+			}
+			for _, id := range ids {
+				owned[id] = true
+			}
+		}
+		for _, p := range prior {
+			ruleID := p.CategorizationRuleID
+			if ruleID != nil && !owned[*ruleID] {
+				ruleID = nil
+			}
+			res := tx.Exec(`
+				UPDATE transactions SET
+					category_id            = ?,
+					categorization_method  = ?,
+					categorization_rule_id = ?,
+					hidden_at              = ?,
+					updated_at             = NOW()
+				WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND updated_at = ?`,
+				p.CategoryID, p.CategorizationMethod, ruleID, p.HiddenAt, p.ID, userID, p.UpdatedAt)
+			if res.Error != nil {
+				return res.Error
+			}
+			restored += int(res.RowsAffected)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return restored, nil
 }
 
 func (r *transactionRepo) SetReviewed(ctx context.Context, userID int64, ids []int64, reviewedAt *time.Time) (int64, error) {

@@ -33,7 +33,7 @@ test.describe('transaction review inbox', () => {
     // Bulk review two rows.
     await page.getByLabel('Select Review Coffee').check()
     await page.getByLabel('Select Review Grocer').check()
-    await page.getByRole('region', { name: 'Bulk review' }).getByRole('button', { name: /mark reviewed/i }).click()
+    await page.getByRole('region', { name: 'Bulk actions' }).getByRole('button', { name: /mark reviewed/i }).click()
     await expect(page.getByRole('status')).toContainText('2 transactions marked reviewed')
     await expect(page.getByText('Review Coffee')).toHaveCount(0)
     await expect(page.getByText('Review Fuel')).toBeVisible()
@@ -47,7 +47,7 @@ test.describe('transaction review inbox', () => {
     await page.getByLabel('Select Review Coffee').check()
     await page.getByLabel('Select Review Grocer').check()
     await page.getByLabel('Select Review Fuel').check()
-    await page.getByRole('region', { name: 'Bulk review' }).getByRole('button', { name: /mark reviewed/i }).click()
+    await page.getByRole('region', { name: 'Bulk actions' }).getByRole('button', { name: /mark reviewed/i }).click()
     await expect(page.getByText(/all caught up/i)).toBeVisible()
     await page.reload()
     // The filter is URL-persisted (?review=1): after reload the chip is still

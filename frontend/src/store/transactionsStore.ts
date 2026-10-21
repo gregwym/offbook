@@ -1,13 +1,18 @@
 import { create } from 'zustand'
 import {
+  bulkEditTransactions,
   createTransaction as apiCreate,
   deleteTransaction as apiDelete,
   listTransactions,
   setTransactionsReviewed,
+  undoBulkEdit as apiUndoBulkEdit,
   updateTransaction as apiUpdate,
   type TransactionListFilter,
 } from '../api/transactions'
 import type {
+  BulkEditAction,
+  BulkEditPrior,
+  BulkEditResult,
   CreateTransactionInput,
   Transaction,
   UpdateTransactionInput,
@@ -34,6 +39,11 @@ type State = {
   // Optimistic bulk review/undo (#424). In the review inbox (filter.reviewed
   // === false) reviewed rows leave the list immediately; reverts on failure.
   markReviewed: (ids: number[], reviewed: boolean) => Promise<void>
+  // Bulk category / hide edit and its undo (#567). Both reload the page
+  // afterwards, since the edit can move rows in or out of the active filter.
+  // Errors land in `error` and are rethrown.
+  bulkEdit: (ids: number[], action: BulkEditAction) => Promise<BulkEditResult>
+  undoBulkEdit: (undo: BulkEditPrior[]) => Promise<{ restored: number; kept: number }>
 }
 
 const PAGE_SIZE = 50
@@ -134,6 +144,30 @@ export const useTransactionsStore = create<State>((set, get) => ({
       const t = await apiUpdate(id, input)
       set({ transactions: get().transactions.map((x) => (x.id === id ? t : x)) })
       return t
+    } catch (err) {
+      set({ error: errMsg(err) })
+      throw err
+    }
+  },
+
+  bulkEdit: async (ids, action) => {
+    set({ error: null })
+    try {
+      const res = await bulkEditTransactions(ids, action)
+      await get().fetch()
+      return res
+    } catch (err) {
+      set({ error: errMsg(err) })
+      throw err
+    }
+  },
+
+  undoBulkEdit: async (undo) => {
+    set({ error: null })
+    try {
+      const res = await apiUndoBulkEdit(undo)
+      await get().fetch()
+      return res
     } catch (err) {
       set({ error: errMsg(err) })
       throw err

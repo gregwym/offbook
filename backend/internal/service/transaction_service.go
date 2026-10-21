@@ -401,6 +401,84 @@ func (s *TransactionService) SetReviewed(ctx context.Context, userID int64, ids 
 	return n, nil
 }
 
+// ErrInvalidBulkEdit: a bulk edit must name exactly one action (#567).
+var ErrInvalidBulkEdit = errors.New("set exactly one of category_id, clear_category or hidden")
+
+// BulkEditInput is one bulk action over selected rows (#567).
+type BulkEditInput struct {
+	CategoryID    *int64
+	ClearCategory bool
+	Hidden        *bool
+}
+
+// BulkEditResult reports a bulk edit. Undo holds the prior state of every
+// changed row; posting it back to BulkUndo reverts exactly this edit.
+type BulkEditResult struct {
+	Updated      int                        `json:"updated"`
+	SkippedSplit int                        `json:"skipped_split"`
+	Undo         []repository.BulkEditPrior `json:"undo"`
+}
+
+// BulkEdit sets or clears the category of, or hides/unhides, the selected
+// flow rows in one DB transaction (#567). A category pick is a manual
+// categorization, exactly like the single-row edit; split parents are
+// skipped. Amounts, dates, review state and the ledger are never touched.
+// Ids the user doesn't own are ignored.
+func (s *TransactionService) BulkEdit(ctx context.Context, userID int64, ids []int64, in BulkEditInput) (*BulkEditResult, error) {
+	if len(ids) == 0 || len(ids) > MaxReviewBatch {
+		return nil, ErrInvalidReviewBatch
+	}
+	actions := 0
+	if in.CategoryID != nil {
+		actions++
+	}
+	if in.ClearCategory {
+		actions++
+	}
+	if in.Hidden != nil {
+		actions++
+	}
+	if actions != 1 {
+		return nil, ErrInvalidBulkEdit
+	}
+	if in.CategoryID != nil {
+		if err := s.assertCategoryExists(ctx, *in.CategoryID); err != nil {
+			return nil, err
+		}
+	}
+	prior, skipped, err := s.repo.BulkEdit(ctx, userID, ids, repository.BulkEdit{
+		CategoryID: in.CategoryID, ClearCategory: in.ClearCategory, Hidden: in.Hidden,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bulk edit: %w", err)
+	}
+	if prior == nil {
+		prior = []repository.BulkEditPrior{}
+	}
+	return &BulkEditResult{Updated: len(prior), SkippedSplit: skipped, Undo: prior}, nil
+}
+
+// BulkUndo reverts a bulk edit from its Undo list (#567). A row changed since
+// the edit (a manual edit, a sync merge, a rule run) is kept as it is.
+// Returns how many rows were restored.
+func (s *TransactionService) BulkUndo(ctx context.Context, userID int64, prior []repository.BulkEditPrior) (int, error) {
+	if len(prior) == 0 || len(prior) > MaxReviewBatch {
+		return 0, ErrInvalidReviewBatch
+	}
+	for _, p := range prior {
+		if p.CategorizationMethod != nil && !validCategorizationMethod[*p.CategorizationMethod] {
+			return 0, ErrInvalidBulkEdit
+		}
+	}
+	n, err := s.repo.BulkRestore(ctx, userID, prior)
+	if err != nil {
+		return 0, fmt.Errorf("bulk undo: %w", err)
+	}
+	return n, nil
+}
+
+var validCategorizationMethod = map[string]bool{"manual": true, "rule": true, "ai": true, "plaid_default": true}
+
 func (s *TransactionService) SoftDelete(ctx context.Context, userID, id int64) error {
 	t, gerr := s.repo.GetByID(ctx, userID, id)
 	if err := s.repo.SoftDelete(ctx, userID, id); err != nil {
