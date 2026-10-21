@@ -12,3 +12,13 @@ export type Category = {
   created_at: string
   updated_at: string
 }
+
+// What references a category: live transactions and split lines, rules,
+// budgets and the user's own subcategories (#575).
+export type CategoryUsage = {
+  transactions: number
+  splits: number
+  rules: number
+  budgets: number
+  subcategories: number
+}

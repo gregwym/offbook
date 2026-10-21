@@ -1,6 +1,6 @@
 import { create } from 'zustand'
-import { createCategory, listCategories, renameCategory } from '../api/categories'
-import type { Category } from '../types/category'
+import { createCategory, deleteCategory, listCategories, renameCategory } from '../api/categories'
+import type { Category, CategoryUsage } from '../types/category'
 
 type State = {
   categories: Category[]
@@ -13,6 +13,9 @@ type State = {
   // the caller, which shows them inline.
   create: (input: { name: string; parent_id?: number | null }) => Promise<Category>
   rename: (id: number, name: string) => Promise<Category>
+  // remove deletes or merges a category (#575), then reloads the list:
+  // subcategories may have moved under the replacement.
+  remove: (id: number, replaceWith: number | 'none') => Promise<CategoryUsage>
 }
 
 const byName = (a: Category, b: Category) => a.name.localeCompare(b.name)
@@ -42,5 +45,15 @@ export const useCategoriesStore = create<State>((set, get) => ({
     const c = await renameCategory(id, name)
     set({ categories: get().categories.map((x) => (x.id === id ? c : x)).sort(byName) })
     return c
+  },
+  remove: async (id, replaceWith) => {
+    const moved = await deleteCategory(id, replaceWith)
+    set({ categories: get().categories.filter((x) => x.id !== id) })
+    try {
+      set({ categories: await listCategories() })
+    } catch {
+      // The delete succeeded; a stale parent label is all that's left.
+    }
+    return moved
   },
 }))

@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"gorm.io/gorm"
+
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
 )
@@ -19,8 +21,11 @@ var (
 	ErrInvalidCategoryName = errors.New("category name must be 1-60 characters")
 	ErrCategoryNameTaken   = errors.New("a category with this name already exists")
 	ErrInvalidParent       = errors.New("parent must be an existing top-level category")
-	ErrCategoryReadOnly    = errors.New("built-in categories can't be renamed")
+	ErrCategoryReadOnly    = errors.New("built-in categories can't be renamed or deleted")
 	ErrCategoryNotFound    = errors.New("category not found")
+	// ErrInvalidReplacement: the replacement for a deleted category must be
+	// another category the user can see (#575).
+	ErrInvalidReplacement = errors.New("pick another existing category, or Uncategorized")
 )
 
 // CategoryService serves the seeded system taxonomy (migration 000002,
@@ -28,6 +33,13 @@ var (
 // reference system rows and their own, never another user's.
 type CategoryService struct {
 	repo repository.CategoryRepository
+	db   *gorm.DB
+}
+
+// WithDB enables Delete, which rewrites several tables in one transaction.
+func (s *CategoryService) WithDB(db *gorm.DB) *CategoryService {
+	s.db = db
+	return s
 }
 
 func NewCategoryService(repo repository.CategoryRepository) *CategoryService {
@@ -105,6 +117,75 @@ func (s *CategoryService) Rename(ctx context.Context, userID, id int64, name str
 	}
 	c.Name = clean
 	return c, nil
+}
+
+// ownCategory fetches a category the user owns: ErrCategoryNotFound when it
+// is missing or another user's, ErrCategoryReadOnly for a built-in one.
+func (s *CategoryService) ownCategory(ctx context.Context, repo repository.CategoryRepository, userID, id int64) (*model.Category, error) {
+	c, err := repo.GetVisible(ctx, &userID, id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrCategoryNotFound
+		}
+		return nil, err
+	}
+	if c.UserID == nil {
+		return nil, ErrCategoryReadOnly
+	}
+	return c, nil
+}
+
+// Usage reports what references the user's own category, for the delete
+// and merge confirmation (#575).
+func (s *CategoryService) Usage(ctx context.Context, userID, id int64) (repository.CategoryUsage, error) {
+	if _, err := s.ownCategory(ctx, s.repo, userID, id); err != nil {
+		return repository.CategoryUsage{}, err
+	}
+	return s.repo.Usage(ctx, userID, id)
+}
+
+// Delete removes the user's own category, moving its transactions, split
+// lines, rules, budgets and subcategories to replaceWith (nil =
+// Uncategorized) first, all in one transaction (#575). Deleting with a
+// replacement is how two categories are merged. It returns what was moved.
+func (s *CategoryService) Delete(ctx context.Context, userID, id int64, replaceWith *int64) (repository.CategoryUsage, error) {
+	var moved repository.CategoryUsage
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repo := repository.NewCategoryRepository(tx)
+		// Lock the row so a concurrent delete or merge of the same category
+		// waits, then re-reads it as deleted.
+		if err := tx.Exec("SELECT 1 FROM categories WHERE id = ? AND user_id = ? FOR UPDATE", id, userID).Error; err != nil {
+			return err
+		}
+		if _, err := s.ownCategory(ctx, repo, userID, id); err != nil {
+			return err
+		}
+		var to *model.Category
+		if replaceWith != nil {
+			if *replaceWith == id {
+				return ErrInvalidReplacement
+			}
+			c, err := repo.GetVisible(ctx, &userID, *replaceWith)
+			if err != nil {
+				if errors.Is(err, repository.ErrNotFound) {
+					return ErrInvalidReplacement
+				}
+				return err
+			}
+			to = c
+		}
+		var err error
+		moved, err = repo.Reassign(ctx, userID, id, to)
+		return err
+	})
+	if err != nil {
+		var empty repository.CategoryUsage
+		if errors.Is(err, ErrCategoryNotFound) || errors.Is(err, ErrCategoryReadOnly) || errors.Is(err, ErrInvalidReplacement) {
+			return empty, err
+		}
+		return empty, fmt.Errorf("delete category: %w", err)
+	}
+	return moved, nil
 }
 
 func (s *CategoryService) checkName(ctx context.Context, userID int64, name string, exceptID int64) (string, error) {

@@ -148,4 +148,83 @@ describe('SettingsPage categories', () => {
     fireEvent.click(screen.getByRole('button', { name: /Add category/ }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Enter a name for the category.')
   })
+
+  // #575: delete or merge your own category, with a required destination.
+  describe('delete or merge', () => {
+    const mk = (id: number, name: string) => ({
+      id, user_id: 1, parent_id: null, name, slug: name.toLowerCase(), is_system: false,
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    })
+    const coffee = mk(98, 'Coffee')
+    const cafes = mk(99, 'Cafes')
+    const usage = { transactions: 3, splits: 1, rules: 1, budgets: 1, subcategories: 0 }
+
+    it('requires a destination, then merges into the chosen category', async () => {
+      let deleted: string | null = null
+      let list = [coffee, cafes]
+      server.use(
+        http.get(`${API}/categories`, () => HttpResponse.json({ data: list, total: list.length })),
+        http.get(`${API}/categories/98/usage`, () => HttpResponse.json({ data: usage })),
+        http.delete(`${API}/categories/98`, ({ request }) => {
+          deleted = new URL(request.url).searchParams.get('replace_with')
+          list = [cafes]
+          return HttpResponse.json({ data: usage })
+        }),
+      )
+      renderPage(<SettingsPage />)
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Delete or merge Coffee' }))
+      expect(await screen.findByText('Used by 3 transactions, 1 split line, 1 rule and 1 budget.')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Delete “Coffee”' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Choose where to move what uses this category.')
+      expect(deleted).toBeNull()
+
+      fireEvent.change(screen.getByLabelText('Move everything to'), { target: { value: '99' } })
+      expect(screen.getByText(/moves to “Cafes”, which merges the two/)).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Merge into “Cafes”' }))
+
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Merged “Coffee” into “Cafes”'))
+      expect(deleted).toBe('99')
+      expect(useCategoriesStore.getState().categories.map((c) => c.name)).toEqual(['Cafes'])
+      expect(screen.queryByRole('button', { name: 'Delete or merge Coffee' })).not.toBeInTheDocument()
+      await expectHealthySmoke()
+    })
+
+    it('deletes to Uncategorized and explains what happens to rules and budgets', async () => {
+      let deleted: string | null = null
+      server.use(
+        http.get(`${API}/categories`, () => HttpResponse.json({ data: [coffee], total: 1 })),
+        http.get(`${API}/categories/98/usage`, () => HttpResponse.json({ data: usage })),
+        http.delete(`${API}/categories/98`, ({ request }) => {
+          deleted = new URL(request.url).searchParams.get('replace_with')
+          return HttpResponse.json({ data: usage })
+        }),
+      )
+      renderPage(<SettingsPage />)
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Delete or merge Coffee' }))
+      fireEvent.change(await screen.findByLabelText('Move everything to'), { target: { value: 'none' } })
+      expect(screen.getByText(/become uncategorized/)).toHaveTextContent('Budgets for “Coffee” are removed.')
+      fireEvent.click(screen.getByRole('button', { name: 'Delete “Coffee”' }))
+
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Deleted “Coffee” and moved 4 transactions'))
+      expect(deleted).toBe('none')
+    })
+
+    it('keeps the panel open with a sentence when the delete fails', async () => {
+      server.use(
+        http.get(`${API}/categories`, () => HttpResponse.json({ data: [coffee, cafes], total: 2 })),
+        http.get(`${API}/categories/98/usage`, () => HttpResponse.json({ data: usage })),
+        http.delete(`${API}/categories/98`, () =>
+          HttpResponse.json({ error: 'pick another', code: 'INVALID_REPLACEMENT' }, { status: 400 })),
+      )
+      renderPage(<SettingsPage />)
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Delete or merge Coffee' }))
+      fireEvent.change(await screen.findByLabelText('Move everything to'), { target: { value: '99' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Merge into “Cafes”' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('That category is no longer available. Pick another one.')
+      expect(screen.getByRole('button', { name: 'Merge into “Cafes”' })).toBeEnabled()
+    })
+  })
 })

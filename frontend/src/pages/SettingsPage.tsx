@@ -16,8 +16,9 @@ import {
 } from '../api/plaid'
 import { getHealth } from '../api/health'
 import { getUserSettings, updateUserSettings } from '../api/userSettings'
+import { getCategoryUsage } from '../api/categories'
 import { useCategoriesStore } from '../store/categoriesStore'
-import type { Category } from '../types/category'
+import type { Category, CategoryUsage } from '../types/category'
 import type { PlaidItem, PlaidSyncError } from '../types/plaid'
 import type { AIProvider, UpdateUserSettingsInput, UserSettingsView } from '../types/userSettings'
 
@@ -38,12 +39,12 @@ export function SettingsPage() {
   )
 }
 
-// CategoriesSection lets a user add their own categories and rename them
-// (#573). Built-in categories stay available and read-only. New categories
+// CategoriesSection lets a user add their own categories, rename them
+// (#573), and delete or merge them (#575). Built-in categories stay available and read-only. New categories
 // land in the shared store, so Transactions, Rules and Budgets pickers see
 // them immediately.
 function CategoriesSection() {
-  const { categories, loaded, error: loadError, fetch, create, rename } = useCategoriesStore()
+  const { categories, loaded, error: loadError, fetch, create, rename, remove } = useCategoriesStore()
   const [name, setName] = useState('')
   const [parentID, setParentID] = useState('')
   const [adding, setAdding] = useState(false)
@@ -91,11 +92,6 @@ function CategoriesSection() {
           <Tag size={16} className="text-gray-500" />
           <h2 id="categories-heading" className="text-base font-medium text-gray-900">Categories</h2>
         </div>
-        {flash && (
-          <span role="status" className="inline-flex items-center gap-1 text-xs text-emerald-700">
-            <Check size={14} /> {flash}
-          </span>
-        )}
       </div>
 
       <div className="space-y-4 px-5 py-4">
@@ -142,7 +138,16 @@ function CategoriesSection() {
         )}
 
         <div>
-          <h3 className="text-sm font-medium text-gray-900">Your categories</h3>
+          {/* The note sits by the list, not in the header, so it stays in
+              view on a phone after a delete deep in the list. */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-medium text-gray-900">Your categories</h3>
+            {flash && (
+              <span role="status" className="inline-flex items-center gap-1 text-xs text-emerald-700">
+                <Check size={14} /> {flash}
+              </span>
+            )}
+          </div>
           {!loaded && !loadError && <p className="mt-2 text-sm text-gray-400">Loading categories…</p>}
           {loadError && <p className="mt-2 text-sm text-red-700">Couldn't load categories: {loadError}</p>}
           {loaded && mine.length === 0 && (
@@ -161,6 +166,14 @@ function CategoriesSection() {
                     const r = await rename(c.id, next)
                     showFlash(`Renamed to “${r.name}”`)
                   }}
+                  replacements={categories.filter((x) => x.id !== c.id)}
+                  onDelete={async (replaceWith) => {
+                    const moved = await remove(c.id, replaceWith)
+                    const into = replaceWith === 'none' ? undefined : byID.get(replaceWith)?.name
+                    const n = moved.transactions + moved.splits
+                    const what = n > 0 ? ` and moved ${plural(n, 'transaction')}` : ''
+                    showFlash(into ? `Merged “${c.name}” into “${into}”` : `Deleted “${c.name}”${what}`)
+                  }}
                 />
               ))}
             </ul>
@@ -171,7 +184,7 @@ function CategoriesSection() {
           <details className="text-sm">
             <summary className="cursor-pointer text-gray-700">Built-in categories ({builtIn.length})</summary>
             <p className="mt-2 text-gray-600">{builtIn.map((c) => c.name).join(' · ')}</p>
-            <p className="mt-1 text-xs text-gray-500">Built-in categories can't be renamed.</p>
+            <p className="mt-1 text-xs text-gray-500">Built-in categories can't be renamed or deleted.</p>
           </details>
         )}
       </div>
@@ -197,11 +210,32 @@ function categoryErr(err: unknown, name: string): string {
   }
 }
 
-function CategoryRow({ category, parentName, onRename }: {
+function plural(n: number, noun: string, nouns = `${noun}s`): string {
+  return `${n} ${n === 1 ? noun : nouns}`
+}
+
+// usageSentence lists what uses a category, e.g. "2 transactions, 1 rule
+// and 1 budget".
+function usageSentence(u: CategoryUsage): string {
+  const parts = [
+    u.transactions > 0 && plural(u.transactions, 'transaction'),
+    u.splits > 0 && plural(u.splits, 'split line'),
+    u.rules > 0 && plural(u.rules, 'rule'),
+    u.budgets > 0 && plural(u.budgets, 'budget'),
+    u.subcategories > 0 && plural(u.subcategories, 'subcategory', 'subcategories'),
+  ].filter(Boolean) as string[]
+  if (parts.length <= 1) return parts.join('')
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+}
+
+function CategoryRow({ category, parentName, onRename, replacements, onDelete }: {
   category: Category
   parentName?: string
   onRename: (name: string) => Promise<void>
+  replacements: Category[]
+  onDelete: (replaceWith: number | 'none') => Promise<void>
 }) {
+  const [deleting, setDeleting] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(category.name)
   const [saving, setSaving] = useState(false)
@@ -263,21 +297,180 @@ function CategoryRow({ category, parentName, onRename }: {
     )
   }
 
+  if (deleting) {
+    return (
+      <li className="px-3 py-3">
+        <DeleteCategoryPanel
+          category={category}
+          replacements={replacements}
+          onCancel={() => setDeleting(false)}
+          onDelete={onDelete}
+        />
+      </li>
+    )
+  }
+
   return (
     <li className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-      <span className="min-w-0">
+      <span className="min-w-0 break-words">
         <span className="font-medium text-gray-900">{category.name}</span>
         {parentName && <span className="ml-2 text-xs text-gray-500">in {parentName}</span>}
       </span>
-      <button
-        type="button"
-        onClick={() => { setDraft(category.name); setEditing(true) }}
-        aria-label={`Rename ${category.name}`}
-        className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-md px-2 text-sm text-gray-700 hover:bg-gray-100"
-      >
-        <Pencil size={14} /> Rename
-      </button>
+      <span className="flex shrink-0 items-center gap-1">
+        <button
+          type="button"
+          onClick={() => { setDraft(category.name); setEditing(true) }}
+          aria-label={`Rename ${category.name}`}
+          className="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-sm text-gray-700 hover:bg-gray-100"
+        >
+          <Pencil size={14} /> Rename
+        </button>
+        <button
+          type="button"
+          onClick={() => setDeleting(true)}
+          aria-label={`Delete or merge ${category.name}`}
+          className="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-sm text-red-700 hover:bg-red-50"
+        >
+          <Trash2 size={14} /> Delete
+        </button>
+      </span>
     </li>
+  )
+}
+
+// DeleteCategoryPanel confirms deleting a category (#575). It shows what
+// uses the category and requires somewhere to move it: another category
+// (which merges the two) or Uncategorized.
+function DeleteCategoryPanel({ category, replacements, onCancel, onDelete }: {
+  category: Category
+  replacements: Category[]
+  onCancel: () => void
+  onDelete: (replaceWith: number | 'none') => Promise<void>
+}) {
+  const [usage, setUsage] = useState<CategoryUsage | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [target, setTarget] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const [attempt, setAttempt] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    getCategoryUsage(category.id)
+      .then((u) => {
+        if (cancelled) return
+        setUsage(u)
+        // Nothing to move: Uncategorized is as good a choice as any.
+        if (Object.values(u).every((n) => n === 0)) setTarget((t) => t || 'none')
+      })
+      .catch((err: unknown) => { if (!cancelled) setLoadError(errMsg(err)) })
+    return () => { cancelled = true }
+  }, [category.id, attempt])
+
+  const into = target && target !== 'none' ? replacements.find((c) => String(c.id) === target) : undefined
+  const used = usage ? usageSentence(usage) : ''
+  const titleID = `delete-category-${category.id}`
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!target) {
+      setError('Choose where to move what uses this category.')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    try {
+      await onDelete(target === 'none' ? 'none' : Number(target))
+    } catch (err) {
+      const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code
+      setError(code === 'INVALID_REPLACEMENT'
+        ? 'That category is no longer available. Pick another one.'
+        : categoryErr(err, category.name))
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form
+      onSubmit={(e) => void submit(e)}
+      onKeyDown={(e) => { if (e.key === 'Escape') onCancel() }}
+      aria-labelledby={titleID}
+      className="space-y-3 text-sm"
+    >
+      <h4 id={titleID} className="font-medium text-gray-900">Delete “{category.name}”</h4>
+      {!usage && !loadError && <p className="text-gray-400">Checking what uses it…</p>}
+      {loadError && (
+        <p className="text-red-700">
+          Couldn't check what uses this category: {loadError}{' '}
+          <button
+            type="button"
+            onClick={() => { setLoadError(null); setAttempt((n) => n + 1) }}
+            className="font-medium underline"
+          >
+            Try again
+          </button>
+        </p>
+      )}
+      {usage && (
+        <p className="text-gray-700">
+          {used ? <>Used by {used}.</> : <>Nothing uses it yet.</>}
+        </p>
+      )}
+      {usage && (
+        <label className="block">
+          <span className="mb-1 block font-medium text-gray-700">Move everything to</span>
+          <select
+            value={target}
+            autoFocus
+            onChange={(e) => { setTarget(e.target.value); if (error) setError(null) }}
+            aria-invalid={error ? true : undefined}
+            className="min-h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm sm:w-72"
+          >
+            <option value="">Choose a category…</option>
+            <option value="none">Uncategorized</option>
+            {replacements.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </label>
+      )}
+      {usage && used && into && (
+        <p className="text-gray-600">
+          Everything moves to “{into.name}”, which merges the two.
+          {usage.budgets > 0 && ` If “${into.name}” already has a budget for the same period, the two amounts are added together.`}
+        </p>
+      )}
+      {usage && used && target === 'none' && (
+        <p className="text-gray-600">
+          Transactions and split lines become uncategorized.
+          {usage.rules > 0 && ' Rules stop setting a category; a rule with nothing else to do is turned off.'}
+          {usage.budgets > 0 && ` Budgets for “${category.name}” are removed.`}
+        </p>
+      )}
+      {usage && usage.subcategories > 0 && target && (
+        <p className="text-gray-600">
+          {into && (into.parent_id == null || into.parent_id === category.id)
+            ? `Its subcategories move under “${into.name}”.`
+            : 'Its subcategories become top-level categories.'}
+        </p>
+      )}
+      {error && <p role="alert" className="text-red-700">{error}</p>}
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="submit"
+          disabled={saving || !usage}
+          className="min-h-10 rounded-md bg-red-600 px-4 font-medium text-white hover:bg-red-700 disabled:opacity-50"
+        >
+          {saving ? 'Working…' : into ? `Merge into “${into.name}”` : `Delete “${category.name}”`}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="min-h-10 rounded-md px-4 text-gray-700 hover:bg-gray-100"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
   )
 }
 
