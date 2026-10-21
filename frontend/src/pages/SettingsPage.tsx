@@ -92,11 +92,6 @@ function CategoriesSection() {
           <Tag size={16} className="text-gray-500" />
           <h2 id="categories-heading" className="text-base font-medium text-gray-900">Categories</h2>
         </div>
-        {flash && (
-          <span role="status" className="inline-flex items-center gap-1 text-xs text-emerald-700">
-            <Check size={14} /> {flash}
-          </span>
-        )}
       </div>
 
       <div className="space-y-4 px-5 py-4">
@@ -143,7 +138,16 @@ function CategoriesSection() {
         )}
 
         <div>
-          <h3 className="text-sm font-medium text-gray-900">Your categories</h3>
+          {/* The note sits by the list, not in the header, so it stays in
+              view on a phone after a delete deep in the list. */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-medium text-gray-900">Your categories</h3>
+            {flash && (
+              <span role="status" className="inline-flex items-center gap-1 text-xs text-emerald-700">
+                <Check size={14} /> {flash}
+              </span>
+            )}
+          </div>
           {!loaded && !loadError && <p className="mt-2 text-sm text-gray-400">Loading categories…</p>}
           {loadError && <p className="mt-2 text-sm text-red-700">Couldn't load categories: {loadError}</p>}
           {loaded && mine.length === 0 && (
@@ -431,8 +435,8 @@ function DeleteCategoryPanel({ category, replacements, onCancel, onDelete }: {
       )}
       {usage && used && into && (
         <p className="text-gray-600">
-          Transactions, split lines, rules and budgets move to “{into.name}”, which merges the two.
-          {usage.budgets > 0 && ` A budget for a period “${into.name}” already budgets is added to that budget.`}
+          Everything moves to “{into.name}”, which merges the two.
+          {usage.budgets > 0 && ` If “${into.name}” already has a budget for the same period, the two amounts are added together.`}
         </p>
       )}
       {usage && used && target === 'none' && (

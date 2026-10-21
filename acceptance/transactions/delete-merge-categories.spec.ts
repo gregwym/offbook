@@ -51,8 +51,8 @@ test.describe('delete and merge categories', () => {
     })
 
     await panel.getByLabel('Move everything to').selectOption({ label: 'Cafes' })
-    await expect(panel).toContainText('move to “Cafes”, which merges the two')
-    await expect(panel).toContainText('A budget for a period “Cafes” already budgets is added to that budget.')
+    await expect(panel).toContainText('Everything moves to “Cafes”, which merges the two.')
+    await expect(panel).toContainText('If “Cafes” already has a budget for the same period, the two amounts are added together.')
     const merge = panel.getByRole('button', { name: 'Merge into “Cafes”' })
     expect((await merge.boundingBox())!.height, 'Merge target height').toBeGreaterThanOrEqual(40)
     await expectNoClipping(page, 'settings delete category panel')

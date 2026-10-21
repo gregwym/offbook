@@ -180,7 +180,7 @@ describe('SettingsPage categories', () => {
       expect(deleted).toBeNull()
 
       fireEvent.change(screen.getByLabelText('Move everything to'), { target: { value: '99' } })
-      expect(screen.getByText(/move to “Cafes”, which merges the two/)).toBeInTheDocument()
+      expect(screen.getByText(/moves to “Cafes”, which merges the two/)).toBeInTheDocument()
       fireEvent.click(screen.getByRole('button', { name: 'Merge into “Cafes”' }))
 
       await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Merged “Coffee” into “Cafes”'))
