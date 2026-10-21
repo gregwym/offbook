@@ -466,7 +466,7 @@ test.describe('rule keeps the category', () => {
     const cats = await get(cookie, '/categories')
     const shopping = (cats.data.find((x: { slug: string }) => x.slug === 'shopping') ?? cats.data[0]) as { id: number; name: string }
     const acct = (await api(cookie, '/accounts', {
-      name: 'Keep Category Checking', institution_slug: 'manual', account_type: 'checking', currency: 'USD',
+      name: 'Tag Only Checking', institution_slug: 'manual', account_type: 'checking', currency: 'USD',
     })).data.id
     const today = new Date().toISOString().slice(0, 10)
     const tx = async (description: string, amount: string) =>
