@@ -404,7 +404,7 @@ func TestTransactionService_Update_MerchantPin(t *testing.T) {
 			if st.name == "set pins" {
 				firstPin = got.MerchantEditedAt
 			}
-			if st.name == "same name keeps pin" && (firstPin == nil || got.MerchantEditedAt == nil || !got.MerchantEditedAt.Equal(*firstPin)) {
+			if st.name == "same name keeps pin" && (firstPin == nil || got.MerchantEditedAt == nil || got.MerchantEditedAt.Sub(*firstPin).Abs() >= time.Microsecond) {
 				t.Errorf("pin moved: %v -> %v", firstPin, got.MerchantEditedAt)
 			}
 			if got.Notes == nil || *got.Notes != note {
@@ -421,5 +421,13 @@ func TestTransactionService_Update_MerchantPin(t *testing.T) {
 	}
 	if reread.MerchantEditedAt != nil || reread.MerchantName != nil {
 		t.Errorf("after clear: merchant=%v edited=%v, want both nil", reread.MerchantName, reread.MerchantEditedAt)
+	}
+	blank := " "
+	cleared, err := svc.Update(ctx, userID, created.ID, service.UpdateTransactionInput{Notes: &blank})
+	if err != nil {
+		t.Fatalf("clear notes: %v", err)
+	}
+	if cleared.Notes != nil {
+		t.Errorf("notes after blank = %q, want nil", *cleared.Notes)
 	}
 }

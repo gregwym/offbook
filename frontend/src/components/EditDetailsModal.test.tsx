@@ -49,13 +49,13 @@ describe('EditDetailsModal (#569)', () => {
     expect(bodies).toEqual([{ notes: 'reimbursable' }])
   })
 
-  it('clearing the merchant sends null so the bank name comes back', async () => {
+  it('clearing the merchant sends a blank so the bank name comes back', async () => {
     const bodies = capturePatch()
     const { onSaved } = setup()
     fireEvent.change(screen.getByLabelText('Merchant'), { target: { value: '   ' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
-    expect(bodies).toEqual([{ merchant_name: null }])
+    expect(bodies).toEqual([{ merchant_name: '' }])
   })
 
   it('closes without a request when nothing changed', () => {

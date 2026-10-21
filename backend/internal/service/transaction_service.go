@@ -283,7 +283,10 @@ func (s *TransactionService) Update(ctx context.Context, userID, id int64, in Up
 		}
 	}
 	if in.Notes != nil {
-		t.Notes = in.Notes
+		// A blank note clears it (JSON null means "leave alone" on PATCH).
+		if t.Notes = trimPtr(in.Notes); *t.Notes == "" {
+			t.Notes = nil
+		}
 	}
 	if in.Tags != nil {
 		tags, err := NormalizeTags(*in.Tags)

@@ -33,10 +33,11 @@ export function EditDetailsModal({ tx, currency, onClose, onSaved }: Props) {
   }, [onClose])
 
   const save = async () => {
-    // Send only what changed: re-sending an untouched bank merchant would pin it.
+    // Send only what changed: re-sending an untouched bank merchant would pin
+    // it. Blank (not null — null means "leave alone") clears a field.
     const patch: UpdateTransactionInput = {}
-    if (merchant.trim() !== (tx.merchant_name ?? '').trim()) patch.merchant_name = merchant.trim() || null
-    if (notes.trim() !== (tx.notes ?? '').trim()) patch.notes = notes.trim() || null
+    if (merchant.trim() !== (tx.merchant_name ?? '').trim()) patch.merchant_name = merchant.trim()
+    if (notes.trim() !== (tx.notes ?? '').trim()) patch.notes = notes.trim()
     if (Object.keys(patch).length === 0) {
       onClose()
       return
