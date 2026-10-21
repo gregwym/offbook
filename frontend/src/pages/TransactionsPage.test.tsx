@@ -464,3 +464,99 @@ function chooseRowAction(label: string, name: string) {
   fireEvent.click(screen.getAllByRole('button', { name: `More actions for ${label}` })[0])
   fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name }))
 }
+
+describe('TransactionsPage bulk edit (#567)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  function installBulkApi() {
+    const rows = [1, 2, 3].map((id) => ({
+      ...fx.transaction1,
+      id,
+      description: `SHOP ${id}`,
+      merchant_name: `Shop ${id}`,
+      category_id: null as number | null,
+      hidden_at: null as string | null,
+    }))
+    const bodies: unknown[] = []
+    server.use(
+      http.get(`${API}/transactions`, () => HttpResponse.json({ data: rows, total: rows.length })),
+      http.post(`${API}/transactions/bulk-edit`, async ({ request }) => {
+        const body = (await request.json()) as { ids: number[]; category_id?: number; hidden?: boolean }
+        bodies.push(body)
+        const undo = rows.filter((t) => body.ids.includes(t.id)).map((t) => ({
+          id: t.id, category_id: t.category_id, categorization_method: null, categorization_rule_id: null,
+          hidden_at: t.hidden_at, updated_at: '2026-10-21T00:00:00Z',
+        }))
+        for (const t of rows) {
+          if (!body.ids.includes(t.id)) continue
+          if (body.category_id !== undefined) t.category_id = body.category_id
+          if (body.hidden !== undefined) t.hidden_at = body.hidden ? '2026-10-21T00:00:00Z' : null
+        }
+        return HttpResponse.json({ data: { updated: undo.length, skipped_split: 0, undo } })
+      }),
+      http.post(`${API}/transactions/bulk-edit/undo`, async ({ request }) => {
+        const body = (await request.json()) as { undo: { id: number; category_id: number | null; hidden_at: string | null }[] }
+        bodies.push(body)
+        for (const p of body.undo) {
+          const t = rows.find((r) => r.id === p.id)!
+          t.category_id = p.category_id
+          t.hidden_at = p.hidden_at
+        }
+        return HttpResponse.json({ data: { restored: body.undo.length, kept: 0 } })
+      }),
+    )
+    return { rows, bodies }
+  }
+
+  it('sets one category on the selected rows and undoes it', async () => {
+    const { rows, bodies } = installBulkApi()
+    renderPage(<TransactionsPage />)
+    await screen.findAllByText('SHOP 1')
+
+    fireEvent.click(screen.getByLabelText(/select all transactions on this page/i))
+    const bar = screen.getByRole('region', { name: 'Bulk actions' })
+    fireEvent.change(within(bar).getByLabelText('Set category for selected'), { target: { value: String(fx.categoryGroceries.id) } })
+
+    expect(await screen.findByText('3 transactions moved to Groceries.')).toBeInTheDocument()
+    expect(bodies[0]).toEqual({ ids: [1, 2, 3], category_id: fx.categoryGroceries.id })
+    expect(rows.every((t) => t.category_id === fx.categoryGroceries.id)).toBe(true)
+    expect(screen.queryByRole('region', { name: 'Bulk actions' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(await screen.findByText('Undone: 3 transactions restored.')).toBeInTheDocument()
+    expect(rows.every((t) => t.category_id === null)).toBe(true)
+    await expectHealthySmoke()
+  })
+
+  it('hides the selection, then offers Unhide for hidden rows', async () => {
+    const { bodies } = installBulkApi()
+    renderPage(<TransactionsPage />)
+    await screen.findAllByText('SHOP 1')
+
+    fireEvent.click(screen.getAllByRole('checkbox', { name: /select shop 2/i })[0])
+    let bar = screen.getByRole('region', { name: 'Bulk actions' })
+    expect(within(bar).queryByRole('button', { name: /unhide/i })).not.toBeInTheDocument()
+    fireEvent.click(within(bar).getByRole('button', { name: /^hide$/i }))
+    expect(await screen.findByText('1 transaction hidden from spending and budgets.')).toBeInTheDocument()
+    expect(bodies[0]).toEqual({ ids: [2], hidden: true })
+
+    fireEvent.click(screen.getAllByRole('checkbox', { name: /select shop 2/i })[0])
+    bar = screen.getByRole('region', { name: 'Bulk actions' })
+    expect(within(bar).queryByRole('button', { name: /^hide$/i })).not.toBeInTheDocument()
+    fireEvent.click(within(bar).getByRole('button', { name: /unhide/i }))
+    expect(await screen.findByText('1 transaction back in spending and budgets.')).toBeInTheDocument()
+  })
+
+  it('shows the failure banner and keeps the selection when the edit fails', async () => {
+    installBulkApi()
+    server.use(http.post(`${API}/transactions/bulk-edit`, () => HttpResponse.json({ error: 'boom', code: 'INTERNAL' }, { status: 500 })))
+    renderPage(<TransactionsPage />)
+    await screen.findAllByText('SHOP 1')
+    fireEvent.click(screen.getByLabelText(/select all transactions on this page/i))
+    fireEvent.click(within(screen.getByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: /^hide$/i }))
+    await waitFor(() => expect(document.querySelector('.border-red-200.bg-red-50')).not.toBeNull())
+    expect(screen.getByText('3 selected')).toBeInTheDocument()
+  })
+})

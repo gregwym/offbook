@@ -54,6 +54,9 @@ func (h *TransactionHandler) Register(g *gin.RouterGroup) {
 	g.DELETE("/transactions/:id", h.Delete)
 	// Bulk review state (#424).
 	g.POST("/transactions/review", h.SetReviewed)
+	// Bulk category / hide edit and its undo (#567).
+	g.POST("/transactions/bulk-edit", h.BulkEdit)
+	g.POST("/transactions/bulk-edit/undo", h.BulkUndo)
 	// Category splits (#438): replace-all; empty array clears.
 	g.PUT("/transactions/:id/splits", h.ReplaceSplits)
 	// CSV statement import is account-scoped (#330): the account fixes the
@@ -336,6 +339,60 @@ func (h *TransactionHandler) SetReviewed(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"updated": n}})
+}
+
+type bulkEditRequest struct {
+	IDs           []int64 `json:"ids"`
+	CategoryID    *int64  `json:"category_id"`
+	ClearCategory bool    `json:"clear_category"`
+	Hidden        *bool   `json:"hidden"`
+}
+
+// BulkEdit handles POST /transactions/bulk-edit (#567). Body: {"ids":[...]}
+// plus exactly one of "category_id", "clear_category": true or "hidden".
+func (h *TransactionHandler) BulkEdit(c *gin.Context) {
+	var req bulkEditRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	res, err := h.svc.BulkEdit(c.Request.Context(), auth.MustUserID(c.Request.Context()), req.IDs, service.BulkEditInput{
+		CategoryID: req.CategoryID, ClearCategory: req.ClearCategory, Hidden: req.Hidden,
+	})
+	if err != nil {
+		writeBulkEditError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": res})
+}
+
+// BulkUndo handles POST /transactions/bulk-edit/undo (#567). Body:
+// {"undo":[...]} — the undo list a bulk edit returned.
+func (h *TransactionHandler) BulkUndo(c *gin.Context) {
+	var req struct {
+		Undo []repository.BulkEditPrior `json:"undo"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+		return
+	}
+	n, err := h.svc.BulkUndo(c.Request.Context(), auth.MustUserID(c.Request.Context()), req.Undo)
+	if err != nil {
+		writeBulkEditError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"restored": n, "kept": len(req.Undo) - n}})
+}
+
+func writeBulkEditError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, service.ErrInvalidReviewBatch), errors.Is(err, service.ErrInvalidBulkEdit):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
+	case errors.Is(err, service.ErrInvalidCategory):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_CATEGORY"})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
+	}
 }
 
 type splitLineRequest struct {

@@ -233,3 +233,23 @@ export type UpdateTransactionInput = {
 
 // TagCount is one of the user's tags and how many transactions carry it (#544).
 export type TagCount = { name: string; count: number }
+
+// Bulk edit (#567): exactly one action over the selected rows.
+export type BulkEditAction = { category_id: number } | { clear_category: true } | { hidden: boolean }
+
+// A changed row's state before a bulk edit; posting the list back undoes it.
+export type BulkEditPrior = {
+  id: number
+  category_id: number | null
+  categorization_method: string | null
+  categorization_rule_id: number | null
+  hidden_at: string | null
+  updated_at: string
+}
+
+export type BulkEditResult = {
+  updated: number
+  // Split parents are skipped by a category edit: their category lives on the lines.
+  skipped_split: number
+  undo: BulkEditPrior[]
+}

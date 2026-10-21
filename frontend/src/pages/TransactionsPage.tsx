@@ -21,7 +21,7 @@ import type { Account } from '../types/account'
 import type { Asset } from '../types/asset'
 import type { Category } from '../types/category'
 import type { CreateRuleInput } from '../types/categorizationRule'
-import type { CreateTransactionInput, TagCount, Transaction, TransactionSource } from '../types/transaction'
+import type { BulkEditAction, BulkEditPrior, CreateTransactionInput, TagCount, Transaction, TransactionSource } from '../types/transaction'
 import { TRANSACTION_SOURCES } from '../types/transaction'
 import { ModalShell } from '../components/ModalShell'
 import { RowActionsMenu, type RowAction } from '../components/RowActionsMenu'
@@ -30,7 +30,7 @@ export function TransactionsPage() {
   const {
     transactions, total, loading, error,
     filter, page, pageSize,
-    fetch, setFilter, setPage, create, setCategory, update, remove, markReviewed,
+    fetch, setFilter, setPage, create, setCategory, update, remove, markReviewed, bulkEdit, undoBulkEdit,
   } = useTransactionsStore()
   const { accounts, fetch: fetchAccounts } = useAccountsStore()
   const { assets, fetch: fetchAssets } = useAssetsStore()
@@ -127,6 +127,9 @@ export function TransactionsPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [reviewToast, setReviewToast] = useState<{ ids: number[]; reviewed: boolean; message: string } | null>(null)
   const [reviewBusy, setReviewBusy] = useState(false)
+  // Last bulk category/hide edit (#567); `undo` is null once there is
+  // nothing left to revert (an undo result, or an edit that changed nothing).
+  const [bulkToast, setBulkToast] = useState<{ message: string; undo: BulkEditPrior[] | null } | null>(null)
   // Transfer-match proposals (#371) — a separate review queue from "needs
   // review" categorization. Recomputed fresh on mount/after each sync, same
   // as reviewCount above; nothing links until the user confirms a pair in
@@ -231,6 +234,7 @@ export function TransactionsPage() {
     try {
       await markReviewed(ids, reviewed)
       setSelected(new Set())
+      setBulkToast(null)
       // Un-reviewing while the inbox is open: those rows aren't in the list
       // (the optimistic update removed them), so reload to bring them back.
       if (!reviewed && needsReview) await fetch()
@@ -245,6 +249,58 @@ export function TransactionsPage() {
       setReviewBusy(false)
       void refreshReviewCount()
     }
+  }
+
+  // Bulk category / hide (#567). One request for all selected rows; the toast
+  // offers an undo that restores exactly the rows this edit changed.
+  const bulkEditRows = async (ids: number[], action: BulkEditAction, done: (n: number) => string) => {
+    if (ids.length === 0) return
+    setReviewBusy(true)
+    try {
+      const res = await bulkEdit(ids, action)
+      setSelected(new Set())
+      setReviewToast(null)
+      const skipped = res.skipped_split > 0
+        ? ` ${res.skipped_split} split transaction${res.skipped_split === 1 ? '' : 's'} skipped: set ${res.skipped_split === 1 ? 'its' : 'their'} category on the split lines.`
+        : ''
+      setBulkToast(
+        res.updated === 0
+          ? { message: `Nothing to change: the selection already matches.${skipped}`, undo: null }
+          : { message: `${done(res.updated)}${skipped}`, undo: res.undo },
+      )
+    } catch {
+      setBulkToast(null) // store.error renders the failure banner
+    } finally {
+      setReviewBusy(false)
+      void refreshReviewCount()
+    }
+  }
+
+  const undoBulkRows = async (undo: BulkEditPrior[]) => {
+    setReviewBusy(true)
+    try {
+      const res = await undoBulkEdit(undo)
+      const kept = res.kept > 0
+        ? ` ${res.kept} you changed since ${res.kept === 1 ? 'was' : 'were'} kept as ${res.kept === 1 ? 'it is' : 'they are'}.`
+        : ''
+      setBulkToast({ message: `Undone: ${res.restored} transaction${res.restored === 1 ? '' : 's'} restored.${kept}`, undo: null })
+    } catch {
+      setBulkToast(null)
+    } finally {
+      setReviewBusy(false)
+      void refreshReviewCount()
+    }
+  }
+
+  const plural = (n: number) => `${n} transaction${n === 1 ? '' : 's'}`
+  const setSelectedCategory = (value: string) => {
+    if (value === '') return
+    if (value === 'null') {
+      void bulkEditRows(selectedIDs, { clear_category: true }, (n) => `${plural(n)} set to Uncategorized.`)
+      return
+    }
+    const cat = categories.find((c) => c.id === Number(value))
+    void bulkEditRows(selectedIDs, { category_id: Number(value) }, (n) => `${plural(n)} moved to ${cat?.name ?? 'the category'}.`)
   }
 
   // Dismissal is persisted in localStorage keyed by bannerKey, so a newer
@@ -290,6 +346,9 @@ export function TransactionsPage() {
   )
   const selectedIDs = visibleIDs.filter((id) => selected.has(id))
   const allSelected = visibleIDs.length > 0 && selectedIDs.length === visibleIDs.length
+  const selectedRows = transactions.filter((t) => selected.has(t.id) && visibleIDs.includes(t.id))
+  const anySelectedShown = selectedRows.some((t) => t.hidden_at == null)
+  const anySelectedHidden = selectedRows.some((t) => t.hidden_at != null)
   const toggleSelected = (id: number) =>
     setSelected((prev) => {
       const next = new Set(prev)
@@ -501,7 +560,7 @@ export function TransactionsPage() {
       {selectedIDs.length > 0 && (
         <div
           role="region"
-          aria-label="Bulk review"
+          aria-label="Bulk actions"
           className="sticky top-0 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-900"
         >
           <span className="font-medium">{selectedIDs.length} selected</span>
@@ -521,6 +580,37 @@ export function TransactionsPage() {
               className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-indigo-300 bg-white px-3 py-1.5 text-sm font-medium text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
             >
               <Undo2 size={16} /> Needs review
+            </button>
+          )}
+          <select
+            aria-label="Set category for selected"
+            disabled={reviewBusy}
+            value=""
+            onChange={(e) => setSelectedCategory(e.target.value)}
+            className="min-h-9 max-w-[12rem] rounded-md border border-indigo-300 bg-white px-2 py-1.5 text-sm text-indigo-900 disabled:opacity-50"
+          >
+            <option value="">Set category…</option>
+            <option value="null">Uncategorized</option>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          {anySelectedShown && (
+            <button
+              type="button"
+              disabled={reviewBusy}
+              onClick={() => void bulkEditRows(selectedIDs, { hidden: true }, (n) => `${plural(n)} hidden from spending and budgets.`)}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-indigo-300 bg-white px-3 py-1.5 text-sm font-medium text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
+            >
+              <EyeOff size={16} /> Hide
+            </button>
+          )}
+          {anySelectedHidden && (
+            <button
+              type="button"
+              disabled={reviewBusy}
+              onClick={() => void bulkEditRows(selectedIDs, { hidden: false }, (n) => `${plural(n)} back in spending and budgets.`)}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-indigo-300 bg-white px-3 py-1.5 text-sm font-medium text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
+            >
+              <Eye size={16} /> Unhide
             </button>
           )}
           <button
@@ -772,6 +862,32 @@ export function TransactionsPage() {
           <button
             type="button"
             onClick={() => setReviewToast(null)}
+            className="text-gray-400 hover:text-gray-700"
+            aria-label="Dismiss"
+          >×</button>
+        </div>
+      )}
+
+      {bulkToast && (
+        <div
+          role="status"
+          className="fixed inset-x-4 bottom-4 z-30 flex items-center gap-3 rounded-md border border-gray-200 bg-white px-4 py-3 text-sm shadow-lg sm:left-auto sm:max-w-md"
+        >
+          <Check size={18} className="shrink-0 text-emerald-600" />
+          <span className="flex-1 text-gray-900">{bulkToast.message}</span>
+          {bulkToast.undo && (
+            <button
+              type="button"
+              disabled={reviewBusy}
+              onClick={() => { if (bulkToast.undo) void undoBulkRows(bulkToast.undo) }}
+              className="min-h-9 rounded-md px-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+            >
+              Undo
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setBulkToast(null)}
             className="text-gray-400 hover:text-gray-700"
             aria-label="Dismiss"
           >×</button>

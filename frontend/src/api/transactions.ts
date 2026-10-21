@@ -1,5 +1,8 @@
 import { apiClient, type ApiItem, type ApiList } from './client'
 import type {
+  BulkEditAction,
+  BulkEditPrior,
+  BulkEditResult,
   ColumnMapping,
   CreateTransactionInput,
   ImportHistoryEntry,
@@ -70,6 +73,19 @@ export async function updateTransaction(id: number, input: UpdateTransactionInpu
 export async function setTransactionsReviewed(ids: number[], reviewed: boolean): Promise<number> {
   const res = await apiClient.post<ApiItem<{ updated: number }>>('/transactions/review', { ids, reviewed })
   return res.data.data.updated
+}
+
+// bulkEditTransactions sets the category of, or hides/unhides, the selected
+// rows in one request (#567). The result's undo list reverts exactly this edit.
+export async function bulkEditTransactions(ids: number[], action: BulkEditAction): Promise<BulkEditResult> {
+  const res = await apiClient.post<ApiItem<BulkEditResult>>('/transactions/bulk-edit', { ids, ...action })
+  return res.data.data
+}
+
+// undoBulkEdit reverts a bulk edit. Rows edited since are kept, not overwritten.
+export async function undoBulkEdit(undo: BulkEditPrior[]): Promise<{ restored: number; kept: number }> {
+  const res = await apiClient.post<ApiItem<{ restored: number; kept: number }>>('/transactions/bulk-edit/undo', { undo })
+  return res.data.data
 }
 
 export type SplitLineInput = { category_id: number | null; amount: string; note?: string }
