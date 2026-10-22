@@ -26,6 +26,7 @@ import type { BulkEditAction, BulkEditPrior, CreateTransactionInput, TagCount, T
 import { TRANSACTION_SOURCES } from '../types/transaction'
 import { ModalShell } from '../components/ModalShell'
 import { RowActionsMenu, type RowAction } from '../components/RowActionsMenu'
+import { txDisplayName, txSecondaryDescription } from '../lib/txName'
 
 export function TransactionsPage() {
   const {
@@ -741,8 +742,8 @@ export function TransactionsPage() {
                 />
               </th>
               <th className="hidden px-3 py-2 text-left md:table-cell">Date</th>
-              <th className="px-3 py-2 text-left">Description</th>
-              <th className="hidden px-3 py-2 text-left md:table-cell">Merchant</th>
+              <th className="px-3 py-2 text-left">Name</th>
+              <th className="hidden px-3 py-2 text-left md:table-cell">Bank description</th>
               <th className="px-3 py-2 text-right">Amount</th>
               <th className="hidden px-3 py-2 text-left md:table-cell">Account</th>
               <th className="hidden px-3 py-2 text-left md:table-cell">Category</th>
@@ -1102,6 +1103,10 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
   const reviewable = onToggleReviewed != null && tx.kind === 'flow'
   const unreviewed = reviewable && tx.reviewed_at == null
   const label = tx.description ?? tx.merchant_name ?? 'transaction'
+  // Rows lead with the name the user recognises (#579); the raw bank string
+  // stays in its own column (desktop) or the meta line (phone).
+  const displayName = txDisplayName(tx) || '—'
+  const rawDescription = txSecondaryDescription(tx)
   const splitCount = tx.splits?.length ?? 0
   const tags = tx.tags ?? []
   const hideable = onToggleHidden != null && tx.kind === 'flow'
@@ -1130,7 +1135,9 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
         const v = e.target.value
         onCategoryChange(v === '' ? null : Number(v))
       }}
-      className="min-h-9 w-full rounded border border-gray-300 px-1.5 py-1 text-sm md:w-auto"
+      // truncate: a long name ends in an ellipsis before the chevron instead
+      // of being cut mid-letter on a phone (#579).
+      className="min-h-9 w-full min-w-0 truncate rounded border border-gray-300 px-1.5 py-1 text-sm md:w-auto"
     >
       <option value="">Uncategorized</option>
       {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -1169,7 +1176,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
       </td>
       <td className={`hidden whitespace-nowrap px-3 py-2 align-top text-gray-700 md:table-cell ${indented ? 'pl-8' : ''}`}><DateDisplay value={tx.transaction_date} /></td>
       <td className="px-2 py-2 align-top text-gray-900 md:px-3">
-        {tx.description ?? '—'}
+        <span className="font-medium">{displayName}</span>
         {unreviewed && <span className="sr-only"> (needs review)</span>}
         {isReconciling && account && (
           <Link
@@ -1251,7 +1258,10 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
         <div className="mt-1 space-y-1.5 md:hidden">
           <div className="text-xs text-gray-500">
             <DateDisplay value={tx.transaction_date} />
-            {[tx.merchant_name, account?.name].filter(Boolean).map((x) => ` · ${x}`).join('')}
+            {rawDescription && (
+              <> · <span className="break-all" title={rawDescription}>{rawDescription}</span></>
+            )}
+            {account?.name && ` · ${account.name}`}
           </div>
           {/* No hover on touch screens: spell out what the chip's tooltip says. */}
           {tx.pending && <div className="text-xs text-sky-700">{PENDING_HINT}</div>}
@@ -1290,7 +1300,10 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
           </div>
         </div>
       </td>
-      <td className="hidden px-3 py-2 align-top text-gray-700 md:table-cell">{tx.merchant_name ?? '—'}</td>
+      <td className="hidden max-w-56 px-3 py-2 align-top text-xs text-gray-500 md:table-cell">
+        {/* Empty when the name already is the bank string — no repeat. */}
+        {rawDescription && <div className="truncate" title={rawDescription}>{rawDescription}</div>}
+      </td>
       <td className="whitespace-nowrap px-2 py-2 text-right align-top md:px-3">
         <AmountDisplay amount={tx.amount} currency={currency} signed />
       </td>

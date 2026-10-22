@@ -54,9 +54,23 @@ test.describe('edit details journey', () => {
     await save.click()
     await expect(dlg).toBeHidden()
 
-    // The list shows the fixed merchant and a note chip that reopens the editor.
+    // The list leads with the fixed merchant (#579): it is the row's bold
+    // name, and the bank string is still on screen (Bank description column on
+    // desktop, the meta line on a phone).
     const row = page.locator('tbody tr').filter({ hasText: label })
-    await expect(row.getByText('Blue Bottle Coffee').locator('visible=true').first()).toBeVisible()
+    await expect(row.locator('td:nth-child(3) > span.font-medium')).toHaveText('Blue Bottle Coffee')
+    await expect(row.getByText(label, { exact: true }).locator('visible=true').first()).toBeVisible()
+    // The category picker ends in an ellipsis inside its own box rather than
+    // being cut under the chevron, and doesn't push the row wider (#579).
+    const picker = row.getByRole('combobox', { name: `Category for ${label}` }).locator('visible=true')
+    const fit = await picker.evaluate((el) => {
+      const cs = getComputedStyle(el)
+      const cell = el.closest('td')!.getBoundingClientRect()
+      const box = el.getBoundingClientRect()
+      return { overflow: cs.textOverflow, inside: box.right <= cell.right + 1 && box.left >= cell.left - 1 }
+    })
+    expect(fit.overflow, 'category picker truncates with an ellipsis').toBe('ellipsis')
+    expect(fit.inside, 'category picker stays inside its cell').toBe(true)
     const vp = page.viewportSize()!
     let chip
     if (vp.width < 768) {
