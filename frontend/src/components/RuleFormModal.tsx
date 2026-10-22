@@ -114,7 +114,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   // We split form errors by field when the backend gives us a code; otherwise
   // surface as a generic banner above the form.
   const [error, setError] = useState<string | null>(null)
-  const [creatingCategory, setCreatingCategory] = useState(false)
+  const [creatingCategory, setCreatingCategory] = useState<HTMLElement | null>(null)
   const [patternError, setPatternError] = useState<string | null>(null)
   const [categoryError, setCategoryError] = useState<string | null>(null)
   const [renameError, setRenameError] = useState<string | null>(null)
@@ -270,7 +270,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
             value={categoryID === '' ? '' : String(categoryID)}
             onChange={(e) => {
               if (e.target.value === NEW_CATEGORY) {
-                setCreatingCategory(true)
+                setCreatingCategory(e.currentTarget)
                 return
               }
               setCategoryID(
@@ -293,8 +293,9 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
         </Field>
         {creatingCategory && (
           <NewCategoryDialog
-            onCreated={(c) => { setCreatingCategory(false); setCategoryID(c.id); setCategoryError(null) }}
-            onCancel={() => setCreatingCategory(false)}
+            onCreated={(c) => { setCreatingCategory(null); setCategoryID(c.id); setCategoryError(null) }}
+            onCancel={() => setCreatingCategory(null)}
+            returnFocusTo={creatingCategory}
           />
         )}
         <fieldset className="rounded-md border border-gray-200 px-3 pb-3 pt-1">

@@ -42,7 +42,8 @@ describe('New category from the transaction row picker (#581)', () => {
     renderPage(<TransactionsPage />)
     await expectHealthySmoke()
     const select = (await screen.findAllByRole('combobox', { name: 'Category for VET CLINIC 22' }))[0] as HTMLSelectElement
-    select.focus()
+    // No focus first: a programmatic pick (or a test driver) needn't focus
+    // the select, and focus must still come back to it.
     fireEvent.change(select, { target: { value: '__new_category__' } })
     return select
   }

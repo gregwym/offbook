@@ -16,6 +16,9 @@ export function NewCategoryOption() {
 type Props = {
   onCreated: (c: Category) => void
   onCancel: () => void
+  // The picker that opened the dialog; focus goes back to it on close.
+  // Defaults to whatever had focus when the dialog mounted.
+  returnFocusTo?: HTMLElement | null
 }
 
 // NewCategoryDialog creates one of the user's own categories from wherever
@@ -23,14 +26,14 @@ type Props = {
 // budget — so they don't have to know it lives in Settings. The store adds
 // it to every picker at once; the caller selects it in the control that
 // opened the dialog. Focus returns to that control when the dialog closes.
-export function NewCategoryDialog({ onCreated, onCancel }: Props) {
+export function NewCategoryDialog({ onCreated, onCancel, returnFocusTo }: Props) {
   const { categories, create } = useCategoriesStore()
   const [name, setName] = useState('')
   const [parentID, setParentID] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const opener = useRef<HTMLElement | null>(
-    typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null,
+    returnFocusTo ?? (typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null),
   )
   // Only top-level categories can be a group; the taxonomy is two levels.
   const groups = categories.filter((c) => c.parent_id == null)

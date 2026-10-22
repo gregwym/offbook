@@ -360,13 +360,14 @@ export function TransactionsPage() {
   const plural = (n: number) => `${n} transaction${n === 1 ? '' : 's'}`
   // "+ New category…" in a picker (#581): the dialog creates the category,
   // then `apply` selects it where the user was.
-  const [newCategory, setNewCategory] = useState<{ apply: (c: Category) => void } | null>(null)
-  const setSelectedCategory = (value: string) => {
+  const [newCategory, setNewCategory] = useState<{ apply: (c: Category) => void; from: HTMLElement } | null>(null)
+  const setSelectedCategory = (value: string, from: HTMLElement) => {
     if (value === '') return
     if (value === NEW_CATEGORY) {
       const ids = selectedIDs
       setNewCategory({
         apply: (c) => { void bulkEditRows(ids, { category_id: c.id }, (n) => `${plural(n)} moved to ${c.name}.`) },
+        from,
       })
       return
     }
@@ -701,7 +702,7 @@ export function TransactionsPage() {
             aria-label="Set category for selected"
             disabled={reviewBusy}
             value=""
-            onChange={(e) => setSelectedCategory(e.target.value)}
+            onChange={(e) => setSelectedCategory(e.target.value, e.currentTarget)}
             className="min-h-9 max-w-[12rem] rounded-md border border-indigo-300 bg-white px-2 py-1.5 text-sm text-indigo-900 disabled:opacity-50"
           >
             <option value="">Set category…</option>
@@ -853,7 +854,7 @@ export function TransactionsPage() {
                   onSelect={() => toggleSelected(t.id)}
                   onToggleReviewed={() => void reviewRows([t.id], t.reviewed_at == null)}
                   onCategoryChange={(catID) => { void setCategory(t.id, catID) }}
-                  onNewCategory={() => setNewCategory({ apply: (c) => { void setCategory(t.id, c.id) } })}
+                  onNewCategory={(from) => setNewCategory({ apply: (c) => { void setCategory(t.id, c.id) }, from })}
                   onCreateRule={() => openRuleFromTxn(t)}
                   onSplit={() => setSplitting(t)}
                   onToggleHidden={() => { update(t.id, { hidden: t.hidden_at == null }).catch(() => {}) }}
@@ -942,6 +943,7 @@ export function TransactionsPage() {
         <NewCategoryDialog
           onCreated={(c) => { const { apply } = newCategory; setNewCategory(null); apply(c) }}
           onCancel={() => setNewCategory(null)}
+          returnFocusTo={newCategory.from}
         />
       )}
       {tagging && (
@@ -1085,7 +1087,7 @@ type RowProps = {
   currentCategory?: Category
   onCategoryChange: (catID: number | null) => void
   // Offers "+ New category…" in the row picker (#581) when set.
-  onNewCategory?: () => void
+  onNewCategory?: (from: HTMLElement) => void
   onCreateRule: () => void
   // Opens the split modal (#438); absent for rows that can't be split.
   onSplit?: () => void
@@ -1157,7 +1159,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
         if (v === NEW_CATEGORY) {
           // The select stays controlled, so it snaps back to the current
           // category; the dialog selects the new one once it exists.
-          onNewCategory?.()
+          onNewCategory?.(e.currentTarget)
           return
         }
         onCategoryChange(v === '' ? null : Number(v))
