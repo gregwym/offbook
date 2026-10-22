@@ -67,6 +67,10 @@ export type ScopedBudgetInput = {
 
 export type UseScopedBudgets = {
   scope: 'personal' | 'household'
+  // Month on view as YYYY-MM; null is the current period (#577). Personal
+  // scope only — household pace is current-month.
+  month: string | null
+  setMonth: (month: string | null) => void
   rows: ScopedBudgetRow[]
   loading: boolean
   error: string | null
@@ -87,6 +91,7 @@ export function useScopedBudgets(): UseScopedBudgets {
   const [rows, setRows] = useState<ScopedBudgetRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [month, setMonth] = useState<string | null>(null)
 
   // fetchRows is the pure loader (no setState) so both the effect and the
   // imperative reload share one data path.
@@ -95,8 +100,8 @@ export function useScopedBudgets(): UseScopedBudgets {
       if (householdId == null) return []
       return loadHousehold(householdId)
     }
-    return loadPersonal()
-  }, [isHousehold, householdId])
+    return loadPersonal(month ? lastDayOfMonth(month) : undefined)
+  }, [isHousehold, householdId, month])
 
   // Household role drives `canMutate`. Load the household detail when we enter
   // household scope so the page can hide controls that would 403 server-side.
@@ -180,6 +185,13 @@ export function useScopedBudgets(): UseScopedBudgets {
     [isHousehold, householdId, reload],
   )
 
+  // Flag the load up front so the page doesn't show the previous month's
+  // figures under the new month's label while it fetches.
+  const changeMonth = useCallback((next: string | null) => {
+    setLoading(true)
+    setMonth(next)
+  }, [])
+
   const householdMissing = isHousehold && householdId == null
   const canMutate = isHousehold
     ? detail?.role === 'owner' || detail?.role === 'contributor'
@@ -187,6 +199,8 @@ export function useScopedBudgets(): UseScopedBudgets {
 
   return {
     scope: isHousehold ? 'household' : 'personal',
+    month: isHousehold ? null : month,
+    setMonth: changeMonth,
     rows,
     loading,
     error,
@@ -200,12 +214,20 @@ export function useScopedBudgets(): UseScopedBudgets {
   }
 }
 
-async function loadPersonal(): Promise<ScopedBudgetRow[]> {
+// lastDayOfMonth turns YYYY-MM into its last calendar day, YYYY-MM-DD — the
+// reference date for a past month's budget periods.
+function lastDayOfMonth(month: string): string {
+  const [y, m] = month.split('-').map(Number)
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  return `${month}-${String(last).padStart(2, '0')}`
+}
+
+async function loadPersonal(on?: string): Promise<ScopedBudgetRow[]> {
   const budgets = await listBudgets()
   // Spend is only meaningful for active budgets; fan out and drop row-level
   // failures so one bad spend fetch doesn't blank the page.
   const active = budgets.filter((b) => b.is_active)
-  const results = await Promise.allSettled(active.map((b) => getBudgetSpend(b.id)))
+  const results = await Promise.allSettled(active.map((b) => getBudgetSpend(b.id, on)))
   const spendById = new Map<number, BudgetSpend>()
   active.forEach((b, i) => {
     const r = results[i]

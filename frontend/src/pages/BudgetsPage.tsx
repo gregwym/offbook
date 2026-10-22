@@ -4,7 +4,7 @@
 // allows mutation; household scope gates create/edit/delete on the member's
 // role (owner/contributor). See hooks/useScopedBudgets.ts for the branch.
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Pencil, Plus, Target, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Pencil, Plus, Target, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import {
@@ -16,11 +16,13 @@ import { useCategoriesStore } from '../store/categoriesStore'
 import type { Category } from '../types/category'
 import { BUDGET_PERIODS, type BudgetPeriod } from '../types/budget'
 import { ModalShell } from '../components/ModalShell'
-import { spendingHref } from '../lib/spendingLink'
+import { dayBefore, spendingHref } from '../lib/spendingLink'
 
 export function BudgetsPage() {
   const {
     scope,
+    month,
+    setMonth,
     rows,
     loading,
     error,
@@ -59,6 +61,11 @@ export function BudgetsPage() {
   }
 
   const isHousehold = scope === 'household'
+  // A past month (#577) shows active monthly budgets only: a weekly or annual
+  // period doesn't line up with a calendar month, and a paused budget has no
+  // spend to show.
+  const shown = month ? rows.filter((r) => r.period === 'monthly' && r.is_active) : rows
+  const notShown = rows.length - shown.length
 
   return (
     <div>
@@ -84,6 +91,17 @@ export function BudgetsPage() {
         )}
       </div>
 
+      {!isHousehold && (rows.length > 0 || month) && (
+        <MonthStepper month={month} onChange={setMonth} />
+      )}
+      {month && rows.length > 0 && (
+        <p className="mt-2 text-xs text-gray-500">
+          Past months are measured against each budget&apos;s current limit.
+          {notShown > 0 &&
+            ` ${notShown} weekly, annual or paused ${notShown === 1 ? 'budget is' : 'budgets are'} only shown for the current period.`}
+        </p>
+      )}
+
       {(error || rowError) && (
         <div className="mt-4 flex items-start justify-between rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           <span>{error ?? rowError}</span>
@@ -100,9 +118,17 @@ export function BudgetsPage() {
         </div>
       )}
 
-      <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <div
+        aria-busy={loading}
+        className={['mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3', loading && rows.length > 0 ? 'opacity-60' : ''].join(' ')}
+      >
         {loading && rows.length === 0 && (
           <div className="rounded-lg border border-gray-200 bg-white px-4 py-6 text-center text-gray-400">Loading…</div>
+        )}
+        {!loading && month && rows.length > 0 && shown.length === 0 && (
+          <div className="rounded-lg border border-dashed border-gray-300 bg-white px-4 py-6 text-center text-gray-500">
+            No monthly budgets to show for {monthLabel(month)}.
+          </div>
         )}
         {!loading && rows.length === 0 && (
           <div className="rounded-lg border border-dashed border-gray-300 bg-white px-4 py-6 text-center text-gray-500">
@@ -114,7 +140,7 @@ export function BudgetsPage() {
               : 'No budgets yet — create one to start tracking spend.'}
           </div>
         )}
-        {rows.map((b) => (
+        {shown.map((b) => (
           <BudgetCard
             key={b.id}
             row={b}
@@ -166,6 +192,51 @@ export function BudgetsPage() {
         />
       )}
     </div>
+  )
+}
+
+// currentMonth is the server's current month (budget windows are UTC).
+function currentMonth(): string {
+  return new Date().toISOString().slice(0, 7)
+}
+
+function shiftMonth(month: string, delta: number): string {
+  const [y, m] = month.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1 + delta, 1)).toISOString().slice(0, 7)
+}
+
+function monthLabel(month: string): string {
+  const [y, m] = month.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+}
+
+// MonthStepper steps the Budgets page back through earlier months (#577).
+// month null is the current period; "next" stops there.
+function MonthStepper({ month, onChange }: { month: string | null; onChange: (month: string | null) => void }) {
+  const shown = month ?? currentMonth()
+  const step = (delta: number) => {
+    const next = shiftMonth(shown, delta)
+    onChange(next >= currentMonth() ? null : next)
+  }
+  const btn =
+    'inline-flex h-10 w-10 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40'
+  return (
+    <nav aria-label="Budget month" className="mt-4 flex flex-wrap items-center gap-2">
+      <button type="button" className={btn} onClick={() => step(-1)} aria-label="Previous month">
+        <ChevronLeft size={16} />
+      </button>
+      <span className="min-w-[9rem] text-center text-sm font-medium text-gray-900" aria-live="polite">
+        {monthLabel(shown)}
+      </span>
+      <button type="button" className={btn} onClick={() => step(1)} disabled={month == null} aria-label="Next month">
+        <ChevronRight size={16} />
+      </button>
+      {month && (
+        <button type="button" onClick={() => onChange(null)} className="text-sm font-medium text-indigo-600 hover:text-indigo-800">
+          This month
+        </button>
+      )}
+    </nav>
   )
 }
 
@@ -229,7 +300,8 @@ function BudgetCard({ row, category, canMutate, drillHref, onEdit, onDelete }: C
       {row.period_start && row.period_end && (
         <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
           <span className="text-gray-400">
-            {row.period_start.slice(0, 10)} → {row.period_end.slice(0, 10)}
+            {/* period_end is exclusive; show the last day the period covers. */}
+            {row.period_start.slice(0, 10)} → {dayBefore(row.period_end.slice(0, 10))}
           </span>
           {drillHref && (
             <Link to={drillHref} className="font-medium text-indigo-600 hover:text-indigo-800">

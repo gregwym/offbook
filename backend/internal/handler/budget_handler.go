@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -132,7 +133,23 @@ func (h *BudgetHandler) Spend(c *gin.Context) {
 	if !ok {
 		return
 	}
-	view, err := h.svc.Spend(c.Request.Context(), auth.MustUserID(c.Request.Context()), id)
+	userID := auth.MustUserID(c.Request.Context())
+	var (
+		view *service.BudgetSpend
+		err  error
+	)
+	// ?on=YYYY-MM-DD picks the period containing that date (#577); absent
+	// means the current period.
+	if raw := c.Query("on"); raw != "" {
+		on, perr := time.Parse("2006-01-02", raw)
+		if perr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "on must be a YYYY-MM-DD date", "code": "INVALID_DATE"})
+			return
+		}
+		view, err = h.svc.SpendOn(c.Request.Context(), userID, id, on)
+	} else {
+		view, err = h.svc.Spend(c.Request.Context(), userID, id)
+	}
 	if err != nil {
 		h.writeServiceError(c, err)
 		return
@@ -156,6 +173,8 @@ func (h *BudgetHandler) writeServiceError(c *gin.Context, err error) {
 		})
 	case errors.Is(err, service.ErrInvalidBudgetAmount):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_BUDGET_AMOUNT"})
+	case errors.Is(err, service.ErrBudgetDateInFuture):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_DATE"})
 	case errors.Is(err, service.ErrInvalidRolloverStart):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_ROLLOVER_START"})
 	default:

@@ -25,7 +25,9 @@ export async function deleteBudget(id: number): Promise<void> {
   await apiClient.delete(`/budgets/${id}`)
 }
 
-export async function getBudgetSpend(id: number): Promise<BudgetSpend> {
-  const res = await apiClient.get<ApiItem<BudgetSpend>>(`/budgets/${id}/spend`)
+// on (YYYY-MM-DD) picks the period containing that date (#577); omit it for
+// the current period.
+export async function getBudgetSpend(id: number, on?: string): Promise<BudgetSpend> {
+  const res = await apiClient.get<ApiItem<BudgetSpend>>(`/budgets/${id}/spend`, on ? { params: { on } } : undefined)
   return res.data.data
 }
