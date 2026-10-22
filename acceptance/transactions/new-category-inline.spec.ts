@@ -69,7 +69,9 @@ test.describe('new category from a picker', () => {
     await row.getByRole('button', { name: `More actions for ${label}` }).locator('visible=true').click()
     await page.getByRole('menu').getByRole('menuitem', { name: `Create rule from ${label}` }).click()
     const ruleDlg = page.getByRole('dialog', { name: 'New rule' })
-    await expect(ruleDlg.getByLabel('Category', { exact: true }).locator('option', { hasText: 'Pet care' })).toHaveCount(1)
+    // The Category field's label wraps its select, so match the option
+    // inside the dialog (only the category select lists categories).
+    await expect(ruleDlg.locator('option', { hasText: 'Pet care' })).toHaveCount(1)
     await ruleDlg.getByRole('button', { name: 'Cancel' }).click()
 
     // Insights spending lists it with the row's amount.
@@ -80,9 +82,9 @@ test.describe('new category from a picker', () => {
     // The Budgets form offers it.
     await page.goto('/budgets')
     await page.getByRole('button', { name: /New budget/ }).first().click()
-    const budgetCat = page.getByRole('dialog', { name: 'New budget' }).getByLabel('Category', { exact: true })
-    await expect(budgetCat.locator('option', { hasText: 'Pet care' })).toHaveCount(1)
-    await expect(budgetCat.locator('option', { hasText: '+ New category…' })).toHaveCount(1)
+    const budgetDlg = page.getByRole('dialog', { name: 'New budget' })
+    await expect(budgetDlg.locator('option', { hasText: 'Pet care' })).toHaveCount(1)
+    await expect(budgetDlg.locator('option', { hasText: '+ New category…' })).toHaveCount(1)
   })
 })
 
