@@ -8,6 +8,7 @@ import type { Account } from '../types/account'
 import type { TagCount } from '../types/transaction'
 import type { Category } from '../types/category'
 import { ModalShell } from './ModalShell'
+import { NEW_CATEGORY, NewCategoryDialog, NewCategoryOption } from './NewCategoryDialog'
 import {
   MATCH_TYPES,
   type CategorizationRule,
@@ -113,6 +114,7 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
   // We split form errors by field when the backend gives us a code; otherwise
   // surface as a generic banner above the form.
   const [error, setError] = useState<string | null>(null)
+  const [creatingCategory, setCreatingCategory] = useState(false)
   const [patternError, setPatternError] = useState<string | null>(null)
   const [categoryError, setCategoryError] = useState<string | null>(null)
   const [renameError, setRenameError] = useState<string | null>(null)
@@ -266,17 +268,22 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
           <select
             className={inputClass}
             value={categoryID === '' ? '' : String(categoryID)}
-            onChange={(e) =>
+            onChange={(e) => {
+              if (e.target.value === NEW_CATEGORY) {
+                setCreatingCategory(true)
+                return
+              }
               setCategoryID(
                 e.target.value === '' ? '' : e.target.value === KEEP_CATEGORY ? KEEP_CATEGORY : Number(e.target.value),
               )
-            }
+            }}
           >
             <option value="">— pick one —</option>
             <option value={KEEP_CATEGORY}>Keep current category</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
+            <NewCategoryOption />
           </select>
           {keepCategory && (
             <p className="mt-1 text-xs text-gray-500">
@@ -284,6 +291,12 @@ export function RuleFormModal({ mode, categories, rule, defaults, onClose, onSub
             </p>
           )}
         </Field>
+        {creatingCategory && (
+          <NewCategoryDialog
+            onCreated={(c) => { setCreatingCategory(false); setCategoryID(c.id); setCategoryError(null) }}
+            onCancel={() => setCreatingCategory(false)}
+          />
+        )}
         <fieldset className="rounded-md border border-gray-200 px-3 pb-3 pt-1">
           <legend className="px-1 text-xs font-medium text-gray-600">Only when (optional)</legend>
           <Field label="Account">
