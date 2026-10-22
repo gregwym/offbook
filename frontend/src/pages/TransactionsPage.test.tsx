@@ -9,6 +9,9 @@ import { TransactionsPage } from './TransactionsPage'
 
 const API = '/api/v1'
 
+// A row the bank named and nobody renamed: the raw string is its name.
+const bankRow = { ...fx.transaction1, merchant_name: null, description_clean: null }
+
 describe('TransactionsPage smoke', () => {
   beforeEach(() => {
     resetStores()
@@ -152,7 +155,7 @@ describe('TransactionsPage review inbox (#424)', () => {
 
     fireEvent.click(chip)
     await screen.findByText('3 to review')
-    expect(screen.queryByText('MERCHANT 4')).not.toBeInTheDocument()
+    expect(screen.queryByText('Merchant 4')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByLabelText(/select all transactions on this page/i))
     expect(screen.getByText('3 selected')).toBeInTheDocument()
@@ -164,7 +167,7 @@ describe('TransactionsPage review inbox (#424)', () => {
 
     // Accidental click? One-click undo brings all three back.
     fireEvent.click(screen.getByRole('button', { name: /undo/i }))
-    expect(await screen.findByText('MERCHANT 1')).toBeInTheDocument()
+    expect(await screen.findByText('Merchant 1')).toBeInTheDocument()
     expect(screen.getByText('3 to review')).toBeInTheDocument()
     expect(reviewBodies[1]).toEqual({ ids: [1, 2, 3], reviewed: false })
   })
@@ -174,7 +177,7 @@ describe('TransactionsPage review inbox (#424)', () => {
     renderPage(<TransactionsPage />, '/transactions?review=1')
     await screen.findByText('3 to review')
     expect(screen.getByRole('button', { name: /needs review/i })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.queryByText('MERCHANT 4')).not.toBeInTheDocument()
+    expect(screen.queryByText('Merchant 4')).not.toBeInTheDocument()
   })
 
   it('reviews a single row without touching its category', async () => {
@@ -200,7 +203,7 @@ describe('TransactionsPage review inbox (#424)', () => {
     fireEvent.click((await screen.findAllByRole('button', { name: /mark merchant 1 reviewed/i }))[0])
     expect(await screen.findByText('boom')).toBeInTheDocument()
     expect(screen.getByText('3 to review')).toBeInTheDocument()
-    expect(screen.getByText('MERCHANT 1')).toBeInTheDocument()
+    expect(screen.getByText('Merchant 1')).toBeInTheDocument()
   })
 })
 
@@ -214,9 +217,9 @@ describe('TransactionsPage unpaired transfer chip (#463)', () => {
   it('flags only unpaired Transfer-category flow rows as not in spending', async () => {
     const transferCat = { ...fx.categoryGroceries, id: 9, name: 'Transfer', slug: 'transfer' }
     const rows = [
-      { ...fx.transaction1, id: 11, description: 'CARD PAYMENT', category_id: 9, is_transfer: false },
-      { ...fx.transaction1, id: 12, description: 'PAIRED LEG', category_id: 9, is_transfer: true },
-      { ...fx.transaction1, id: 13, description: 'GROCER', category_id: 1, is_transfer: false },
+      { ...bankRow, id: 11, description: 'CARD PAYMENT', category_id: 9, is_transfer: false },
+      { ...bankRow, id: 12, description: 'PAIRED LEG', category_id: 9, is_transfer: true },
+      { ...bankRow, id: 13, description: 'GROCER', category_id: 1, is_transfer: false },
     ]
     server.use(
       http.get(`${API}/categories`, () => HttpResponse.json({ data: [...fx.categories, transferCat], total: 3 })),
@@ -234,8 +237,8 @@ describe('TransactionsPage unpaired transfer chip (#463)', () => {
   // #513: a pending row is marked, and says its edits carry over on posting.
   it('marks only pending rows and explains that edits carry over', async () => {
     const rows = [
-      { ...fx.transaction1, id: 31, description: 'CORNER CAFE', source: 'plaid', pending: true },
-      { ...fx.transaction1, id: 32, description: 'POSTED GROCER', source: 'plaid', pending: false },
+      { ...bankRow, id: 31, description: 'CORNER CAFE', source: 'plaid', pending: true },
+      { ...bankRow, id: 32, description: 'POSTED GROCER', source: 'plaid', pending: false },
     ]
     server.use(http.get(`${API}/transactions`, () => HttpResponse.json({ data: rows, total: rows.length })))
 
@@ -251,7 +254,7 @@ describe('TransactionsPage unpaired transfer chip (#463)', () => {
   })
 
   it('hides and unhides a flow row via PATCH and shows a hidden chip', async () => {
-    const rows = [{ ...fx.transaction1, id: 21, description: 'ONE OFF', is_transfer: false, hidden_at: null }]
+    const rows = [{ ...bankRow, id: 21, description: 'ONE OFF', is_transfer: false, hidden_at: null }]
     let body: unknown = null
     server.use(
       http.get(`${API}/transactions`, () => HttpResponse.json({ data: rows, total: 1 })),
@@ -342,8 +345,8 @@ describe('TransactionsPage tags (#544)', () => {
 
   it('filters by a tag chip and edits a row’s tags', async () => {
     const rows = [
-      { ...fx.transaction1, id: 41, description: 'HOTEL ROMA', tags: ['vacation'] },
-      { ...fx.transaction1, id: 42, description: 'GROCER', tags: [] },
+      { ...bankRow, id: 41, description: 'HOTEL ROMA', tags: ['vacation'] },
+      { ...bankRow, id: 42, description: 'GROCER', tags: [] },
     ]
     const seenTags: (string | null)[] = []
     let patched: unknown = null
@@ -544,7 +547,7 @@ describe('TransactionsPage bulk edit (#567)', () => {
   it('sets one category on the selected rows and undoes it', async () => {
     const { rows, bodies } = installBulkApi()
     renderPage(<TransactionsPage />)
-    await screen.findAllByText('SHOP 1')
+    await screen.findAllByText('Shop 1')
 
     fireEvent.click(screen.getByLabelText(/select all transactions on this page/i))
     const bar = screen.getByRole('region', { name: 'Bulk actions' })
@@ -564,7 +567,7 @@ describe('TransactionsPage bulk edit (#567)', () => {
   it('hides the selection, then offers Unhide for hidden rows', async () => {
     const { bodies } = installBulkApi()
     renderPage(<TransactionsPage />)
-    await screen.findAllByText('SHOP 1')
+    await screen.findAllByText('Shop 1')
 
     fireEvent.click(screen.getAllByRole('checkbox', { name: /select shop 2/i })[0])
     let bar = screen.getByRole('region', { name: 'Bulk actions' })
@@ -584,7 +587,7 @@ describe('TransactionsPage bulk edit (#567)', () => {
     installBulkApi()
     server.use(http.post(`${API}/transactions/bulk-edit`, () => HttpResponse.json({ error: 'boom', code: 'INTERNAL' }, { status: 500 })))
     renderPage(<TransactionsPage />)
-    await screen.findAllByText('SHOP 1')
+    await screen.findAllByText('Shop 1')
     fireEvent.click(screen.getByLabelText(/select all transactions on this page/i))
     fireEvent.click(within(screen.getByRole('region', { name: 'Bulk actions' })).getByRole('button', { name: /^hide$/i }))
     await waitFor(() => expect(document.querySelector('.border-red-200.bg-red-50')).not.toBeNull())
@@ -647,5 +650,51 @@ describe('TransactionsPage spending drill-down', () => {
     const banner = await screen.findByRole('region', { name: /spending drill-down/i })
     expect(within(banner).getByText('Blue Bottle')).toBeInTheDocument()
     await waitFor(() => expect(merchant).toBe('Blue Bottle'))
+  })
+})
+
+// #579: rows lead with the name the user recognises; the bank string stays visible.
+describe('TransactionsPage row name (#579)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  function rowFor(text: string) {
+    return screen.getAllByText(text)[0].closest('tr')!
+  }
+
+  it('leads with the merchant, then the cleaned name, then the bank string', async () => {
+    server.use(
+      http.get(`${API}/transactions`, () => HttpResponse.json({
+        data: [
+          { ...fx.transaction1, id: 61, description: 'QAEDIT SQ *BLUE BTL 0415', description_clean: 'Sq Blue Btl', merchant_name: 'Blue Bottle' },
+          { ...fx.transaction1, id: 62, description: 'TST* CORNER 22', description_clean: 'Corner Bakery', merchant_name: null },
+          { ...fx.transaction1, id: 63, description: 'ACH DEPOSIT 991', description_clean: null, merchant_name: '' },
+        ],
+        total: 3,
+      })),
+    )
+    renderPage(<TransactionsPage />)
+    await expectHealthySmoke()
+    await screen.findAllByText('Blue Bottle')
+
+    const first = rowFor('Blue Bottle')
+    // Primary label is the first cell after the checkbox/date; it carries the merchant.
+    const primary = first.querySelector('td:nth-child(3) > span.font-medium')!
+    expect(primary).toHaveTextContent('Blue Bottle')
+    // The raw bank string is still in the row (desktop column + phone meta line).
+    expect(within(first).getAllByText('QAEDIT SQ *BLUE BTL 0415').length).toBeGreaterThan(0)
+    // Accessible names keep the bank string so existing journeys still address the row.
+    expect(within(first).getAllByRole('combobox', { name: 'Category for QAEDIT SQ *BLUE BTL 0415' }).length).toBeGreaterThan(0)
+
+    const second = rowFor('Corner Bakery')
+    expect(second.querySelector('td:nth-child(3) > span.font-medium')).toHaveTextContent('Corner Bakery')
+    expect(within(second).getAllByText('TST* CORNER 22').length).toBeGreaterThan(0)
+
+    const third = rowFor('ACH DEPOSIT 991')
+    expect(third.querySelector('td:nth-child(3) > span.font-medium')).toHaveTextContent('ACH DEPOSIT 991')
+    // No secondary repeat in the phone meta line when the name is the bank string.
+    // The bank string is the name, so it isn't repeated in the column or meta line.
+    expect(within(third).getAllByText('ACH DEPOSIT 991')).toHaveLength(1)
   })
 })
