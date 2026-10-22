@@ -6,7 +6,8 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 // Budget history (#577): the Budgets page steps back to last month and shows
 // each monthly budget's actual for that month (refunds net), its "See
 // transactions" link opens the same total, and "next" stops at the current
-// month. Throwaway user; desktop and mobile projects.
+// month. Raising a limit applies from this month on: last month keeps the
+// limit it had (#580). Throwaway user; desktop and mobile projects.
 
 test.describe('budget history', () => {
   test('step back to last month and see that month against the budget', async ({ page }, testInfo) => {
@@ -52,10 +53,21 @@ test.describe('budget history', () => {
     await expect(card(groceries.name)).toContainText('40.00')
     await expect(card(gas.name)).toBeVisible()
 
+    // Raise Groceries to 300 this month (#580).
+    await card(groceries.name).getByRole('button', { name: 'Edit' }).click()
+    const editor = page.getByRole('dialog', { name: 'Edit budget' })
+    await editor.getByLabel('Amount').fill('300.00')
+    await editor.getByRole('button', { name: 'Save' }).click()
+    await expect(editor).toBeHidden()
+    await expect(card(groceries.name)).toContainText('of 300.00')
+    await expect(card(groceries.name)).toContainText('260.00 USD remaining')
+
     await stepper.getByRole('button', { name: 'Previous month' }).click()
     await expect(stepper).toContainText(label(-1))
     const g = card(groceries.name)
     await expect(g).toContainText('130.00')
+    // Last month still reads against the 200 limit it had, not today's 300.
+    await expect(g).toContainText('of 200.00')
     await expect(g).toContainText('65%')
     await expect(g).toContainText('70.00 USD remaining')
     // The period reads as the month's first and last day.
@@ -83,6 +95,8 @@ test.describe('budget history', () => {
     await expect(stepper).toContainText(label(-2))
     await expect(card(groceries.name)).toContainText('0.00 USD')
     await expect(card(groceries.name)).toContainText('200.00 USD remaining')
+    // The old "measured against the current limit" disclaimer is gone.
+    await expect(page.getByText(/current limit/)).toHaveCount(0)
     await stepper.getByRole('button', { name: 'This month' }).click()
     await expect(stepper).toContainText(label(0))
     await expect(card(groceries.name)).toContainText('40.00')

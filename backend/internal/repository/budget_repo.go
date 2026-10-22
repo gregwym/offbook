@@ -17,10 +17,17 @@ import (
 // ADR-0018. Spend computation stays user-scoped: only the personal evaluation
 // path uses it; household spend is computed by the aggregator.
 type BudgetRepository interface {
-	Create(ctx context.Context, b *model.Budget) error
+	// Create inserts the budget and its first limit-history row, effective
+	// from amountFrom, in one transaction (#580).
+	Create(ctx context.Context, b *model.Budget, amountFrom time.Time) error
 	GetByID(ctx context.Context, owner PlanOwner, id int64) (*model.Budget, error)
 	List(ctx context.Context, owner PlanOwner) ([]model.Budget, error)
-	Update(ctx context.Context, b *model.Budget) error
+	// Update saves the budget. A non-nil change also records the new limit
+	// in the limit history, in the same transaction (#580).
+	Update(ctx context.Context, b *model.Budget, change *BudgetLimitChange) error
+	// AmountHistory returns a budget's limit history, oldest first. Callers
+	// must have resolved the budget through an owner-scoped read.
+	AmountHistory(ctx context.Context, budgetID int64) ([]model.BudgetAmount, error)
 	SoftDelete(ctx context.Context, owner PlanOwner, id int64) error
 	// CurrentPeriodSpend returns the sum of -amount (i.e. positive spending)
 	// over [from, to) for transactions matching (userID, categoryID). Outflows
@@ -40,6 +47,17 @@ type BudgetRepository interface {
 	SpendByPeriod(ctx context.Context, userID, categoryID int64, unit string, from, to time.Time) (map[time.Time]decimal.Decimal, error)
 }
 
+// BudgetLimitChange records a limit edit (#580): b.Amount applies from From
+// (the current period start). Earlier periods keep Prev, the limit before the
+// edit: when no history row predates From, Prev is pinned at PrevFrom (the
+// period before) so an edit in the creation period doesn't rewrite the months
+// the user already looked at.
+type BudgetLimitChange struct {
+	From     time.Time
+	PrevFrom time.Time
+	Prev     decimal.Decimal
+}
+
 type budgetRepo struct {
 	db *gorm.DB
 }
@@ -48,8 +66,34 @@ func NewBudgetRepository(db *gorm.DB) BudgetRepository {
 	return &budgetRepo{db: db}
 }
 
-func (r *budgetRepo) Create(ctx context.Context, b *model.Budget) error {
-	return r.db.WithContext(ctx).Create(b).Error
+func (r *budgetRepo) Create(ctx context.Context, b *model.Budget, amountFrom time.Time) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(b).Error; err != nil {
+			return err
+		}
+		return upsertBudgetAmount(tx, b.ID, b.Amount, amountFrom)
+	})
+}
+
+// upsertBudgetAmount records amount as the limit from `from`; a second edit
+// in the same period replaces the first.
+func upsertBudgetAmount(tx *gorm.DB, budgetID int64, amount decimal.Decimal, from time.Time) error {
+	return tx.Exec(`INSERT INTO budget_amounts (budget_id, amount, effective_from)
+		VALUES (?, ?, ?)
+		ON CONFLICT (budget_id, effective_from)
+		DO UPDATE SET amount = EXCLUDED.amount, updated_at = now()`,
+		budgetID, amount, from.UTC().Format("2006-01-02")).Error
+}
+
+func (r *budgetRepo) AmountHistory(ctx context.Context, budgetID int64) ([]model.BudgetAmount, error) {
+	var out []model.BudgetAmount
+	if err := r.db.WithContext(ctx).
+		Where("budget_id = ?", budgetID).
+		Order("effective_from ASC").
+		Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *budgetRepo) GetByID(ctx context.Context, owner PlanOwner, id int64) (*model.Budget, error) {
@@ -74,17 +118,29 @@ func (r *budgetRepo) List(ctx context.Context, owner PlanOwner) ([]model.Budget,
 	return out, nil
 }
 
-func (r *budgetRepo) Update(ctx context.Context, b *model.Budget) error {
-	res := PlanOwner{UserID: b.UserID, HouseholdID: b.HouseholdID}.
-		Apply(r.db.WithContext(ctx)).
-		Save(b)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+func (r *budgetRepo) Update(ctx context.Context, b *model.Budget, change *BudgetLimitChange) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := PlanOwner{UserID: b.UserID, HouseholdID: b.HouseholdID}.
+			Apply(tx).
+			Save(b)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		if change == nil {
+			return nil
+		}
+		if err := tx.Exec(`INSERT INTO budget_amounts (budget_id, amount, effective_from)
+			SELECT ?, ?, ?
+			 WHERE NOT EXISTS (SELECT 1 FROM budget_amounts WHERE budget_id = ? AND effective_from < ?)`,
+			b.ID, change.Prev, change.PrevFrom.UTC().Format("2006-01-02"),
+			b.ID, change.From.UTC().Format("2006-01-02")).Error; err != nil {
+			return err
+		}
+		return upsertBudgetAmount(tx, b.ID, b.Amount, change.From)
+	})
 }
 
 func (r *budgetRepo) SoftDelete(ctx context.Context, owner PlanOwner, id int64) error {

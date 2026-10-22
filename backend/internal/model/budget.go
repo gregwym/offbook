@@ -35,3 +35,16 @@ type Budget struct {
 }
 
 func (Budget) TableName() string { return "budgets" }
+
+// BudgetAmount is one entry in a budget's limit history (#580): Amount is the
+// limit from EffectiveFrom (a period start, UTC date) until the next entry.
+type BudgetAmount struct {
+	ID            int64           `gorm:"primaryKey" json:"id"`
+	BudgetID      int64           `gorm:"not null" json:"budget_id"`
+	Amount        decimal.Decimal `gorm:"type:numeric(30,18);not null" json:"amount"`
+	EffectiveFrom time.Time       `gorm:"type:date;not null" json:"effective_from"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+}
+
+func (BudgetAmount) TableName() string { return "budget_amounts" }

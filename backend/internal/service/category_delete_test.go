@@ -211,6 +211,12 @@ func TestCategoryService_DeleteMerge(t *testing.T) {
 		if !spend.Limit.Equal(decimal.NewFromInt(80)) || !spend.Spent.Equal(want) {
 			t.Errorf("Cafes budget limit %s spent %s, want 80 / %s", spend.Limit, spend.Spent, want)
 		}
+		// Its limit history (#580) carries the merged amount too.
+		var hist []decimal.Decimal
+		g.Raw("SELECT amount FROM budget_amounts WHERE budget_id = ? ORDER BY effective_from", cafesBudget.ID).Scan(&hist)
+		if len(hist) != 1 || !hist[0].Equal(decimal.NewFromInt(80)) {
+			t.Errorf("Cafes limit history = %v, want [80]", hist)
+		}
 		cats, total := byCategory()
 		if !cats[cafes.ID].Equal(want) || !total.Equal(totalBefore) {
 			t.Errorf("by-category Cafes %s total %s, want %s / %s", cats[cafes.ID], total, want, totalBefore)

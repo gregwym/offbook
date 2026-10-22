@@ -182,6 +182,14 @@ func (r *categoryRepo) Reassign(ctx context.Context, userID, from int64, to *mod
 			  WHERE user_id = @u AND category_id = @from`,
 			// An active budget whose period the target already budgets adds
 			// its amount to the target's and is retired; the rest move over.
+			// The target's limit history (#580) gains the same amount in every
+			// period, so past months stay consistent with the merged spend.
+			`UPDATE budget_amounts h SET amount = h.amount + a.amount, updated_at = now()
+			   FROM budgets a, budgets b
+			  WHERE h.budget_id = b.id
+			    AND a.user_id = @u AND a.category_id = @from AND a.deleted_at IS NULL AND a.is_active
+			    AND b.user_id = @u AND b.category_id = @to AND b.deleted_at IS NULL AND b.is_active
+			    AND b.period = a.period`,
 			`UPDATE budgets b SET amount = b.amount + a.amount, updated_at = now()
 			   FROM budgets a
 			  WHERE a.user_id = @u AND a.category_id = @from AND a.deleted_at IS NULL AND a.is_active
