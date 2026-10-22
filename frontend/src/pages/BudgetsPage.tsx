@@ -16,6 +16,7 @@ import { useCategoriesStore } from '../store/categoriesStore'
 import type { Category } from '../types/category'
 import { BUDGET_PERIODS, type BudgetPeriod } from '../types/budget'
 import { ModalShell } from '../components/ModalShell'
+import { NEW_CATEGORY, NewCategoryDialog, NewCategoryOption } from '../components/NewCategoryDialog'
 import { dayBefore, spendingHref } from '../lib/spendingLink'
 
 export function BudgetsPage() {
@@ -333,6 +334,7 @@ function BudgetFormModal({ mode, isHousehold, categories, budget, onClose, onSub
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [categoryError, setCategoryError] = useState<string | null>(null)
+  const [creatingCategory, setCreatingCategory] = useState<HTMLElement | null>(null)
   const [amountError, setAmountError] = useState<string | null>(null)
 
   const submit = async () => {
@@ -394,7 +396,13 @@ function BudgetFormModal({ mode, isHousehold, categories, budget, onClose, onSub
           <select
             className={inputClass}
             value={categoryID === '' ? '' : String(categoryID)}
-            onChange={(e) => setCategoryID(e.target.value === '' ? '' : Number(e.target.value))}
+            onChange={(e) => {
+              if (e.target.value === NEW_CATEGORY) {
+                setCreatingCategory(e.currentTarget)
+                return
+              }
+              setCategoryID(e.target.value === '' ? '' : Number(e.target.value))
+            }}
           >
             <option value="">— pick one —</option>
             {/* A shared budget is seen by every member, so it can only use
@@ -402,8 +410,17 @@ function BudgetFormModal({ mode, isHousehold, categories, budget, onClose, onSub
             {categories
               .filter((c) => !isHousehold || c.user_id == null)
               .map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {/* Your own category can't back a shared budget (#573). */}
+            {!isHousehold && <NewCategoryOption />}
           </select>
         </Field>
+        {creatingCategory && (
+          <NewCategoryDialog
+            onCreated={(c) => { setCreatingCategory(null); setCategoryID(c.id); setCategoryError(null) }}
+            onCancel={() => setCreatingCategory(null)}
+            returnFocusTo={creatingCategory}
+          />
+        )}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Period">
             <select className={inputClass} value={period} onChange={(e) => setPeriod(e.target.value as BudgetPeriod)}>

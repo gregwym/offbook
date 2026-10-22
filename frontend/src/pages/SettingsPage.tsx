@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { usePlaidLink } from 'react-plaid-link'
 import { clearPendingLink, savePendingLink } from '../lib/plaidOAuth'
 import { AlertTriangle, Bot, Check, Info, Landmark, Pencil, Plug, Plus, RefreshCw, Tag, Trash2, X } from 'lucide-react'
@@ -18,11 +18,17 @@ import { getHealth } from '../api/health'
 import { getUserSettings, updateUserSettings } from '../api/userSettings'
 import { getCategoryUsage } from '../api/categories'
 import { useCategoriesStore } from '../store/categoriesStore'
+import { categoryErr } from '../lib/categoryErr'
 import type { Category, CategoryUsage } from '../types/category'
 import type { PlaidItem, PlaidSyncError } from '../types/plaid'
 import type { AIProvider, UpdateUserSettingsInput, UserSettingsView } from '../types/userSettings'
 
 export function SettingsPage() {
+  // "Manage categories" links land on #categories (#581).
+  const { hash } = useLocation()
+  useEffect(() => {
+    if (hash) document.getElementById(hash.slice(1))?.scrollIntoView?.()
+  }, [hash])
   return (
     <div className="space-y-8">
       <div>
@@ -190,24 +196,6 @@ function CategoriesSection() {
       </div>
     </section>
   )
-}
-
-// categoryErr turns a create/rename failure into a sentence the user can act
-// on; anything unrecognised falls back to the server's message.
-function categoryErr(err: unknown, name: string): string {
-  const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code
-  switch (code) {
-    case 'CATEGORY_NAME_TAKEN':
-      return `“${name}” already exists. Pick a different name.`
-    case 'INVALID_NAME':
-      return 'Use a name between 1 and 60 characters.'
-    case 'INVALID_PARENT':
-      return 'That group is no longer available. Pick another or choose None.'
-    default: {
-      const msg = errMsg(err)
-      return msg.charAt(0).toUpperCase() + msg.slice(1)
-    }
-  }
 }
 
 function plural(n: number, noun: string, nouns = `${noun}s`): string {

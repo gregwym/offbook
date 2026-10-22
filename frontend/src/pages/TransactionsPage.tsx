@@ -27,6 +27,7 @@ import { TRANSACTION_SOURCES } from '../types/transaction'
 import { ModalShell } from '../components/ModalShell'
 import { RowActionsMenu, type RowAction } from '../components/RowActionsMenu'
 import { txDisplayName, txSecondaryDescription } from '../lib/txName'
+import { NEW_CATEGORY, NewCategoryDialog, NewCategoryOption } from '../components/NewCategoryDialog'
 
 export function TransactionsPage() {
   const {
@@ -357,8 +358,19 @@ export function TransactionsPage() {
   }
 
   const plural = (n: number) => `${n} transaction${n === 1 ? '' : 's'}`
-  const setSelectedCategory = (value: string) => {
+  // "+ New category…" in a picker (#581): the dialog creates the category,
+  // then `apply` selects it where the user was.
+  const [newCategory, setNewCategory] = useState<{ apply: (c: Category) => void; from: HTMLElement } | null>(null)
+  const setSelectedCategory = (value: string, from: HTMLElement) => {
     if (value === '') return
+    if (value === NEW_CATEGORY) {
+      const ids = selectedIDs
+      setNewCategory({
+        apply: (c) => { void bulkEditRows(ids, { category_id: c.id }, (n) => `${plural(n)} moved to ${c.name}.`) },
+        from,
+      })
+      return
+    }
     if (value === 'null') {
       void bulkEditRows(selectedIDs, { clear_category: true }, (n) => `${plural(n)} set to Uncategorized.`)
       return
@@ -690,12 +702,13 @@ export function TransactionsPage() {
             aria-label="Set category for selected"
             disabled={reviewBusy}
             value=""
-            onChange={(e) => setSelectedCategory(e.target.value)}
+            onChange={(e) => setSelectedCategory(e.target.value, e.currentTarget)}
             className="min-h-9 max-w-[12rem] rounded-md border border-indigo-300 bg-white px-2 py-1.5 text-sm text-indigo-900 disabled:opacity-50"
           >
             <option value="">Set category…</option>
             <option value="null">Uncategorized</option>
             {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <NewCategoryOption />
           </select>
           {anySelectedShown && (
             <button
@@ -841,6 +854,7 @@ export function TransactionsPage() {
                   onSelect={() => toggleSelected(t.id)}
                   onToggleReviewed={() => void reviewRows([t.id], t.reviewed_at == null)}
                   onCategoryChange={(catID) => { void setCategory(t.id, catID) }}
+                  onNewCategory={(from) => setNewCategory({ apply: (c) => { void setCategory(t.id, c.id) }, from })}
                   onCreateRule={() => openRuleFromTxn(t)}
                   onSplit={() => setSplitting(t)}
                   onToggleHidden={() => { update(t.id, { hidden: t.hidden_at == null }).catch(() => {}) }}
@@ -925,6 +939,13 @@ export function TransactionsPage() {
         />
       )}
 
+      {newCategory && (
+        <NewCategoryDialog
+          onCreated={(c) => { const { apply } = newCategory; setNewCategory(null); apply(c) }}
+          onCancel={() => setNewCategory(null)}
+          returnFocusTo={newCategory.from}
+        />
+      )}
       {tagging && (
         <TagEditorModal
           tx={tagging}
@@ -1065,6 +1086,8 @@ type RowProps = {
   categories: Category[]
   currentCategory?: Category
   onCategoryChange: (catID: number | null) => void
+  // Offers "+ New category…" in the row picker (#581) when set.
+  onNewCategory?: (from: HTMLElement) => void
   onCreateRule: () => void
   // Opens the split modal (#438); absent for rows that can't be split.
   onSplit?: () => void
@@ -1091,7 +1114,7 @@ type RowProps = {
 
 const PENDING_HINT = 'Your bank hasn’t posted this yet. Your edits will carry over when it posts.'
 
-function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onCreateRule, onSplit, onToggleHidden, onEditTags, onEditDetails, onTagClick, onDelete, onUnlinkTransfer, indented, selected, onSelect, onToggleReviewed }: RowProps) {
+function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onNewCategory, onCreateRule, onSplit, onToggleHidden, onEditTags, onEditDetails, onTagClick, onDelete, onUnlinkTransfer, indented, selected, onSelect, onToggleReviewed }: RowProps) {
   // Per ADR-0013, the unit on a transaction is asset_id. Display currency
   // = asset.symbol when available; fall back to the parent account's
   // currency for older rows that haven't been backfilled.
@@ -1133,6 +1156,12 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
       value={currentCategory ? currentCategory.id : ''}
       onChange={(e) => {
         const v = e.target.value
+        if (v === NEW_CATEGORY) {
+          // The select stays controlled, so it snaps back to the current
+          // category; the dialog selects the new one once it exists.
+          onNewCategory?.(e.currentTarget)
+          return
+        }
         onCategoryChange(v === '' ? null : Number(v))
       }}
       // truncate: a long name ends in an ellipsis before the chevron instead
@@ -1141,6 +1170,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
     >
       <option value="">Uncategorized</option>
       {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+      {onNewCategory && <NewCategoryOption />}
     </select>
   )
   const note = tx.notes?.trim() ?? ''
