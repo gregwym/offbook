@@ -3,7 +3,9 @@ FROM node:22-alpine AS build
 WORKDIR /src
 # Pin pnpm (#585): unpinned corepack resolves the newest pnpm, whose native
 # binary download can fail the build. Matches CI's pnpm 9 / lockfile v9.
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+# Installed with npm, which retries; corepack's one-shot version lookup kept
+# getting HTTP 503 from the registry.
+RUN npm install -g --fetch-retries=5 pnpm@9.15.9
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY . .
