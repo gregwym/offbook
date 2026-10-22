@@ -94,11 +94,10 @@ export function BudgetsPage() {
       {!isHousehold && (rows.length > 0 || month) && (
         <MonthStepper month={month} onChange={setMonth} />
       )}
-      {month && rows.length > 0 && (
+      {/* Each past month shows the limit that applied then (#580). */}
+      {month && rows.length > 0 && notShown > 0 && (
         <p className="mt-2 text-xs text-gray-500">
-          Past months are measured against each budget&apos;s current limit.
-          {notShown > 0 &&
-            ` ${notShown} weekly, annual or paused ${notShown === 1 ? 'budget is' : 'budgets are'} only shown for the current period.`}
+          {`${notShown} weekly, annual or paused ${notShown === 1 ? 'budget is' : 'budgets are'} only shown for the current period.`}
         </p>
       )}
 

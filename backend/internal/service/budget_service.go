@@ -131,7 +131,8 @@ func (s *BudgetService) Create(ctx context.Context, owner repository.PlanOwner, 
 	if in.IsActive != nil {
 		b.IsActive = *in.IsActive
 	}
-	if err := s.repo.Create(ctx, b); err != nil {
+	from, _ := budgetPeriodWindow(b.Period, s.now())
+	if err := s.repo.Create(ctx, b, from); err != nil {
 		if isUniqueViolation(err) {
 			return nil, ErrDuplicateActiveBudget
 		}
@@ -179,6 +180,7 @@ func (s *BudgetService) Update(ctx context.Context, owner repository.PlanOwner, 
 		}
 		b.Period = p
 	}
+	prevAmount := b.Amount
 	if in.Amount != nil {
 		if !in.Amount.IsPositive() {
 			return nil, ErrInvalidBudgetAmount
@@ -197,7 +199,14 @@ func (s *BudgetService) Update(ctx context.Context, owner repository.PlanOwner, 
 	if in.IsActive != nil {
 		b.IsActive = *in.IsActive
 	}
-	if err := s.repo.Update(ctx, b); err != nil {
+	// A new limit applies from the current period on; earlier periods keep
+	// the limit they had (#580).
+	var change *repository.BudgetLimitChange
+	if !b.Amount.Equal(prevAmount) {
+		from, _ := budgetPeriodWindow(b.Period, s.now())
+		change = &repository.BudgetLimitChange{From: from, PrevFrom: prevPeriodStart(b.Period, from), Prev: prevAmount}
+	}
+	if err := s.repo.Update(ctx, b, change); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrBudgetNotFound
 		}
@@ -227,8 +236,8 @@ func (s *BudgetService) Spend(ctx context.Context, userID, id int64) (*BudgetSpe
 
 // SpendOn returns the spend view for the budget period containing `on`, so
 // the Budgets page can step back to an earlier month (#577). A date after
-// today is rejected. Past periods are measured against the current limit
-// (limit history is not stored).
+// today is rejected. Each period is measured against the limit in effect
+// then (#580).
 func (s *BudgetService) SpendOn(ctx context.Context, userID, id int64, on time.Time) (*BudgetSpend, error) {
 	now := s.now().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
@@ -244,11 +253,16 @@ func (s *BudgetService) SpendOn(ctx context.Context, userID, id int64, on time.T
 	if err != nil {
 		return nil, fmt.Errorf("compute spend: %w", err)
 	}
-	carry, err := s.carryover(ctx, userID, b, from)
+	limits, err := s.limits(ctx, b)
 	if err != nil {
 		return nil, err
 	}
-	available := b.Amount.Add(carry)
+	limit := limits.at(from)
+	carry, err := s.carryoverWith(ctx, userID, b, limits, from)
+	if err != nil {
+		return nil, err
+	}
+	available := limit.Add(carry)
 	remaining := available.Sub(spent)
 	pct := 0.0
 	if available.IsPositive() {
@@ -261,7 +275,7 @@ func (s *BudgetService) SpendOn(ctx context.Context, userID, id int64, on time.T
 		Period:      b.Period,
 		PeriodStart: from,
 		PeriodEnd:   to,
-		Limit:       b.Amount,
+		Limit:       limit,
 		Carryover:   carry,
 		Available:   available,
 		Spent:       spent,
@@ -279,9 +293,20 @@ const maxRolloverPeriods = 36
 // b.RolloverStart (default zero) in the period containing the budget's
 // creation; each completed period adds
 // (limit - spent) and the running balance never goes below zero, so an
-// overspent period does not penalize later ones. The current limit is applied
-// to every past period (limit history is not stored).
+// overspent period does not penalize later ones. Each past period adds the
+// limit in effect for it (#580).
 func (s *BudgetService) carryover(ctx context.Context, userID int64, b *model.Budget, currentFrom time.Time) (decimal.Decimal, error) {
+	if !b.Rollover {
+		return decimal.Zero, nil
+	}
+	limits, err := s.limits(ctx, b)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	return s.carryoverWith(ctx, userID, b, limits, currentFrom)
+}
+
+func (s *BudgetService) carryoverWith(ctx context.Context, userID int64, b *model.Budget, limits budgetLimits, currentFrom time.Time) (decimal.Decimal, error) {
 	if !b.Rollover {
 		return decimal.Zero, nil
 	}
@@ -313,9 +338,47 @@ func (s *BudgetService) carryover(ctx context.Context, userID int64, b *model.Bu
 		return decimal.Zero, fmt.Errorf("compute rollover: %w", err)
 	}
 	for p := earliest; p.Before(currentFrom); p = nextPeriodStart(b.Period, p) {
-		carry = decimal.Max(decimal.Zero, carry.Add(b.Amount).Sub(spend[p]))
+		carry = decimal.Max(decimal.Zero, carry.Add(limits.at(p)).Sub(spend[p]))
 	}
 	return carry, nil
+}
+
+// budgetLimits is a budget's limit history (#580), oldest first, plus its
+// current amount.
+type budgetLimits struct {
+	history []model.BudgetAmount
+	current decimal.Decimal
+}
+
+func (s *BudgetService) limits(ctx context.Context, b *model.Budget) (budgetLimits, error) {
+	h, err := s.repo.AmountHistory(ctx, b.ID)
+	if err != nil {
+		return budgetLimits{}, fmt.Errorf("budget limit history: %w", err)
+	}
+	return budgetLimits{history: h, current: b.Amount}, nil
+}
+
+// at returns the limit for the period starting at periodStart: the latest
+// entry effective on or before it. The latest entry is always the budget's
+// current amount (budgets.amount is canonical during the expand stage); a
+// period before the first entry uses the first entry, the oldest limit known.
+func (l budgetLimits) at(periodStart time.Time) decimal.Decimal {
+	n := len(l.history)
+	if n == 0 {
+		return l.current
+	}
+	day := time.Date(periodStart.Year(), periodStart.Month(), periodStart.Day(), 0, 0, 0, 0, time.UTC)
+	i := n - 1
+	for i >= 0 && l.history[i].EffectiveFrom.UTC().After(day) {
+		i--
+	}
+	if i == n-1 {
+		return l.current
+	}
+	if i < 0 {
+		i = 0
+	}
+	return l.history[i].Amount
 }
 
 func prevPeriodStart(period string, from time.Time) time.Time {
