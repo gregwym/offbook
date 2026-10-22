@@ -21,7 +21,7 @@ export function spendingHref(opts: {
 
 // dayBefore is calendar arithmetic on a YYYY-MM-DD string, in UTC so no
 // local timezone can shift it.
-function dayBefore(date: string): string {
+export function dayBefore(date: string): string {
   const d = new Date(`${date}T00:00:00Z`)
   d.setUTCDate(d.getUTCDate() - 1)
   return d.toISOString().slice(0, 10)

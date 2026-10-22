@@ -16,7 +16,7 @@ import { useCategoriesStore } from '../store/categoriesStore'
 import type { Category } from '../types/category'
 import { BUDGET_PERIODS, type BudgetPeriod } from '../types/budget'
 import { ModalShell } from '../components/ModalShell'
-import { spendingHref } from '../lib/spendingLink'
+import { dayBefore, spendingHref } from '../lib/spendingLink'
 
 export function BudgetsPage() {
   const {
@@ -219,7 +219,7 @@ function MonthStepper({ month, onChange }: { month: string | null; onChange: (mo
     onChange(next >= currentMonth() ? null : next)
   }
   const btn =
-    'inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40'
+    'inline-flex h-10 w-10 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40'
   return (
     <nav aria-label="Budget month" className="mt-4 flex flex-wrap items-center gap-2">
       <button type="button" className={btn} onClick={() => step(-1)} aria-label="Previous month">
@@ -300,7 +300,8 @@ function BudgetCard({ row, category, canMutate, drillHref, onEdit, onDelete }: C
       {row.period_start && row.period_end && (
         <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
           <span className="text-gray-400">
-            {row.period_start.slice(0, 10)} → {row.period_end.slice(0, 10)}
+            {/* period_end is exclusive; show the last day the period covers. */}
+            {row.period_start.slice(0, 10)} → {dayBefore(row.period_end.slice(0, 10))}
           </span>
           {drillHref && (
             <Link to={drillHref} className="font-medium text-indigo-600 hover:text-indigo-800">
