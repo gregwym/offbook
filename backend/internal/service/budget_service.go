@@ -34,6 +34,7 @@ var (
 	ErrInvalidBudgetAmount   = errors.New("amount must be > 0")
 	ErrDuplicateActiveBudget = errors.New("an active budget already exists for this user, category, and period")
 	ErrInvalidRolloverStart  = errors.New("rollover starting balance must be >= 0")
+	ErrBudgetDateInFuture    = errors.New("budget period date must not be after today")
 )
 
 // CreateBudgetInput is the validated payload for budget creation.
@@ -221,11 +222,24 @@ func (s *BudgetService) SoftDelete(ctx context.Context, owner repository.PlanOwn
 // Spend returns the current-period spend view for a budget. The period
 // window depends on the budget's `period` field; see budgetPeriodWindow.
 func (s *BudgetService) Spend(ctx context.Context, userID, id int64) (*BudgetSpend, error) {
+	return s.SpendOn(ctx, userID, id, s.now())
+}
+
+// SpendOn returns the spend view for the budget period containing `on`, so
+// the Budgets page can step back to an earlier month (#577). A date after
+// today is rejected. Past periods are measured against the current limit
+// (limit history is not stored).
+func (s *BudgetService) SpendOn(ctx context.Context, userID, id int64, on time.Time) (*BudgetSpend, error) {
+	now := s.now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	if !on.UTC().Before(today.AddDate(0, 0, 1)) {
+		return nil, ErrBudgetDateInFuture
+	}
 	b, err := s.Get(ctx, repository.UserOwner(userID), id)
 	if err != nil {
 		return nil, err
 	}
-	from, to := budgetPeriodWindow(b.Period, s.now())
+	from, to := budgetPeriodWindow(b.Period, on)
 	spent, err := s.repo.CurrentPeriodSpend(ctx, userID, b.CategoryID, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("compute spend: %w", err)
@@ -272,6 +286,10 @@ func (s *BudgetService) carryover(ctx context.Context, userID int64, b *model.Bu
 		return decimal.Zero, nil
 	}
 	start, _ := budgetPeriodWindow(b.Period, b.CreatedAt)
+	// Nothing had rolled yet in a period before the budget existed (#577).
+	if currentFrom.Before(start) {
+		return decimal.Zero, nil
+	}
 	// Walk back at most maxRolloverPeriods from the current period.
 	earliest := currentFrom
 	for i := 0; i < maxRolloverPeriods && earliest.After(start); i++ {

@@ -109,4 +109,45 @@ describe('BudgetsPage smoke', () => {
     renderPage(<BudgetsPage />)
     expect(await screen.findByText(/starting balance plus unspent/i)).toBeTruthy()
   })
+
+  it('steps back to an earlier month, fetching spend for that month, and stops at the current month (#577)', async () => {
+    const ons: (string | null)[] = []
+    server.use(
+      http.get('*/budgets', () =>
+        HttpResponse.json({ data: [fx.budget1, { ...fx.budget1, id: 2, category_id: 2, period: 'weekly' }], total: 2 }),
+      ),
+      http.get('*/budgets/:id/spend', ({ request }) => {
+        const on = new URL(request.url).searchParams.get('on')
+        ons.push(on)
+        return HttpResponse.json({
+          data: on
+            ? { ...fx.budgetSpend1, period_start: `${on.slice(0, 7)}-01`, spent: '77.000000000000000000' }
+            : fx.budgetSpend1,
+        })
+      }),
+    )
+    renderPage(<BudgetsPage />)
+    const next = await screen.findByRole('button', { name: 'Next month' })
+    expect((next as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByRole('button', { name: 'This month' })).toBeNull()
+
+    const now = new Date()
+    const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
+    const prevMonth = prev.toISOString().slice(0, 7)
+    const lastDay = new Date(Date.UTC(prev.getUTCFullYear(), prev.getUTCMonth() + 1, 0)).toISOString().slice(0, 10)
+    const label = prev.toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }))
+    expect(await screen.findByText(label)).toBeTruthy()
+    await waitFor(() => expect(ons).toContain(lastDay))
+    expect(lastDay.startsWith(prevMonth)).toBe(true)
+    expect(await screen.findByText(/77\.00 USD/)).toBeTruthy()
+    // The weekly budget is left out of a past month, and the note says so.
+    expect(screen.getByText(/1 weekly, annual or paused budget is only shown for the current period/)).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Next month' }) as HTMLButtonElement).disabled).toBe(false)
+
+    fireEvent.click(screen.getByRole('button', { name: 'This month' }))
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Next month' }) as HTMLButtonElement).disabled).toBe(true))
+    await expectHealthySmoke()
+  })
 })
