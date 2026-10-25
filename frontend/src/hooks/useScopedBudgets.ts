@@ -18,6 +18,7 @@ import {
   createBudget,
   deleteBudget,
   getBudgetSpend,
+  getBudgetSummary,
   listBudgets,
   updateBudget,
 } from '../api/budgets'
@@ -27,10 +28,10 @@ import {
   listSharedBudgets,
   updateSharedBudget,
 } from '../api/households'
-import { getBudgetPace } from '../api/householdAggregator'
+import { getBudgetPace, getHouseholdBudgetSummary } from '../api/householdAggregator'
 import { useHouseholdStore } from '../store/householdStore'
 import { useScopeStore } from '../store/scopeStore'
-import type { BudgetPeriod, BudgetSpend } from '../types/budget'
+import type { BudgetMonthSummary, BudgetPeriod, BudgetSpend } from '../types/budget'
 import { SCOPE_HOUSEHOLD } from '../types/scope'
 
 // ScopedBudgetRow normalizes personal `Budget` + `BudgetSpend` and household
@@ -72,6 +73,10 @@ export type UseScopedBudgets = {
   month: string | null
   setMonth: (month: string | null) => void
   rows: ScopedBudgetRow[]
+  // Month totals (#589); null while loading or when only that fetch failed
+  // (summaryFailed) — the cards still render.
+  summary: BudgetMonthSummary | null
+  summaryFailed: boolean
   loading: boolean
   error: string | null
   canMutate: boolean
@@ -89,19 +94,37 @@ export function useScopedBudgets(): UseScopedBudgets {
   const isHousehold = active === SCOPE_HOUSEHOLD
 
   const [rows, setRows] = useState<ScopedBudgetRow[]>([])
+  const [summary, setSummary] = useState<BudgetMonthSummary | null>(null)
+  const [summaryFailed, setSummaryFailed] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [month, setMonth] = useState<string | null>(null)
 
   // fetchRows is the pure loader (no setState) so both the effect and the
   // imperative reload share one data path.
-  const fetchRows = useCallback(async (): Promise<ScopedBudgetRow[]> => {
+  // The month summary is fetched alongside but settles on its own, so a
+  // failed summary only hides the strip (#266 pattern).
+  const fetchRows = useCallback(async (): Promise<Loaded> => {
     if (isHousehold) {
-      if (householdId == null) return []
-      return loadHousehold(householdId)
+      if (householdId == null) return { rows: [], summary: { status: 'fulfilled', value: null } }
+      const [rows, summary] = await Promise.all([
+        loadHousehold(householdId),
+        settle(getHouseholdBudgetSummary()),
+      ])
+      return { rows, summary }
     }
-    return loadPersonal(month ? lastDayOfMonth(month) : undefined)
+    const [rows, summary] = await Promise.all([
+      loadPersonal(month ? lastDayOfMonth(month) : undefined),
+      settle(getBudgetSummary(month ?? undefined)),
+    ])
+    return { rows, summary }
   }, [isHousehold, householdId, month])
+
+  const apply = useCallback((next: Loaded) => {
+    setRows(next.rows)
+    setSummary(next.summary.status === 'fulfilled' ? next.summary.value : null)
+    setSummaryFailed(next.summary.status === 'rejected')
+  }, [])
 
   // Household role drives `canMutate`. Load the household detail when we enter
   // household scope so the page can hide controls that would 403 server-side.
@@ -120,7 +143,7 @@ export function useScopedBudgets(): UseScopedBudgets {
       try {
         const next = await fetchRows()
         if (!cancelled) {
-          setRows(next)
+          apply(next)
           setError(null)
         }
       } catch (e) {
@@ -132,19 +155,19 @@ export function useScopedBudgets(): UseScopedBudgets {
     return () => {
       cancelled = true
     }
-  }, [hydrated, fetchRows])
+  }, [hydrated, fetchRows, apply])
 
   const reload = useCallback(async () => {
     setLoading(true)
     try {
-      setRows(await fetchRows())
+      apply(await fetchRows())
       setError(null)
     } catch (e) {
       setError(errMsg(e))
     } finally {
       setLoading(false)
     }
-  }, [fetchRows])
+  }, [fetchRows, apply])
 
   const create = useCallback(
     async (input: ScopedBudgetInput) => {
@@ -202,6 +225,8 @@ export function useScopedBudgets(): UseScopedBudgets {
     month: isHousehold ? null : month,
     setMonth: changeMonth,
     rows,
+    summary,
+    summaryFailed,
     loading,
     error,
     canMutate,
@@ -212,6 +237,15 @@ export function useScopedBudgets(): UseScopedBudgets {
     remove,
     clearError: () => setError(null),
   }
+}
+
+type Loaded = {
+  rows: ScopedBudgetRow[]
+  summary: PromiseSettledResult<BudgetMonthSummary | null>
+}
+
+async function settle<T>(p: Promise<T>): Promise<PromiseSettledResult<T>> {
+  return (await Promise.allSettled([p]))[0]
 }
 
 // lastDayOfMonth turns YYYY-MM into its last calendar day, YYYY-MM-DD — the

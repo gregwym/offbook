@@ -31,6 +31,7 @@ func NewBudgetHandler(s *service.BudgetService) *BudgetHandler {
 func (h *BudgetHandler) Register(g *gin.RouterGroup) {
 	g.POST("/budgets", h.Create)
 	g.GET("/budgets", h.List)
+	g.GET("/budgets/summary", h.Summary)
 	g.GET("/budgets/:id", h.Get)
 	g.GET("/budgets/:id/spend", h.Spend)
 	g.PATCH("/budgets/:id", h.Update)
@@ -150,6 +151,32 @@ func (h *BudgetHandler) Spend(c *gin.Context) {
 	} else {
 		view, err = h.svc.Spend(c.Request.Context(), userID, id)
 	}
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": view})
+}
+
+// Summary is the month's budget totals and unbudgeted spending (#589).
+// ?month=YYYY-MM picks a past month; absent means the current month.
+func (h *BudgetHandler) Summary(c *gin.Context) {
+	on := time.Now().UTC()
+	if raw := c.Query("month"); raw != "" {
+		m, err := time.Parse("2006-01", raw)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "month must be YYYY-MM", "code": "INVALID_DATE"})
+			return
+		}
+		// The month's last day, or today while the month is still running.
+		// A future month keeps its first day, which the service refuses.
+		if last := m.AddDate(0, 1, -1); m.After(on) {
+			on = m
+		} else if last.Before(on) {
+			on = last
+		}
+	}
+	view, err := h.svc.MonthSummary(c.Request.Context(), auth.MustUserID(c.Request.Context()), on)
 	if err != nil {
 		h.writeServiceError(c, err)
 		return

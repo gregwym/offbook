@@ -24,7 +24,8 @@ func NewHouseholdAggregatorHandler(agg *household.Aggregator, members repository
 	return &HouseholdAggregatorHandler{agg: agg, members: members}
 }
 
-// Register mounts /h/dashboard, /h/budgets/pace, /h/goals/progress,
+// Register mounts /h/dashboard, /h/budgets/pace, /h/budgets/summary,
+// /h/goals/progress,
 // /h/ai/context, and the /h/insights/* trio (allocation, net-worth,
 // accounts). All are gated by the secured group + the membership lookup
 // below (no membership ⇒ 403).
@@ -32,6 +33,7 @@ func (h *HouseholdAggregatorHandler) Register(g *gin.RouterGroup) {
 	r := g.Group("/h")
 	r.GET("/dashboard", h.Dashboard)
 	r.GET("/budgets/pace", h.BudgetPace)
+	r.GET("/budgets/summary", h.BudgetSummary)
 	r.GET("/goals/progress", h.GoalProgress)
 	r.GET("/ai/context", h.AIContext)
 	r.GET("/insights/allocation", h.Allocation)
@@ -88,6 +90,20 @@ func (h *HouseholdAggregatorHandler) BudgetPace(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out, "total": int64(len(out))})
+}
+
+// BudgetSummary is the current month's shared-budget totals (#589).
+func (h *HouseholdAggregatorHandler) BudgetSummary(c *gin.Context) {
+	hhID, ok := h.requireHousehold(c)
+	if !ok {
+		return
+	}
+	out, err := h.agg.BudgetSummary(c.Request.Context(), hhID)
+	if err != nil {
+		writeAggregatorErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out})
 }
 
 func (h *HouseholdAggregatorHandler) GoalProgress(c *gin.Context) {

@@ -14,7 +14,7 @@ import {
 } from '../hooks/useScopedBudgets'
 import { useCategoriesStore } from '../store/categoriesStore'
 import type { Category } from '../types/category'
-import { BUDGET_PERIODS, type BudgetPeriod } from '../types/budget'
+import { BUDGET_PERIODS, type BudgetMonthSummary, type BudgetPeriod } from '../types/budget'
 import { ModalShell } from '../components/ModalShell'
 import { NEW_CATEGORY, NewCategoryDialog, NewCategoryOption } from '../components/NewCategoryDialog'
 import { dayBefore, spendingHref } from '../lib/spendingLink'
@@ -25,6 +25,8 @@ export function BudgetsPage() {
     month,
     setMonth,
     rows,
+    summary,
+    summaryFailed,
     loading,
     error,
     canMutate,
@@ -32,6 +34,7 @@ export function BudgetsPage() {
     create,
     update,
     remove,
+    reload,
     clearError,
   } = useScopedBudgets()
   const { categories, fetch: fetchCategories } = useCategoriesStore()
@@ -67,6 +70,36 @@ export function BudgetsPage() {
   // spend to show.
   const shown = month ? rows.filter((r) => r.period === 'monthly' && r.is_active) : rows
   const notShown = rows.length - shown.length
+  // This month (#589): weekly and annual budgets run on their own dates, so
+  // they sit apart from the month's cards and totals. Shared budgets are all
+  // tracked per calendar month and stay together.
+  const groupOther = !isHousehold && !month
+  const monthCards = groupOther ? shown.filter((r) => r.period === 'monthly') : shown
+  const otherCards = groupOther ? shown.filter((r) => r.period !== 'monthly') : []
+  const renderCard = (b: ScopedBudgetRow) => (
+    <BudgetCard
+      key={b.id}
+      row={b}
+      category={categoriesById.get(b.category_id)}
+      canMutate={canMutate}
+      drillHref={
+        // Personal only (#571): a household budget sums members'
+        // books, which have no shared transaction list.
+        !isHousehold && b.period_start && b.period_end
+          ? spendingHref({ start: b.period_start, end: b.period_end, categoryID: b.category_id })
+          : undefined
+      }
+      onEdit={() => setEditing(b)}
+      onDelete={async () => {
+        if (!window.confirm('Delete this budget?')) return
+        try {
+          await remove(b.id)
+        } catch (e) {
+          setRowError(errMsg(e))
+        }
+      }}
+    />
+  )
 
   return (
     <div>
@@ -99,6 +132,25 @@ export function BudgetsPage() {
       {month && rows.length > 0 && notShown > 0 && (
         <p className="mt-2 text-xs text-gray-500">
           {`${notShown} weekly, annual or paused ${notShown === 1 ? 'budget is' : 'budgets are'} only shown for the current period.`}
+        </p>
+      )}
+
+      {summary && (summary.budget_count > 0 || Number(summary.total_spending) !== 0) && (
+        <MonthTotals
+          summary={summary}
+          label={monthLabel(summary.month)}
+          categoriesById={categoriesById}
+          otherPeriod={new Map(rows.filter((r) => r.is_active && r.period !== 'monthly').map((r) => [r.category_id, r.period]))}
+          drill={!isHousehold}
+          busy={loading}
+        />
+      )}
+      {summaryFailed && !loading && (
+        <p className="mt-4 text-sm text-gray-500">
+          The month’s totals didn’t load.{' '}
+          <button type="button" onClick={() => void reload()} className="font-medium text-indigo-600 hover:text-indigo-800">
+            Try again
+          </button>
         </p>
       )}
 
@@ -140,31 +192,20 @@ export function BudgetsPage() {
               : 'No budgets yet — create one to start tracking spend.'}
           </div>
         )}
-        {shown.map((b) => (
-          <BudgetCard
-            key={b.id}
-            row={b}
-            category={categoriesById.get(b.category_id)}
-            canMutate={canMutate}
-            drillHref={
-              // Personal only (#571): a household budget sums members'
-              // books, which have no shared transaction list.
-              !isHousehold && b.period_start && b.period_end
-                ? spendingHref({ start: b.period_start, end: b.period_end, categoryID: b.category_id })
-                : undefined
-            }
-            onEdit={() => setEditing(b)}
-            onDelete={async () => {
-              if (!window.confirm('Delete this budget?')) return
-              try {
-                await remove(b.id)
-              } catch (e) {
-                setRowError(errMsg(e))
-              }
-            }}
-          />
-        ))}
+        {monthCards.map(renderCard)}
       </div>
+
+      {otherCards.length > 0 && (
+        <section aria-labelledby="other-periods" className="mt-8">
+          <h2 id="other-periods" className="text-sm font-semibold text-gray-900">Other periods</h2>
+          <p className="mt-0.5 text-xs text-gray-500">
+            Weekly and annual budgets run on their own dates, so they aren’t part of this month’s totals.
+          </p>
+          <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {otherCards.map(renderCard)}
+          </div>
+        </section>
+      )}
 
       {adding && (
         <BudgetFormModal
@@ -237,6 +278,112 @@ function MonthStepper({ month, onChange }: { month: string | null; onChange: (mo
         </button>
       )}
     </nav>
+  )
+}
+
+// MonthTotals is the summary strip above the cards (#589): what was
+// budgeted, spent against it, left, and spent outside any budget, with that
+// last figure broken down by category. Every figure comes from the server
+// as an exact decimal; nothing is summed here.
+function MonthTotals({ summary, label, categoriesById, otherPeriod, drill, busy }: {
+  summary: BudgetMonthSummary
+  label: string
+  categoriesById: Map<number, Category>
+  // Categories whose only active budget is weekly or annual, so they read
+  // as "not in a budget" for the month; the breakdown says why.
+  otherPeriod: Map<number, BudgetPeriod>
+  drill: boolean
+  busy: boolean
+}) {
+  const over = Number(summary.remaining) < 0
+  const carry = Number(summary.carryover) > 0
+  return (
+    <section
+      aria-label={`${label} totals`}
+      aria-busy={busy}
+      className={['mt-4 rounded-lg border border-gray-200 bg-white p-4 shadow-sm', busy ? 'opacity-60' : ''].join(' ')}
+    >
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 md:grid-cols-4">
+        <Stat label="Budgeted" testID="total-budgeted">
+          <AmountDisplay amount={summary.budgeted} currency="USD" />
+          {carry && (
+            <span className="block text-xs font-normal text-emerald-700">
+              + <AmountDisplay amount={summary.carryover} currency="USD" /> rolled over
+            </span>
+          )}
+        </Stat>
+        <Stat label="Spent in budgets" testID="total-spent">
+          <AmountDisplay amount={summary.spent_in_budgets} currency="USD" />
+        </Stat>
+        <Stat label={over ? 'Over budget' : 'Remaining'} testID="total-remaining" tone={over ? 'text-red-700' : undefined}>
+          <AmountDisplay amount={summary.remaining.replace(/^-/, '')} currency="USD" />
+        </Stat>
+        <Stat label="Not in a budget" testID="total-unbudgeted">
+          <AmountDisplay amount={summary.not_in_budget} currency="USD" />
+        </Stat>
+      </dl>
+      <p className="mt-3 text-xs text-gray-500">
+        All spending in {label}: <AmountDisplay amount={summary.total_spending} currency="USD" />
+        {drill && (
+          <>
+            {' · '}
+            <Link
+              to={spendingHref({ start: summary.period_start, end: summary.period_end })}
+              className="font-medium text-indigo-600 hover:text-indigo-800"
+            >
+              See transactions
+            </Link>
+          </>
+        )}
+      </p>
+      {summary.unbudgeted.length > 0 && (
+        <details className="group mt-3 border-t border-gray-100 pt-3">
+          <summary className="flex min-h-10 cursor-pointer list-none items-center gap-1 text-sm font-medium text-gray-900 [&::-webkit-details-marker]:hidden">
+            <ChevronRight size={16} aria-hidden="true" className="text-gray-400 transition-transform group-open:rotate-90" />
+            Where the spending outside budgets went
+          </summary>
+          <ul className="mt-1 divide-y divide-gray-100">
+            {summary.unbudgeted.map((u) => {
+              const name = u.category_id == null ? 'Uncategorized' : categoriesById.get(u.category_id)?.name ?? `#${u.category_id}`
+              const refund = Number(u.spent) < 0
+              const period = u.category_id == null ? undefined : otherPeriod.get(u.category_id)
+              return (
+                <li key={u.category_id ?? 'none'} className="flex items-center justify-between gap-3 py-2 text-sm">
+                  <span className="min-w-0 text-gray-700">
+                    <span className="block truncate">{name}</span>
+                    {period && <span className="block text-xs text-gray-500">Has a {period} budget</span>}
+                  </span>
+                  <span className="flex shrink-0 items-center gap-3">
+                    <span className="text-gray-900">
+                      <AmountDisplay amount={u.spent.replace(/^-/, '')} currency="USD" />
+                      {refund && <span className="ml-1 text-xs text-gray-500">net refund</span>}
+                    </span>
+                    {drill && (
+                      <Link
+                        to={spendingHref({ start: summary.period_start, end: summary.period_end, categoryID: u.category_id })}
+                        aria-label={`See ${name} transactions`}
+                        className="inline-flex min-h-10 items-center text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                      >
+                        See →
+                      </Link>
+                    )}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        </details>
+      )}
+    </section>
+  )
+}
+
+function Stat({ label, testID, tone, children }: { label: string; testID: string; tone?: string; children: ReactNode }) {
+  return (
+    <div data-testid={testID} className="min-w-0">
+      <dt className="text-xs text-gray-500">{label}</dt>
+      <dd className={['mt-0.5 text-base font-semibold tabular-nums', tone ?? 'text-gray-900'].join(' ')}>{children}</dd>
+    </div>
   )
 }
 

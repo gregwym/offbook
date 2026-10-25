@@ -1,6 +1,7 @@
 import { apiClient, type ApiItem, type ApiList } from './client'
 import type {
   Budget,
+  BudgetMonthSummary,
   BudgetSpend,
   CreateBudgetInput,
   UpdateBudgetInput,
@@ -29,5 +30,11 @@ export async function deleteBudget(id: number): Promise<void> {
 // the current period.
 export async function getBudgetSpend(id: number, on?: string): Promise<BudgetSpend> {
   const res = await apiClient.get<ApiItem<BudgetSpend>>(`/budgets/${id}/spend`, on ? { params: { on } } : undefined)
+  return res.data.data
+}
+
+// month (YYYY-MM) picks a past month (#589); omit it for the current month.
+export async function getBudgetSummary(month?: string): Promise<BudgetMonthSummary> {
+  const res = await apiClient.get<ApiItem<BudgetMonthSummary>>('/budgets/summary', month ? { params: { month } } : undefined)
   return res.data.data
 }

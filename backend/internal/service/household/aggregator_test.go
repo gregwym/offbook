@@ -8,6 +8,7 @@
 //	(c) in-grace members excluded from live aggregates but present in historical
 //	    → TestAggregator_InGraceExcludedFromLive       (Dashboard)
 //	    → TestAggregator_InGraceExcludedFromBudgetPace (BudgetPace)
+//	    → TestAggregator_BudgetSummary_PrivacyAndTotals (BudgetSummary, with (a)/(b))
 //	    → TestAggregator_HistoricalIncludesInGrace    (historical/count contract)
 //	(d) return types contain no raw transaction rows (reflection check)
 //	    → TestAggregator_NoRawTransactionRows
@@ -464,6 +465,7 @@ func TestAggregator_NoRawTransactionRows(t *testing.T) {
 	check("CategoryTrendItem", household.CategoryTrendItem{})
 	check("MerchantSpendItem", household.MerchantSpendItem{})
 	check("CashFlowMonth", household.CashFlowMonth{})
+	check("BudgetSummary", household.BudgetSummary{})
 }
 
 func walkType(t *testing.T, path string, ty, forbid reflect.Type, seen map[reflect.Type]struct{}) {

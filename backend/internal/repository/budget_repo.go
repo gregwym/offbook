@@ -45,6 +45,17 @@ type BudgetRepository interface {
 	// "year", Monday-start weeks) over [from, to). Keys are the UTC bucket
 	// start dates; periods with no spend are absent. Used for rollover.
 	SpendByPeriod(ctx context.Context, userID, categoryID int64, unit string, from, to time.Time) (map[time.Time]decimal.Decimal, error)
+	// SpendAllCategoriesInRange is the month's spending for every category
+	// (nil = uncategorized) over [from, to), with the same predicate as
+	// CurrentPeriodSpend and the Insights spending total — so its rows sum to
+	// that total exactly (#589). Categories with no spend are absent.
+	SpendAllCategoriesInRange(ctx context.Context, userID int64, from, to time.Time) ([]CategorySpend, error)
+}
+
+// CategorySpend is one category's spending; CategoryID nil is uncategorized.
+type CategorySpend struct {
+	CategoryID *int64
+	Spent      decimal.Decimal
 }
 
 // BudgetLimitChange records a limit edit (#580): b.Amount applies from From
@@ -255,6 +266,42 @@ func (r *budgetRepo) SpendByPeriod(ctx context.Context, userID, categoryID int64
 		}
 		b := r.Bucket.UTC()
 		out[time.Date(b.Year(), b.Month(), b.Day(), 0, 0, 0, 0, time.UTC)] = d
+	}
+	return out, nil
+}
+
+func (r *budgetRepo) SpendAllCategoriesInRange(ctx context.Context, userID int64, from, to time.Time) ([]CategorySpend, error) {
+	type row struct {
+		CategoryID *int64
+		Spent      string
+	}
+	var rows []row
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			category_id                                          AS category_id,
+			COALESCE(SUM(-amount) FILTER (WHERE amount < 0 OR is_refund), 0)::text AS spent
+		FROM spend_lines
+		WHERE deleted_at IS NULL
+		  AND user_id = ?
+		  AND is_transfer = FALSE
+		  AND kind = 'flow'
+		  AND transaction_date >= ?
+		  AND transaction_date <  ?
+		GROUP BY category_id
+		ORDER BY SUM(-amount) FILTER (WHERE amount < 0 OR is_refund) DESC
+	`, userID, from, to).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]CategorySpend, 0, len(rows))
+	for _, r := range rows {
+		d, err := decimal.NewFromString(r.Spent)
+		if err != nil {
+			return nil, err
+		}
+		if d.IsZero() {
+			continue
+		}
+		out = append(out, CategorySpend{CategoryID: r.CategoryID, Spent: d})
 	}
 	return out, nil
 }

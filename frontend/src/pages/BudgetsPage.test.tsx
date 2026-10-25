@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import * as fx from '../test/fixtures'
@@ -158,5 +158,65 @@ describe('BudgetsPage smoke', () => {
     fireEvent.click(screen.getByRole('button', { name: 'This month' }))
     await waitFor(() => expect((screen.getByRole('button', { name: 'Next month' }) as HTMLButtonElement).disabled).toBe(true))
     await expectHealthySmoke()
+  })
+
+  it('shows the month totals and where spending outside budgets went (#589)', async () => {
+    renderPage(<BudgetsPage />)
+    const strip = await screen.findByRole('region', { name: 'July 2026 totals' })
+    const stat = (id: string) => within(strip).getByTestId(id).textContent
+    expect(stat('total-budgeted')).toContain('500.00 USD')
+    expect(stat('total-spent')).toContain('120.00 USD')
+    expect(stat('total-remaining')).toMatch(/Remaining.*380\.00 USD/)
+    expect(stat('total-unbudgeted')).toContain('83.50 USD')
+    expect(within(strip).getByText(/All spending in July 2026/).textContent).toContain('203.50 USD')
+
+    fireEvent.click(within(strip).getByText('Where the spending outside budgets went'))
+    const items = within(strip).getAllByRole('listitem')
+    expect(items.map((li) => li.textContent)).toEqual([expect.stringContaining('Income'), expect.stringContaining('Uncategorized')])
+    expect(within(strip).getByRole('link', { name: 'See Uncategorized transactions' }).getAttribute('href'))
+      .toBe('/transactions?spending=1&category_id=null&from=2026-07-01&to=2026-07-31')
+    await expectHealthySmoke()
+  })
+
+  it('words an overspent month as "Over budget" and asks for the month it shows', async () => {
+    const months: (string | null)[] = []
+    server.use(
+      http.get('*/budgets/summary', ({ request }) => {
+        months.push(new URL(request.url).searchParams.get('month'))
+        return HttpResponse.json({ data: { ...fx.budgetSummary1, spent_in_budgets: '620', remaining: '-120' } })
+      }),
+    )
+    renderPage(<BudgetsPage />)
+    const strip = await screen.findByRole('region', { name: 'July 2026 totals' })
+    expect(within(strip).getByTestId('total-remaining').textContent).toMatch(/Over budget.*120\.00 USD/)
+    expect(months).toEqual([null])
+    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }))
+    const now = new Date()
+    const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7)
+    await waitFor(() => expect(months).toContain(prev))
+  })
+
+  it('keeps weekly and annual budgets apart from the month under "Other periods"', async () => {
+    server.use(
+      http.get('*/budgets', () =>
+        HttpResponse.json({ data: [fx.budget1, { ...fx.budget1, id: 2, category_id: 2, period: 'weekly' }], total: 2 }),
+      ),
+    )
+    renderPage(<BudgetsPage />)
+    const other = await screen.findByRole('region', { name: 'Other periods' })
+    expect(within(other).getByText('Income')).toBeTruthy()
+    expect(within(other).queryByText('Groceries')).toBeNull()
+    expect(within(other).getByText(/aren’t part of this month’s totals/)).toBeTruthy()
+  })
+
+  it('a failed summary hides only the strip and offers a retry', async () => {
+    server.use(http.get('*/budgets/summary', () => HttpResponse.json({ error: 'boom', code: 'X' }, { status: 500 })))
+    renderPage(<BudgetsPage />)
+    expect(await screen.findByText(/totals didn’t load/)).toBeTruthy()
+    expect(screen.getByText('Groceries')).toBeTruthy()
+    expect(screen.queryByRole('region', { name: /totals$/ })).toBeNull()
+    server.use(http.get('*/budgets/summary', () => HttpResponse.json({ data: fx.budgetSummary1 })))
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByRole('region', { name: 'July 2026 totals' })).toBeTruthy()
   })
 })

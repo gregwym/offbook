@@ -49,3 +49,39 @@ func TestBudgetSpend_OnValidation(t *testing.T) {
 		})
 	}
 }
+
+// TestBudgetSummary_MonthValidation covers GET /budgets/summary?month=
+// (#589) branches that return before the repository runs.
+func TestBudgetSummary_MonthValidation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	api := r.Group("/api/v1")
+	api.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(auth.WithUser(c.Request.Context(), 7))
+		c.Next()
+	})
+	handler.NewBudgetHandler(service.NewBudgetService(nil, nil)).Register(api)
+
+	nextMonth := time.Now().UTC().AddDate(0, 1, 0).Format("2006-01")
+	tests := []struct {
+		name, month string
+	}{
+		{"malformed", "2026-13"},
+		{"full date", "2026-05-01"},
+		{"not a month", "last-month"},
+		{"future", nextMonth},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/budgets/summary?month="+tc.month, nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (%s)", w.Code, w.Body.String())
+			}
+			if got := codeOf(t, w.Body.Bytes()); got != "INVALID_DATE" {
+				t.Errorf("code = %q, want INVALID_DATE", got)
+			}
+		})
+	}
+}
