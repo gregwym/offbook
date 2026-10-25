@@ -31,7 +31,7 @@ test.describe('edit details journey', () => {
     await signIn(page, user.email, user.password)
     await page.goto('/transactions')
     const label = 'QAEDIT SQ *BLUE BTL 0412'
-    await expect(page.getByText(label).first()).toBeVisible()
+    await expect(page.getByText(label).locator('visible=true').first()).toBeVisible()
 
     await page.getByRole('button', { name: `More actions for ${label}` }).locator('visible=true').click()
     const menu = page.getByRole('menu', { name: `Actions for ${label}` })

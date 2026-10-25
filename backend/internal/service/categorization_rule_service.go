@@ -765,8 +765,11 @@ func (s *CategorizationRuleService) PreviewDraft(ctx context.Context, userID int
 	return out, nil
 }
 
+// draftSampleText labels a preview sample. The raw bank description comes
+// before the cleaned label (#588): rule patterns are written against the
+// bank string, so the preview shows the text the pattern matched.
 func draftSampleText(t *model.Transaction) string {
-	for _, p := range []*string{t.MerchantName, t.DescriptionClean, t.Description} {
+	for _, p := range []*string{t.MerchantName, t.Description, t.DescriptionClean} {
 		if p != nil && strings.TrimSpace(*p) != "" {
 			return strings.TrimSpace(*p)
 		}
