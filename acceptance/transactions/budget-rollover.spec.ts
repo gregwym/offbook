@@ -72,6 +72,20 @@ test.describe('rollover budget journey', () => {
     await expect(card).toContainText('Includes 40.00 USD rolled over')
     await expect(card).toContainText('90.00 USD remaining')
     await expectNoOverflow(page)
+
+    // Insights says the same (#613): spent of available, not of the bare
+    // limit, with the rollover named.
+    await page.goto('/insights')
+    const band = page.locator('div.rounded-lg', { has: page.getByRole('heading', { name: /budgets · this period/i }) })
+    const row = band.getByRole('listitem').filter({ hasText: dining.name })
+    await expect(row).toContainText(/150\.00.*\/.*240\.00/)
+    await expect(row).not.toContainText(/\/\s*200\.00/)
+    await expect(row).toContainText(/includes 40\.00.*rolled over/)
+    await band.scrollIntoViewIfNeeded()
+    await testInfo.attach(`${testInfo.project.name}-insights-budget-rollover`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+    await expectNoOverflow(page)
   })
 })
 

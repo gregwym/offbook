@@ -66,8 +66,11 @@ export type InsightsBudgetRow = {
   category_name: string
   period: string
   limit: string
+  // limit + any rolled-in balance (#613); pct and the bar measure against it.
+  carryover: string
+  available: string
   spent: string
-  pct: number // 0..N (>1.0 = over budget)
+  pct: number // spent / available, 0..N (>1.0 = over budget)
   // The current period's [start, end) window — personal scope only, for the
   // spending drill-down link (#571).
   period_start?: string
@@ -314,6 +317,8 @@ async function loadPersonal(trendMonths = 12): Promise<InsightsData> {
       category_name: categoryName.get(b.category_id) ?? '—',
       period: b.period,
       limit: r.value.limit,
+      carryover: r.value.carryover,
+      available: r.value.available,
       spent: r.value.spent,
       pct: r.value.pct,
       period_start: r.value.period_start,
@@ -394,6 +399,8 @@ async function loadHousehold(trendMonths = 12): Promise<InsightsData> {
     category_name: `Category #${p.category_id}`,
     period: p.period,
     limit: p.budget,
+    carryover: p.carryover,
+    available: p.available,
     spent: p.spent,
     pct: Number.parseFloat(p.pace) || 0,
   }))

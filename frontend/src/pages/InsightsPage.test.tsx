@@ -483,3 +483,43 @@ describe('InsightsPage spending month stepper', () => {
     expect(screen.queryByRole('navigation', { name: 'Spending month' })).toBeNull()
   })
 })
+
+// #613: an Insights budget row reads like its Budgets card — spent of
+// available (limit + rollover), the figure pct and the bar measure against,
+// and a non-monthly budget names its period.
+describe('InsightsPage budget rows', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('shows spent of available with the rollover, and labels a weekly budget', async () => {
+    server.use(
+      http.get('*/budgets', () =>
+        HttpResponse.json({
+          data: [fx.budget1, { ...fx.budget1, id: 2, category_id: 2, period: 'weekly' }],
+          total: 2,
+        }),
+      ),
+      http.get('*/budgets/:id/spend', ({ params }) =>
+        HttpResponse.json({
+          data:
+            params.id === '1'
+              ? { ...fx.budgetSpend1, limit: '200', carryover: '40', available: '240', spent: '230', remaining: '10', pct: 230 / 240 }
+              : { ...fx.budgetSpend1, budget_id: 2, category_id: 2, period: 'weekly', limit: '50', available: '50', spent: '60', remaining: '-10', pct: 1.2 },
+        }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    const band = (await screen.findByText(/budgets · this period/i)).closest('div.rounded-lg') as HTMLElement
+    const rows = await within(band).findAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].textContent).toMatch(/230\.00.*\/.*240\.00/)
+    expect(rows[0].textContent).not.toMatch(/\/\s*200\.00/)
+    expect(rows[0].textContent).toMatch(/includes 40\.00.*rolled over/)
+    expect(rows[0].textContent).not.toMatch(/weekly/)
+    expect(rows[0].querySelector('.text-red-700')).toBeNull()
+    expect(rows[1].textContent).toMatch(/weekly/)
+    expect(rows[1].textContent).not.toMatch(/rolled over/)
+    expect(rows[1].querySelector('.text-red-700')?.textContent).toMatch(/60\.00.*\/.*50\.00/)
+  })
+})
