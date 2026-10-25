@@ -48,10 +48,16 @@ import { SCOPE_HOUSEHOLD } from '../types/scope'
 
 const num = (s: string): number => Number.parseFloat(s) || 0
 
+// PriceTarget pre-fills Set price with the asset the headline names (#599);
+// a fiat target opens it as an exchange-rate entry.
+type PriceTarget = { symbol: string; kind: string; quote?: string }
+type SetPriceHandler = (target?: PriceTarget) => void
+
 export function InsightsPage() {
   const result = useScopedInsights()
   const { active, householdId } = useScopeStore()
-  const [settingPrice, setSettingPrice] = useState(false)
+  // true opens a blank Set price; an asset pre-fills it (#599).
+  const [settingPrice, setSettingPrice] = useState<false | true | PriceTarget>(false)
 
   if (active === SCOPE_HOUSEHOLD && householdId == null) {
     return (
@@ -110,7 +116,7 @@ export function InsightsPage() {
       {result.state === 'ready' && (
         <InsightsBody
           data={result.data}
-          onSetPrice={() => setSettingPrice(true)}
+          onSetPrice={(target) => setSettingPrice(target ?? true)}
           trendMonths={result.trendMonths}
           trendLoading={result.trendLoading}
           trendError={result.trendError}
@@ -119,7 +125,11 @@ export function InsightsPage() {
       )}
 
       {settingPrice && (
-        <SetPriceModal onClose={() => setSettingPrice(false)} onSet={result.reload} />
+        <SetPriceModal
+          initial={settingPrice === true ? undefined : settingPrice}
+          onClose={() => setSettingPrice(false)}
+          onSet={result.reload}
+        />
       )}
     </div>
   )
@@ -129,7 +139,7 @@ function InsightsBody({
   data,
   onSetPrice,
   ...range
-}: { data: InsightsData; onSetPrice: () => void } & TrendRangeProps) {
+}: { data: InsightsData; onSetPrice: SetPriceHandler } & TrendRangeProps) {
   // Personal fresh-signup state: no accounts at all → single primary CTA
   // per v6 §02 A2, instead of five empty bands. Household scope keeps its
   // existing "share an account" empty state on the AccountsBand.
@@ -233,8 +243,9 @@ function NetWorthBand({
   trendLoading,
   trendError,
   onTrendMonths,
-}: { data: InsightsData; onSetPrice: () => void } & TrendRangeProps) {
+}: { data: InsightsData; onSetPrice: SetPriceHandler } & TrendRangeProps) {
   const trend = data.net_worth_trend
+  const unpriced = data.net_worth_complete ? [] : (data.net_worth_unpriced ?? [])
   const hasPartialMonths = trend.some((p) => !p.complete)
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-5">
@@ -247,17 +258,44 @@ function NetWorthBand({
             <AmountDisplay amount={data.net_worth} />
             {!data.net_worth_complete && (
               <>
-                <PartialBadge title="Some assets have no recent price — this net worth is a partial sum. Try Refresh prices." />
-                <button
-                  type="button"
-                  onClick={onSetPrice}
-                  className="ml-1.5 align-middle text-[11px] font-medium text-indigo-600 hover:text-indigo-800"
-                >
-                  Set price
-                </button>
+                <PartialBadge title="Some assets have no recent price or exchange rate — this net worth is a partial sum. Try Refresh prices." />
+                {unpriced.length === 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onSetPrice()}
+                    className="ml-1.5 align-middle text-[11px] font-medium text-indigo-600 hover:text-indigo-800"
+                  >
+                    Set price
+                  </button>
+                )}
               </>
             )}
           </div>
+          {unpriced.length > 0 && (
+            <ul className="mt-1 space-y-0.5 text-xs text-amber-700">
+              {unpriced.map((u) => {
+                const fiat = u.kind === 'fiat'
+                return (
+                  <li key={u.asset_id}>
+                    <span className="whitespace-nowrap">
+                      {fiat ? 'Needs an exchange rate: ' : 'Needs a price: '}
+                      <span className="font-medium">
+                        {fiat && data.net_worth_currency ? `${u.symbol} → ${data.net_worth_currency}` : u.symbol}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onSetPrice({ symbol: u.symbol, kind: u.kind, quote: data.net_worth_currency })}
+                      aria-label={fiat ? `Set exchange rate for ${u.symbol}` : `Set price for ${u.symbol}`}
+                      className="ml-1.5 min-h-9 font-medium text-indigo-600 underline hover:text-indigo-800 md:min-h-0"
+                    >
+                      {fiat ? 'Set rate' : 'Set price'}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
           <div className="mt-1 text-xs text-gray-400">
             Income (period): <AmountDisplay amount={data.income} /> · Spending:{' '}
             <AmountDisplay amount={data.spending} />
@@ -399,7 +437,7 @@ function KindBreakdown({ trend }: { trend: InsightsData['net_worth_trend'] }) {
 }
 
 // ───── Band 2: allocation donut ─────
-function AllocationBand({ data, onSetPrice }: { data: InsightsData; onSetPrice: () => void }) {
+function AllocationBand({ data, onSetPrice }: { data: InsightsData; onSetPrice: SetPriceHandler }) {
   const rows = data.allocation
   const total = rows.reduce((acc, r) => acc + num(r.value), 0)
   const hasPartial = rows.some((r) => !r.complete)
@@ -480,7 +518,7 @@ function AllocationBand({ data, onSetPrice }: { data: InsightsData; onSetPrice: 
           </span>
           <button
             type="button"
-            onClick={onSetPrice}
+            onClick={() => onSetPrice()}
             className="shrink-0 font-medium text-indigo-600 hover:text-indigo-800"
           >
             Set price

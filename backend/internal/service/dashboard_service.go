@@ -33,9 +33,15 @@ var ErrInvalidPeriod = errors.New("invalid period")
 // had no fresh price, so NetWorth is a partial sum (#282/#344) — the UI
 // flags it instead of presenting a confident-but-understated figure.
 type DashboardSummary struct {
-	Period           PeriodWindow                    `json:"period"`
-	NetWorth         string                          `json:"net_worth"`
-	NetWorthComplete bool                            `json:"net_worth_complete"`
+	Period           PeriodWindow `json:"period"`
+	NetWorth         string       `json:"net_worth"`
+	NetWorthComplete bool         `json:"net_worth_complete"`
+	// NetWorthUnpriced names each asset left out of NetWorth (#599), so the
+	// UI can say which price or exchange rate is missing; [] when complete.
+	// NetWorthCurrency is the quote currency the headline is in (the user's
+	// primary currency), for "EUR → USD" wording. Both need the asset repo.
+	NetWorthUnpriced []UnpricedAsset                 `json:"net_worth_unpriced"`
+	NetWorthCurrency string                          `json:"net_worth_currency,omitempty"`
 	Income           string                          `json:"income"`
 	Spending         string                          `json:"spending"`
 	AccountCount     int64                           `json:"account_count"`
@@ -160,6 +166,11 @@ func (s *DashboardService) Summarize(ctx context.Context, userID int64, period s
 		return nil, err
 	}
 
+	unpriced, currency, err := s.describeUnpriced(ctx, netWorth.Unpriced, user.PrimaryCurrencyAssetID)
+	if err != nil {
+		return nil, err
+	}
+
 	items := make([]DashboardCategorySpendingItem, 0, len(agg.ByCategory))
 	for _, row := range agg.ByCategory {
 		items = append(items, DashboardCategorySpendingItem{
@@ -173,12 +184,41 @@ func (s *DashboardService) Summarize(ctx context.Context, userID int64, period s
 		Period:           PeriodWindow{Key: period, From: from, To: to},
 		NetWorth:         netWorth.Value.String(),
 		NetWorthComplete: netWorth.Complete(),
+		NetWorthUnpriced: unpriced,
+		NetWorthCurrency: currency,
 		Income:           agg.Income.String(),
 		Spending:         agg.Spending.String(),
 		AccountCount:     agg.AccountCount,
 		TransactionCount: agg.TransactionCount,
 		ByCategory:       items,
 	}, nil
+}
+
+// describeUnpriced resolves the headline's unpriced asset ids to symbol and
+// kind, once each in first-seen order, plus the quote currency's symbol
+// (#599). Without an asset repo it returns an empty list and no currency.
+func (s *DashboardService) describeUnpriced(ctx context.Context, ids []int64, quoteAssetID int64) ([]UnpricedAsset, string, error) {
+	out := []UnpricedAsset{}
+	if s.assets == nil {
+		return out, "", nil
+	}
+	seen := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		a, err := s.assets.GetByID(ctx, id)
+		if err != nil {
+			return nil, "", fmt.Errorf("dashboard: load unpriced asset %d: %w", id, err)
+		}
+		out = append(out, UnpricedAsset{AssetID: a.ID, Symbol: a.Symbol, Kind: a.Kind})
+	}
+	quote, err := s.assets.GetByID(ctx, quoteAssetID)
+	if err != nil {
+		return nil, "", fmt.Errorf("dashboard: load quote currency %d: %w", quoteAssetID, err)
+	}
+	return out, quote.Symbol, nil
 }
 
 // SpendByCategory returns the pie-chart payload for [from, to). Defaults

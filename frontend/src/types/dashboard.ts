@@ -1,3 +1,5 @@
+import type { UnpricedAsset } from './account'
+
 // DashboardSummary mirrors backend service.DashboardSummary. Money fields
 // are decimal strings; format via AmountDisplay.
 export type DashboardSummary = {
@@ -6,6 +8,11 @@ export type DashboardSummary = {
   // false when a held position had no fresh price — net_worth is a
   // partial sum (#344).
   net_worth_complete: boolean
+  // net_worth_unpriced names each asset the headline left out (#599): a
+  // fiat entry is a missing exchange rate into net_worth_currency, anything
+  // else a missing price. [] when complete.
+  net_worth_unpriced?: UnpricedAsset[]
+  net_worth_currency?: string
   income: string
   spending: string
   account_count: number

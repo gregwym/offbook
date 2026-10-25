@@ -14,19 +14,26 @@ import { ModalShell } from './ModalShell'
 type Props = {
   // initial pre-fills the asset when the caller already knows which holding
   // needs a price (#530) — the user then only types the price.
-  initial?: { symbol: string; kind: string }
+  // A fiat initial opens the modal as an exchange-rate entry (#599): the
+  // currency is fixed and the value is what one unit is worth in quote (the
+  // primary currency the net-worth headline is in).
+  initial?: { symbol: string; kind: string; quote?: string }
   onClose: () => void
   // Fires after a successful set so the host page can refetch its data.
   onSet?: () => void
 }
 
-// Fiat-to-fiat rates come from the FX provider seam, not manual entry —
-// the picker is scoped to priceable, non-fiat holdings (equities, funds,
-// crypto, bonds, commodities, or an uncategorized ticker).
+// Fiat-to-fiat rates normally come from the FX provider seam, so the picker
+// is scoped to priceable, non-fiat holdings (equities, funds, crypto, bonds,
+// commodities, or an uncategorized ticker). A currency the provider doesn't
+// cover is reachable only through a fiat `initial` (#599).
 const PRICEABLE_KINDS: AssetKind[] = ['equity', 'fund', 'crypto', 'bond', 'commodity', 'other']
 
 export function SetPriceModal({ initial, onClose, onSet }: Props) {
   const { assets, loaded, fetch, ensure } = useAssetsStore()
+  const rateFor = initial?.kind === 'fiat' ? initial.symbol : null
+  const rateMode = rateFor !== null
+  const quote = initial?.quote ?? 'your primary currency'
   const [symbol, setSymbol] = useState(initial?.symbol ?? '')
   const [assetKind, setAssetKind] = useState<AssetKind>(
     initial && PRICEABLE_KINDS.includes(initial.kind as AssetKind) ? (initial.kind as AssetKind) : 'equity',
@@ -62,7 +69,7 @@ export function SetPriceModal({ initial, onClose, onSet }: Props) {
       return
     }
     if (!price.trim()) {
-      setError('Price is required.')
+      setError(rateMode ? 'Rate is required.' : 'Price is required.')
       return
     }
     if (!asOf) {
@@ -71,11 +78,10 @@ export function SetPriceModal({ initial, onClose, onSet }: Props) {
     }
     setSubmitting(true)
     try {
-      let asset: Asset | undefined = priceableAssets.find(
-        (a) => a.symbol === sym && a.kind === assetKind,
-      )
+      const kind: AssetKind = rateMode ? 'fiat' : assetKind
+      let asset: Asset | undefined = assets.find((a) => a.symbol === sym && a.kind === kind)
       if (!asset) {
-        asset = await ensure({ symbol: sym, kind: assetKind })
+        asset = await ensure({ symbol: sym, kind })
       }
       await setManualPrice(asset.id, { price: price.trim(), as_of: asOf })
       onSet?.()
@@ -90,19 +96,26 @@ export function SetPriceModal({ initial, onClose, onSet }: Props) {
   return (
     <ModalShell size="md" aria-labelledby="set-price-title">
       <div id="set-price-title" className="border-b border-gray-200 px-5 py-3 text-lg font-semibold text-gray-900">
-        {initial ? `Set price for ${initial.symbol}` : 'Set price'}
+        {rateMode
+          ? `Set exchange rate for ${rateFor}`
+          : initial
+            ? `Set price for ${initial.symbol}`
+            : 'Set price'}
       </div>
       <div className="space-y-3 px-5 py-4">
         <p className="text-xs text-gray-500">
-          {initial
-            ? `${initial.symbol} has no price from the last 7 days, so balances leave it out. Enter what one unit is worth today.`
-            : 'For an asset no price provider covers — a private fund, obscure ticker, or collectible. Priced in your primary currency.'}
+          {rateMode
+            ? `${rateFor} has no exchange rate from the last 7 days, so net worth leaves your ${rateFor} balances out. Enter what 1 ${rateFor} is worth in ${quote} today.`
+            : initial
+              ? `${initial.symbol} has no price from the last 7 days, so balances leave it out. Enter what one unit is worth today.`
+              : 'For an asset no price provider covers — a private fund, obscure ticker, or collectible. Priced in your primary currency.'}
         </p>
         {error && (
           <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
           </div>
         )}
+        {!rateMode && (
         <div className="grid grid-cols-2 gap-3">
           <Field label="Symbol">
             <input
@@ -136,13 +149,14 @@ export function SetPriceModal({ initial, onClose, onSet }: Props) {
             </select>
           </Field>
         </div>
-        <Field label="Price (per unit)">
+        )}
+        <Field label={rateMode ? `1 ${rateFor} in ${quote}` : 'Price (per unit)'}>
           <input
             className={inputClass}
             value={price}
             onChange={(e) => setPrice(e.target.value)}
             inputMode="decimal"
-            placeholder="100.00"
+            placeholder={rateMode ? '1.08' : '100.00'}
             autoFocus={initial != null}
           />
         </Field>
@@ -160,7 +174,7 @@ export function SetPriceModal({ initial, onClose, onSet }: Props) {
           disabled={submitting}
           className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
         >
-          {submitting ? 'Saving…' : 'Set price'}
+          {submitting ? 'Saving…' : rateMode ? 'Set rate' : 'Set price'}
         </button>
       </div>
     </ModalShell>

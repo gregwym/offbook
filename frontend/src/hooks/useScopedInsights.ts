@@ -33,6 +33,7 @@ import {
 } from '../api/householdAggregator'
 import { listGoals } from '../api/savingsGoals'
 import { useScopeStore } from '../store/scopeStore'
+import type { UnpricedAsset } from '../types/account'
 import { SCOPE_HOUSEHOLD } from '../types/scope'
 
 export type InsightsCategoryRow = {
@@ -145,6 +146,10 @@ export type InsightsData = {
   // false when a held/shared position had no fresh price — the headline
   // is a partial sum (#344).
   net_worth_complete: boolean
+  // Which assets the partial headline left out, and its currency (#599).
+  // Personal scope only; absent in household scope.
+  net_worth_unpriced?: UnpricedAsset[]
+  net_worth_currency?: string
   income: string
   spending: string
   by_category: InsightsCategoryRow[]
@@ -321,6 +326,8 @@ async function loadPersonal(trendMonths = 12): Promise<InsightsData> {
     period: { from: summary.period.from, to: summary.period.to },
     net_worth: summary.net_worth,
     net_worth_complete: summary.net_worth_complete,
+    net_worth_unpriced: summary.net_worth_unpriced,
+    net_worth_currency: summary.net_worth_currency,
     income: summary.income,
     spending: summary.spending,
     by_category: spendResult.status === 'fulfilled' ? spendResult.value : [],
