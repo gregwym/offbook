@@ -29,6 +29,7 @@ For discoverability, the repo root exposes:
 ```sh
 command make help
 command make qa-smoke
+command make qa-journeys   # every spec; the `QA acceptance journeys` PR check
 command make qa-suite QA_SUITE=plaid
 ```
 

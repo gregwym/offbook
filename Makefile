@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help verify acceptance qa-smoke qa-suite require-env ensure-env pre-deploy-backup deploy deployed-sha down teardown auto-deploy-install auto-deploy-uninstall backup restore backup-verify backup-list backup-install backup-uninstall delivery-install delivery-uninstall
+.PHONY: help verify acceptance qa-smoke qa-journeys qa-suite require-env ensure-env pre-deploy-backup deploy deployed-sha down teardown auto-deploy-install auto-deploy-uninstall backup restore backup-verify backup-list backup-install backup-uninstall delivery-install delivery-uninstall
 
 # ─── Deploy configuration (ADR-0016) ─────────────────────────────────────────
 # Near-zero config by convention. The common case — one instance, behind
@@ -66,6 +66,7 @@ help:
 	@printf '%s\n' 'Offbook root targets:'
 	@printf '%s\n' '  command make acceptance          Install browser deps, bootstrap QA personas, run all acceptance suites'
 	@printf '%s\n' '  command make qa-smoke            Run the baseline acceptance smoke suite'
+	@printf '%s\n' '  command make qa-journeys         Run every acceptance journey spec (what PR CI runs)'
 	@printf '%s\n' '  command make qa-suite QA_SUITE=plaid  Run one acceptance suite or spec pattern'
 	@printf '%s\n' '  command make verify              Run the backend CI mirror from backend/'
 	@printf '%s\n' '  command make deploy [FLAVOR=prod]        Deploy/update an instance (default dev). First boot only:'
@@ -290,6 +291,11 @@ qa-smoke:
 	@./scripts/qa-assert-role.sh
 	@./scripts/qa-preflight.sh
 	@ACCEPTANCE_BASE_URL="$(ACCEPTANCE_BASE_URL)" ACCEPTANCE_API_URL="$(ACCEPTANCE_API_URL)" PLAYWRIGHT_BROWSERS_PATH="$(PLAYWRIGHT_BROWSERS_PATH)" pnpm --dir $(ACCEPTANCE_DIR) exec playwright test smoke
+
+qa-journeys:
+	@./scripts/qa-assert-role.sh
+	@./scripts/qa-preflight.sh
+	@ACCEPTANCE_BASE_URL="$(ACCEPTANCE_BASE_URL)" ACCEPTANCE_API_URL="$(ACCEPTANCE_API_URL)" PLAYWRIGHT_BROWSERS_PATH="$(PLAYWRIGHT_BROWSERS_PATH)" pnpm --dir $(ACCEPTANCE_DIR) exec playwright test
 
 qa-suite:
 	@./scripts/qa-assert-role.sh

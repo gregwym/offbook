@@ -245,7 +245,7 @@ Browser checks:
 
 Acceptance tests are separate from unit tests and from `make verify`. They exercise user-level product requirements through the running app and API. They start as optional, manually run checks and are not required for merging until the owner explicitly promotes them.
 
-**Exception — the baseline suite is promoted (#272).** `acceptance/smoke/baseline.spec.ts` runs as the required `QA acceptance baseline smoke` GitHub Actions check on every PR: it boots the isolated `docker-compose.qa.yml` stack, bootstraps QA personas, and visits the full public + authenticated + household route list, asserting no console errors, no runtime exceptions, and no API 4xx/5xx (the #266/#268 regression class). Every other suite (`auth/`, `plaid/`, household privacy/lifecycle, etc.) remains opt-in and manually triggered until the owner promotes it too.
+**Exception — the baseline suite is promoted (#272).** `acceptance/smoke/baseline.spec.ts` runs as the required `QA acceptance baseline smoke` GitHub Actions check on every PR: it boots the isolated `docker-compose.qa.yml` stack, bootstraps QA personas, and visits the full public + authenticated + household route list, asserting no console errors, no runtime exceptions, and no API 4xx/5xx (the #266/#268 regression class). Every other suite (`auth/`, `plaid/`, household privacy/lifecycle, etc.) also runs on every PR and every push to `main` in the separate `QA acceptance journeys` check (`command make qa-journeys`, #603): every spec except cold-start, desktop and mobile. That check is not in branch protection's required list, so it does not block merging on its own until the owner adds it there. A red journeys check still means a broken journey. Fix it before merging rather than leaving it for hourly QA.
 
 Location:
 
@@ -269,6 +269,12 @@ Run only the baseline suite:
 
 ```sh
 command make qa-smoke
+```
+
+Run every journey spec, as PR CI does:
+
+```sh
+command make qa-journeys
 ```
 
 Run one suite or spec pattern:
