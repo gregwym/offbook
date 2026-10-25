@@ -146,8 +146,8 @@ export type InsightsData = {
   // false when a held/shared position had no fresh price — the headline
   // is a partial sum (#344).
   net_worth_complete: boolean
-  // Which assets the partial headline left out, and its currency (#599).
-  // Personal scope only; absent in household scope.
+  // Which assets the partial headline left out (#599, household #601), and
+  // the headline currency (personal only; household entries carry quote).
   net_worth_unpriced?: UnpricedAsset[]
   net_worth_currency?: string
   income: string
@@ -403,6 +403,7 @@ async function loadHousehold(trendMonths = 12): Promise<InsightsData> {
     period: { from: dashboard.period.from, to: dashboard.period.to },
     net_worth: dashboard.net_worth,
     net_worth_complete: dashboard.net_worth_complete,
+    net_worth_unpriced: dashboard.net_worth_unpriced,
     income: dashboard.income,
     spending: dashboard.spending,
     by_category: dashboard.by_category,

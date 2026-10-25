@@ -50,7 +50,7 @@ const num = (s: string): number => Number.parseFloat(s) || 0
 
 // PriceTarget pre-fills Set price with the asset the headline names (#599);
 // a fiat target opens it as an exchange-rate entry.
-type PriceTarget = { symbol: string; kind: string; quote?: string }
+type PriceTarget = { symbol: string; kind: string; quote?: string; quoteAssetId?: number }
 type SetPriceHandler = (target?: PriceTarget) => void
 
 export function InsightsPage() {
@@ -275,17 +275,18 @@ function NetWorthBand({
             <ul className="mt-1 space-y-0.5 text-xs text-amber-700">
               {unpriced.map((u) => {
                 const fiat = u.kind === 'fiat'
+                const quote = u.quote ?? data.net_worth_currency
                 return (
-                  <li key={u.asset_id}>
+                  <li key={`${u.asset_id}-${quote ?? ''}`}>
                     <span className="whitespace-nowrap">
                       {fiat ? 'Needs an exchange rate: ' : 'Needs a price: '}
                       <span className="font-medium">
-                        {fiat && data.net_worth_currency ? `${u.symbol} → ${data.net_worth_currency}` : u.symbol}
+                        {fiat && quote ? `${u.symbol} → ${quote}` : u.symbol}
                       </span>
                     </span>
                     <button
                       type="button"
-                      onClick={() => onSetPrice({ symbol: u.symbol, kind: u.kind, quote: data.net_worth_currency })}
+                      onClick={() => onSetPrice({ symbol: u.symbol, kind: u.kind, quote, quoteAssetId: u.quote_asset_id })}
                       aria-label={fiat ? `Set exchange rate for ${u.symbol}` : `Set price for ${u.symbol}`}
                       className="ml-1.5 min-h-9 font-medium text-indigo-600 underline hover:text-indigo-800 md:min-h-0"
                     >

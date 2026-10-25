@@ -17,7 +17,9 @@ type Props = {
   // A fiat initial opens the modal as an exchange-rate entry (#599): the
   // currency is fixed and the value is what one unit is worth in quote (the
   // primary currency the net-worth headline is in).
-  initial?: { symbol: string; kind: string; quote?: string }
+  // quoteAssetId pins the pair (household #601); omitted, the server uses
+  // the signed-in user's primary currency.
+  initial?: { symbol: string; kind: string; quote?: string; quoteAssetId?: number }
   onClose: () => void
   // Fires after a successful set so the host page can refetch its data.
   onSet?: () => void
@@ -83,7 +85,11 @@ export function SetPriceModal({ initial, onClose, onSet }: Props) {
       if (!asset) {
         asset = await ensure({ symbol: sym, kind })
       }
-      await setManualPrice(asset.id, { price: price.trim(), as_of: asOf })
+      await setManualPrice(asset.id, {
+        price: price.trim(),
+        as_of: asOf,
+        ...(initial?.quoteAssetId != null && { quote_asset_id: initial.quoteAssetId }),
+      })
       onSet?.()
       onClose()
     } catch (err) {

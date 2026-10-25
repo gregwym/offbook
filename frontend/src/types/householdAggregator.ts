@@ -1,5 +1,7 @@
 // Mirror of backend service/household/aggregator types.
 
+import type { UnpricedAsset } from './account'
+
 export type HouseholdPeriodKey = 'current_month' | 'last_30d' | 'ytd'
 
 export type HouseholdPeriod = {
@@ -51,6 +53,9 @@ export type HouseholdDashboard = {
   // false when a shared position had no price within the valuation stale
   // window — net_worth may rest on stale rates (#344).
   net_worth_complete: boolean
+  // Each asset the partial headline left out, with the currency its rate
+  // is missing into (#601). [] when complete.
+  net_worth_unpriced?: UnpricedAsset[]
   income: string
   spending: string
   account_count: number
