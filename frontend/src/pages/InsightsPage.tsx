@@ -665,19 +665,21 @@ function MonthTotals({
   spendingHref: string
 }) {
   const overspent = totals.net.trim().startsWith('-')
-  const cell = 'flex flex-col rounded-md bg-gray-50 px-3 py-2'
+  // Narrow screens: one label · amount line per figure; sm+: three tiles.
+  const cell =
+    'flex items-baseline justify-between gap-3 rounded-md bg-gray-50 px-3 py-2 sm:flex-col sm:items-start sm:justify-start sm:gap-0'
   const term = 'text-xs font-medium uppercase tracking-wider text-gray-500'
   return (
-    <dl aria-label={`${label} totals`} className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
+    <dl aria-label={`${label} totals`} className="mt-3 grid grid-cols-1 gap-1.5 text-sm sm:grid-cols-3 sm:gap-2">
       <div className={cell}>
         <dt className={term}>Income</dt>
-        <dd className="mt-0.5 text-base font-medium text-gray-900">
+        <dd className="text-base font-medium text-gray-900 sm:mt-0.5">
           <AmountDisplay amount={totals.inflow} />
         </dd>
       </div>
       <div className={cell}>
         <dt className={term}>Spending</dt>
-        <dd className="mt-0.5 text-base font-medium">
+        <dd className="text-base font-medium sm:mt-0.5">
           <Link
             to={spendingHref}
             title={`See the transactions behind ${label} spending`}
@@ -689,7 +691,7 @@ function MonthTotals({
       </div>
       <div className={cell}>
         <dt className={term}>Net</dt>
-        <dd className="mt-0.5 text-base font-medium">
+        <dd className="text-right text-base font-medium sm:mt-0.5 sm:text-left">
           <AmountDisplay amount={totals.net} signed />
           <span className="block text-xs font-normal text-gray-500">
             {overspent ? 'Spent more than came in' : 'Kept after spending'}
