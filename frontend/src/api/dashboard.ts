@@ -50,9 +50,10 @@ export async function getAllocation(): Promise<AssetClassAllocation[]> {
   return res.data.data
 }
 
-export async function getCategoryTrend(months = 6): Promise<CategoryTrendItem[]> {
+// month (YYYY-MM) anchors the window's last month (#611); omitted = current.
+export async function getCategoryTrend(months = 6, month?: string): Promise<CategoryTrendItem[]> {
   const res = await apiClient.get<ApiList<CategoryTrendItem>>('/dashboard/category-trend', {
-    params: { months },
+    params: { months, month },
   })
   return res.data.data
 }

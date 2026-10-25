@@ -480,10 +480,18 @@ type CategoryTrendItem struct {
 // are zero-filled for any month without activity so the series never has
 // gaps. Ordered by this-month spend DESC.
 func (s *DashboardService) CategoryTrend(ctx context.Context, userID int64, months int) ([]CategoryTrendItem, error) {
+	return s.CategoryTrendThrough(ctx, userID, s.now(), months)
+}
+
+// CategoryTrendThrough is CategoryTrend with the window ending at the month
+// containing `through` instead of the current one, so ThisMonth is that
+// month and TrailingAverage the months before it — the month-end review
+// steps back to an earlier month (#611).
+func (s *DashboardService) CategoryTrendThrough(ctx context.Context, userID int64, through time.Time, months int) ([]CategoryTrendItem, error) {
 	if months <= 0 {
 		months = 6
 	}
-	now := s.now().UTC()
+	now := through.UTC()
 	end := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, 0)
 	start := end.AddDate(0, -months, 0)
 

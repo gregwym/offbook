@@ -13,10 +13,11 @@ import (
 	"github.com/gregwym/offbook/backend/internal/service/auth"
 )
 
-// TestDashboardCashFlow_MonthValidation covers GET /dashboard/cash-flow?month=
-// (#609) branches that return before the repository runs. The anchored
-// window itself is covered by the service DB tests.
-func TestDashboardCashFlow_MonthValidation(t *testing.T) {
+// TestDashboard_MonthValidation covers the ?month= anchor on GET
+// /dashboard/cash-flow (#609) and /dashboard/category-trend (#611): the
+// branches that return before the repository runs. The anchored windows
+// themselves are covered by the service DB tests.
+func TestDashboard_MonthValidation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	api := r.Group("/api/v1")
@@ -35,17 +36,19 @@ func TestDashboardCashFlow_MonthValidation(t *testing.T) {
 		{"not a month", "last-month"},
 		{"future", nextMonth},
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/cash-flow?months=1&month="+tc.month, nil)
-			w := httptest.NewRecorder()
-			r.ServeHTTP(w, req)
-			if w.Code != http.StatusBadRequest {
-				t.Fatalf("status = %d, want 400 (%s)", w.Code, w.Body.String())
-			}
-			if got := codeOf(t, w.Body.Bytes()); got != "INVALID_REQUEST" {
-				t.Errorf("code = %q, want INVALID_REQUEST", got)
-			}
-		})
+	for _, route := range []string{"cash-flow", "category-trend"} {
+		for _, tc := range tests {
+			t.Run(route+"/"+tc.name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/"+route+"?months=1&month="+tc.month, nil)
+				w := httptest.NewRecorder()
+				r.ServeHTTP(w, req)
+				if w.Code != http.StatusBadRequest {
+					t.Fatalf("status = %d, want 400 (%s)", w.Code, w.Body.String())
+				}
+				if got := codeOf(t, w.Body.Bytes()); got != "INVALID_REQUEST" {
+					t.Errorf("code = %q, want INVALID_REQUEST", got)
+				}
+			})
+		}
 	}
 }
