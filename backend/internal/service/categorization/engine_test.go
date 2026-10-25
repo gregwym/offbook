@@ -418,3 +418,26 @@ func TestApply_RenameSkipsPinnedMerchant(t *testing.T) {
 		t.Error("SameAs after SetActions = false, want true")
 	}
 }
+
+// TestMatch_RawDescriptionStillMatchesWithCleanedLabel (#588): once insert
+// writes a cleaned description_clean ("Blue Btl"), rules authored against
+// the raw bank string keep matching exactly as before.
+func TestMatch_RawDescriptionStillMatchesWithCleanedLabel(t *testing.T) {
+	cases := []struct {
+		name string
+		rule model.CategorizationRule
+	}{
+		{"contains", model.CategorizationRule{ID: 1, CategoryID: new(int64(10)), MatchType: "contains", Pattern: "SQ *BLUE BTL", IsActive: true}},
+		{"exact", model.CategorizationRule{ID: 2, CategoryID: new(int64(10)), MatchType: "exact", Pattern: "SQ *BLUE BTL 0412", IsActive: true}},
+		{"regex", model.CategorizationRule{ID: 3, CategoryID: new(int64(10)), MatchType: "regex", Pattern: `^SQ \*BLUE BTL \d{4}$`, IsActive: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := &model.Transaction{Description: ptr("SQ *BLUE BTL 0412"), DescriptionClean: ptr("Blue Btl")}
+			d, ok := categorization.Match(categorization.Compile([]model.CategorizationRule{tc.rule}), tx)
+			if !ok || d.RuleID != tc.rule.ID {
+				t.Fatalf("Match = %+v, %v; want rule %d to fire on the raw description", d, ok, tc.rule.ID)
+			}
+		})
+	}
+}

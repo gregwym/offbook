@@ -252,6 +252,22 @@ func main() {
 		})
 	}
 
+	// description-clean-backfill (#588): rows imported before the insert hook
+	// cleaned bank strings get a description_clean, so Top merchants and
+	// Recurring group them too. Idempotent; a no-op once every row is done.
+	runner.Register(jobs.Job{
+		Name:         "description-clean-backfill",
+		Interval:     24 * time.Hour,
+		InitialDelay: 30 * time.Second,
+		Run: func(ctx context.Context) (string, error) {
+			n, err := repository.BackfillDescriptionClean(ctx, gormDB)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("cleaned %d descriptions", n), nil
+		},
+	})
+
 	// disk-space-check (#360): a full data volume degrades silently otherwise
 	// (Postgres refuses writes, backups fail) — alert well before that.
 	runner.Register(jobs.Job{
