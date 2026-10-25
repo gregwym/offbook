@@ -21,6 +21,16 @@ type AccountShareView struct {
 	Visibility  string
 }
 
+// UnpricedAssetView is a catalog asset with no fresh price into Quote (a
+// currency symbol). It carries no account, owner or quantity.
+type UnpricedAssetView struct {
+	AssetID      int64
+	Symbol       string
+	Kind         string
+	Quote        string
+	QuoteAssetID int64
+}
+
 // HouseholdAggregatorRepository is the cross-user reader that powers
 // service/household/aggregator.go. By design it serves aggregated values
 // (sums, counts, category rollups) and lightweight shapes — never raw
@@ -41,6 +51,12 @@ type HouseholdAggregatorRepository interface {
 	// primary currency), i.e. the sum may rest on stale rates (#344).
 	// Returns (decimal.Zero, true) on empty input — no SQL is issued.
 	SumBalances(ctx context.Context, accountIDs []int64, freshAfter time.Time) (decimal.Decimal, bool, error)
+
+	// UnpricedAssets names the assets that make SumBalances over the same
+	// accountIDs and freshAfter partial (#601): one row per (asset, quote)
+	// pair, where quote is the owning user's primary currency. Catalog
+	// fields only — no account or owner attribution. Empty input → nil.
+	UnpricedAssets(ctx context.Context, accountIDs []int64, freshAfter time.Time) ([]UnpricedAssetView, error)
 
 	// PeriodIncomeSpending returns (income, spending) over [from, to)
 	// across the given account IDs. Spending is returned as a positive value.
@@ -253,6 +269,36 @@ func (r *householdAggregatorRepo) SumBalances(ctx context.Context, accountIDs []
 	}
 	d, _ := decimal.NewFromString(row.Balance)
 	return d, row.Complete, nil
+}
+
+func (r *householdAggregatorRepo) UnpricedAssets(ctx context.Context, accountIDs []int64, freshAfter time.Time) ([]UnpricedAssetView, error) {
+	if len(accountIDs) == 0 {
+		return nil, nil
+	}
+	// The negation of SumBalances' completeness predicate, per position,
+	// collapsed to distinct (asset, quote) pairs.
+	var rows []UnpricedAssetView
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT DISTINCT ast.id AS asset_id, ast.symbol, ast.kind, q.symbol AS quote, q.id AS quote_asset_id
+		FROM positions p
+		JOIN accounts a  ON a.id = p.account_id AND a.deleted_at IS NULL
+		JOIN users    u  ON u.id = p.user_id
+		JOIN assets   ast ON ast.id = p.asset_id
+		JOIN assets   q  ON q.id = u.primary_currency_asset_id
+		WHERE p.deleted_at IS NULL AND p.account_id IN ?
+		  AND p.asset_id <> u.primary_currency_asset_id
+		  AND NOT EXISTS (
+			SELECT 1 FROM prices pr
+			WHERE pr.asset_id = p.asset_id
+			  AND pr.quote_asset_id = u.primary_currency_asset_id
+			  AND pr.as_of >= ?
+		  )
+		ORDER BY ast.symbol, q.symbol
+	`, accountIDs, freshAfter).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func (r *householdAggregatorRepo) PeriodIncomeSpending(ctx context.Context, accountIDs []int64, from, to time.Time) (decimal.Decimal, decimal.Decimal, error) {

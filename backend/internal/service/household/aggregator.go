@@ -60,7 +60,12 @@ type HouseholdDashboard struct {
 	NetWorth string       `json:"net_worth"` // sum across balance_only + balance_and_txns shares
 	// NetWorthComplete is false when a shared position had no price within
 	// the valuation stale window — NetWorth may rest on stale rates (#344).
-	NetWorthComplete bool                          `json:"net_worth_complete"`
+	NetWorthComplete bool `json:"net_worth_complete"`
+	// NetWorthUnpriced names each asset left out of NetWorth (#601), so the
+	// UI can say which price or exchange rate is missing; [] when complete.
+	// Quote is the currency the owning member values it in. Catalog data
+	// only — never which member or account holds it.
+	NetWorthUnpriced []UnpricedAsset               `json:"net_worth_unpriced"`
 	Income           string                        `json:"income"`            // period; balance_and_txns only
 	Spending         string                        `json:"spending"`          // period; balance_and_txns only
 	AccountCount     int                           `json:"account_count"`     // shared accounts count (any visibility)
@@ -69,6 +74,17 @@ type HouseholdDashboard struct {
 	LiveMemberCount  int                           `json:"live_member_count"`
 	InGraceCount     int                           `json:"in_grace_count"`
 	Members          []HouseholdMemberContribution `json:"members"` // per-member breakdown for the same period
+}
+
+// UnpricedAsset is a held asset with no fresh price into Quote.
+type UnpricedAsset struct {
+	AssetID int64  `json:"asset_id"`
+	Symbol  string `json:"symbol"`
+	Kind    string `json:"kind"`
+	Quote   string `json:"quote"`
+	// QuoteAssetID lets Set rate write the pair this headline reads, even
+	// when the member setting it has a different primary currency.
+	QuoteAssetID int64 `json:"quote_asset_id"`
 }
 
 // HouseholdMemberContribution is one row of the per-member tile strip on
@@ -260,9 +276,20 @@ func (a *Aggregator) Dashboard(ctx context.Context, householdID int64, period st
 	}
 	txAccounts := filterAccountsByUsers(txShares, liveUserIDs)
 
-	netWorth, netWorthComplete, err := a.repo.SumBalances(ctx, netWorthAccounts, a.now().Add(-a.val.StaleWindow()))
+	freshAfter := a.now().Add(-a.val.StaleWindow())
+	netWorth, netWorthComplete, err := a.repo.SumBalances(ctx, netWorthAccounts, freshAfter)
 	if err != nil {
 		return nil, fmt.Errorf("sum balances: %w", err)
+	}
+	unpriced := []UnpricedAsset{}
+	if !netWorthComplete {
+		rows, err := a.repo.UnpricedAssets(ctx, netWorthAccounts, freshAfter)
+		if err != nil {
+			return nil, fmt.Errorf("unpriced assets: %w", err)
+		}
+		for _, r := range rows {
+			unpriced = append(unpriced, UnpricedAsset{AssetID: r.AssetID, Symbol: r.Symbol, Kind: r.Kind, Quote: r.Quote, QuoteAssetID: r.QuoteAssetID})
+		}
 	}
 	income, spending, err := a.repo.PeriodIncomeSpending(ctx, txAccounts, from, to)
 	if err != nil {
@@ -294,6 +321,7 @@ func (a *Aggregator) Dashboard(ctx context.Context, householdID int64, period st
 		Period:           PeriodWindow{Key: period, From: from, To: to},
 		NetWorth:         netWorth.String(),
 		NetWorthComplete: netWorthComplete,
+		NetWorthUnpriced: unpriced,
 		Income:           income.String(),
 		Spending:         spending.String(),
 		AccountCount:     len(netWorthAccounts),

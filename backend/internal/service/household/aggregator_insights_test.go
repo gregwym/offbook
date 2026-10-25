@@ -553,6 +553,71 @@ func TestAggregator_Dashboard_NetWorthCompleteness(t *testing.T) {
 	}
 }
 
+// TestAggregator_Dashboard_NamesUnpricedAssets: a partial household headline
+// names each asset it left out, once, with the currency it's missing a rate
+// into (#601). Private accounts and in-grace members' shares contribute
+// nothing; once the rate exists the asset drops off the list.
+func TestAggregator_Dashboard_NamesUnpricedAssets(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	usd := testutil.LookupUSDAssetID(t, g)
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	ownerID := seedUser(t, g, "dash-unp-owner")
+	leaverID := seedUser(t, g, "dash-unp-leaver")
+	hh := seedHouseholdRow(t, g, ownerID, "DashUnp", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+	left := time.Now().Add(-24 * time.Hour)
+	addMember(t, g, hh.ID, leaverID, model.RoleContributor, &left)
+
+	dash, err := agg.Dashboard(ctx, hh.ID, household.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Dashboard (empty): %v", err)
+	}
+	if dash.NetWorthUnpriced == nil || len(dash.NetWorthUnpriced) != 0 {
+		t.Errorf("complete headline unpriced = %#v, want []", dash.NetWorthUnpriced)
+	}
+
+	// A fiat with no rate, held in two shared accounts → listed once.
+	fx := seedAsset(t, g, "UNPFX"+suffix[len(suffix)-6:], model.AssetKindFiat, usd)
+	a1 := seedAccount(t, g, ownerID, "fx1")
+	a2 := seedAccount(t, g, ownerID, "fx2")
+	upsertPosition(t, g, ownerID, a1.ID, fx, "100")
+	upsertPosition(t, g, ownerID, a2.ID, fx, "50")
+	setShare(t, g, a1.ID, hh.ID, model.VisibilityBalanceOnly)
+	setShare(t, g, a2.ID, hh.ID, model.VisibilityBalanceAndTxns)
+	// Private: an unpriced equity in an unshared account.
+	privAsset := seedAsset(t, g, "UNPPRIV-"+suffix, model.AssetKindEquity, usd)
+	priv := seedAccount(t, g, ownerID, "priv")
+	upsertPosition(t, g, ownerID, priv.ID, privAsset, "1")
+	// In grace: the leaver's shared, unpriced crypto.
+	graceAsset := seedAsset(t, g, "UNPGRACE-"+suffix, model.AssetKindCrypto, usd)
+	graceAcct := seedAccount(t, g, leaverID, "grace")
+	upsertPosition(t, g, leaverID, graceAcct.ID, graceAsset, "2")
+	setShare(t, g, graceAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
+
+	dash, err = agg.Dashboard(ctx, hh.ID, household.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Dashboard (partial): %v", err)
+	}
+	if dash.NetWorthComplete {
+		t.Fatal("net_worth_complete = true, want false")
+	}
+	want := household.UnpricedAsset{AssetID: fx, Symbol: "UNPFX" + suffix[len(suffix)-6:], Kind: model.AssetKindFiat, Quote: "USD", QuoteAssetID: usd}
+	if len(dash.NetWorthUnpriced) != 1 || dash.NetWorthUnpriced[0] != want {
+		t.Errorf("unpriced = %#v, want only %#v (private + in-grace excluded, deduped)", dash.NetWorthUnpriced, want)
+	}
+
+	// The rate is set: the headline completes and the list empties.
+	insertPrice(t, g, fx, usd, "1.25", time.Now())
+	dash, err = agg.Dashboard(ctx, hh.ID, household.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Dashboard (rate set): %v", err)
+	}
+	if !dash.NetWorthComplete || len(dash.NetWorthUnpriced) != 0 || dash.NetWorth != "187.5" {
+		t.Errorf("after rate = {%s %v %v}, want {187.5 true []}", dash.NetWorth, dash.NetWorthComplete, dash.NetWorthUnpriced)
+	}
+}
+
 // seedMerchantTxnH mirrors service.seedMerchantTxn for the household
 // package — a transaction carrying merchant/description fields, used by
 // TestAggregator_TopMerchants*.

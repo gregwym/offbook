@@ -10,6 +10,10 @@ export type UnpricedAsset = {
   asset_id: number
   symbol: string
   kind: string
+  // Household headline only (#601): the currency the owning member values
+  // it in. Personal scope uses DashboardSummary.net_worth_currency instead.
+  quote?: string
+  quote_asset_id?: number
 }
 
 export type Account = {

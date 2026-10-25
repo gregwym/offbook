@@ -309,4 +309,39 @@ describe('InsightsPage net-worth missing exchange rate', () => {
     expect(posted!.body).toMatchObject({ price: '1.08' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
+
+  // #601: the household headline names the missing rate in the owning
+  // member's currency, and Set rate writes exactly that pair.
+  it('names a household unpriced currency and sets the rate into its quote', async () => {
+    setHouseholdScope(1)
+    const eur = { ...fx.assetUSD, id: 7, symbol: 'EUR', display_name: 'Euro' }
+    let posted: { assetID: string; body: unknown } | null = null
+    server.use(
+      http.get('/api/v1/h/dashboard', () =>
+        HttpResponse.json({
+          data: {
+            ...fx.householdDashboard,
+            net_worth_complete: false,
+            net_worth_unpriced: [{ asset_id: 7, symbol: 'EUR', kind: 'fiat', quote: 'CAD', quote_asset_id: 4 }],
+          },
+        }),
+      ),
+      http.get('/api/v1/assets', () => HttpResponse.json({ data: [fx.assetUSD, eur], total: 2 })),
+      http.post('/api/v1/assets/:id/prices', async ({ params, request }) => {
+        posted = { assetID: String(params.id), body: await request.json() }
+        return HttpResponse.json({ data: { id: 1 } }, { status: 201 })
+      }),
+    )
+    renderPage(<InsightsPage />)
+
+    expect(await screen.findByText('EUR → CAD')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Set exchange rate for EUR' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('1 EUR in CAD'), { target: { value: '1.5' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Set rate' }))
+
+    await waitFor(() => expect(posted).not.toBeNull())
+    expect(posted!.assetID).toBe('7')
+    expect(posted!.body).toMatchObject({ price: '1.5', quote_asset_id: 4 })
+  })
 })
