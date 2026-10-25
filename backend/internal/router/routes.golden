@@ -22,6 +22,7 @@ GET /api/v1/assets
 GET /api/v1/budgets
 GET /api/v1/budgets/:id
 GET /api/v1/budgets/:id/spend
+GET /api/v1/budgets/summary
 GET /api/v1/categories
 GET /api/v1/categories/:id/usage
 GET /api/v1/categorization-rules
@@ -41,6 +42,7 @@ GET /api/v1/h/ai/context
 GET /api/v1/h/ai/threads
 GET /api/v1/h/ai/threads/:id/messages
 GET /api/v1/h/budgets/pace
+GET /api/v1/h/budgets/summary
 GET /api/v1/h/dashboard
 GET /api/v1/h/goals/progress
 GET /api/v1/h/insights/accounts

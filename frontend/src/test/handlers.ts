@@ -31,6 +31,7 @@ export const handlers = [
   // Budgets / goals
   http.get(`${API}/budgets`, () => list(fx.budgets)),
   http.get(`${API}/budgets/:id/spend`, () => item(fx.budgetSpend1)),
+  http.get(`${API}/budgets/summary`, () => item(fx.budgetSummary1)),
   http.get(`${API}/savings-goals`, () => list(fx.goals)),
 
   // Transactions / rules
@@ -67,6 +68,7 @@ export const handlers = [
   http.get(`${API}/households/:id/shared-goals`, () => list([])),
   http.get(`${API}/h/dashboard`, () => item(fx.householdDashboard)),
   http.get(`${API}/h/budgets/pace`, () => list([])),
+  http.get(`${API}/h/budgets/summary`, () => item({ ...fx.budgetSummary1, budget_count: 0, budgeted: '0', available: '0', spent_in_budgets: '0', remaining: '0' })),
   http.get(`${API}/h/goals/progress`, () => list([])),
   http.get(`${API}/h/insights/allocation`, () => list(fx.householdAllocation)),
   http.get(`${API}/h/insights/net-worth`, () => list(fx.householdNetWorthTrend)),

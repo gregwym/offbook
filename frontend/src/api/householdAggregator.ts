@@ -11,6 +11,7 @@ import type {
   HouseholdNetWorthPoint,
   HouseholdPeriodKey,
 } from '../types/householdAggregator'
+import type { BudgetMonthSummary } from '../types/budget'
 
 export async function getHouseholdDashboard(
   period: HouseholdPeriodKey = 'current_month',
@@ -70,5 +71,11 @@ export async function getHouseholdCashFlow(months = 6): Promise<HouseholdCashFlo
   const res = await apiClient.get<ApiList<HouseholdCashFlowMonth>>('/h/insights/cash-flow', {
     params: { months },
   })
+  return res.data.data
+}
+
+// The current month's shared-budget totals (#589).
+export async function getHouseholdBudgetSummary(): Promise<BudgetMonthSummary> {
+  const res = await apiClient.get<ApiItem<BudgetMonthSummary>>('/h/budgets/summary')
   return res.data.data
 }

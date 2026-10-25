@@ -64,6 +64,11 @@ type HouseholdAggregatorRepository interface {
 	// absent. Used for shared-budget rollover.
 	SpendingByCategoryMonthly(ctx context.Context, accountIDs []int64, categoryID int64, from, to time.Time) (map[time.Time]decimal.Decimal, error)
 
+	// SpendingAllCategories is SpendingByCategory for every category (nil =
+	// uncategorized) at once, largest first; its rows sum to
+	// PeriodIncomeSpending's spending exactly (#589). Zero rows are dropped.
+	SpendingAllCategories(ctx context.Context, accountIDs []int64, from, to time.Time) ([]CategorySpend, error)
+
 	// ListSharedBudgets returns the household-owned budgets (optionally
 	// filtered by period). Since ADR-0018 these are rows in the unified
 	// `budgets` table with household_id set; readers tolerate an empty set.
@@ -360,6 +365,45 @@ func (r *householdAggregatorRepo) SpendingByCategory(ctx context.Context, accoun
 	}
 	d, _ := decimal.NewFromString(s)
 	return d, nil
+}
+
+func (r *householdAggregatorRepo) SpendingAllCategories(ctx context.Context, accountIDs []int64, from, to time.Time) ([]CategorySpend, error) {
+	if len(accountIDs) == 0 {
+		return []CategorySpend{}, nil
+	}
+	type row struct {
+		CategoryID *int64
+		Spent      string
+	}
+	var rows []row
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT category_id AS category_id,
+		       COALESCE(SUM(-amount) FILTER (WHERE amount < 0 OR is_refund), 0)::text AS spent
+		FROM spend_lines
+		WHERE deleted_at IS NULL
+		  AND account_id IN ?
+		  AND kind = 'flow'
+		  AND is_transfer = FALSE
+		  AND transaction_date >= ?
+		  AND transaction_date <  ?
+		GROUP BY category_id
+		ORDER BY SUM(-amount) FILTER (WHERE amount < 0 OR is_refund) DESC
+	`, accountIDs, from, to).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CategorySpend, 0, len(rows))
+	for _, r := range rows {
+		d, err := decimal.NewFromString(r.Spent)
+		if err != nil {
+			return nil, err
+		}
+		if d.IsZero() {
+			continue
+		}
+		out = append(out, CategorySpend{CategoryID: r.CategoryID, Spent: d})
+	}
+	return out, nil
 }
 
 func (r *householdAggregatorRepo) SpendingByCategoryMonthly(ctx context.Context, accountIDs []int64, categoryID int64, from, to time.Time) (map[time.Time]decimal.Decimal, error) {

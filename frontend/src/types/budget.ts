@@ -34,6 +34,25 @@ export type BudgetSpend = {
   pct: number
 }
 
+// Month totals for the Budgets page (#589), personal and household alike.
+// spent_in_budgets + not_in_budget == total_spending, the Insights spending
+// figure for the month; unbudgeted breaks not_in_budget down by category
+// (null = uncategorized) and sums to it.
+export type BudgetMonthSummary = {
+  month: string
+  period_start: string
+  period_end: string
+  budget_count: number
+  budgeted: string
+  carryover: string
+  available: string
+  spent_in_budgets: string
+  remaining: string
+  not_in_budget: string
+  total_spending: string
+  unbudgeted: { category_id: number | null; spent: string }[]
+}
+
 export type CreateBudgetInput = {
   category_id: number
   period: BudgetPeriod

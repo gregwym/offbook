@@ -4,7 +4,7 @@
 import type { Account } from '../types/account'
 import type { AICategorizationVerdict } from '../types/aiCategorizationVerdict'
 import type { Asset } from '../types/asset'
-import type { Budget, BudgetSpend } from '../types/budget'
+import type { Budget, BudgetMonthSummary, BudgetSpend } from '../types/budget'
 import type { Category } from '../types/category'
 import type { CategorizationRule } from '../types/categorizationRule'
 import type {
@@ -102,6 +102,24 @@ export const budget1: Budget = {
 }
 
 export const budgets: Budget[] = [budget1]
+
+export const budgetSummary1: BudgetMonthSummary = {
+  month: '2026-07',
+  period_start: '2026-07-01T00:00:00Z',
+  period_end: '2026-08-01T00:00:00Z',
+  budget_count: 1,
+  budgeted: '500',
+  carryover: '0',
+  available: '500',
+  spent_in_budgets: '120',
+  remaining: '380',
+  not_in_budget: '83.5',
+  total_spending: '203.5',
+  unbudgeted: [
+    { category_id: 2, spent: '80' },
+    { category_id: null, spent: '3.5' },
+  ],
+}
 
 export const budgetSpend1: BudgetSpend = {
   budget_id: 1,

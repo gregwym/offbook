@@ -248,6 +248,12 @@ func (s *BudgetService) SpendOn(ctx context.Context, userID, id int64, on time.T
 	if err != nil {
 		return nil, err
 	}
+	return s.spendView(ctx, userID, b, on)
+}
+
+// spendView is SpendOn for a budget already resolved through an owner-scoped
+// read.
+func (s *BudgetService) spendView(ctx context.Context, userID int64, b *model.Budget, on time.Time) (*BudgetSpend, error) {
 	from, to := budgetPeriodWindow(b.Period, on)
 	spent, err := s.repo.CurrentPeriodSpend(ctx, userID, b.CategoryID, from, to)
 	if err != nil {
@@ -282,6 +288,90 @@ func (s *BudgetService) SpendOn(ctx context.Context, userID, id int64, on time.T
 		Remaining:   remaining,
 		Pct:         pct,
 	}, nil
+}
+
+// BudgetMonthSummary answers, for one calendar month (#589): how much was
+// budgeted, how much was spent against it, and how much was spent outside
+// any budget. SpentInBudgets + NotInBudget == TotalSpending, the Insights
+// spending figure for the month, by construction. Only active monthly
+// budgets count: a weekly or annual period doesn't line up with a month.
+type BudgetMonthSummary struct {
+	Month       string    `json:"month"` // YYYY-MM
+	PeriodStart time.Time `json:"period_start"`
+	PeriodEnd   time.Time `json:"period_end"` // exclusive
+	BudgetCount int       `json:"budget_count"`
+	// Budgeted is the sum of the limits in effect that month (#580);
+	// Carryover the rolled-over balance on top; Available their sum.
+	Budgeted       decimal.Decimal `json:"budgeted"`
+	Carryover      decimal.Decimal `json:"carryover"`
+	Available      decimal.Decimal `json:"available"`
+	SpentInBudgets decimal.Decimal `json:"spent_in_budgets"`
+	// Remaining is Available - SpentInBudgets; negative when over.
+	Remaining     decimal.Decimal `json:"remaining"`
+	NotInBudget   decimal.Decimal `json:"not_in_budget"`
+	TotalSpending decimal.Decimal `json:"total_spending"`
+	// Unbudgeted breaks NotInBudget down by category, largest first; its
+	// amounts sum to NotInBudget. A net-refund category is negative.
+	Unbudgeted []UnbudgetedSpend `json:"unbudgeted"`
+}
+
+// UnbudgetedSpend is one category's spending with no monthly budget.
+// CategoryID nil is uncategorized.
+type UnbudgetedSpend struct {
+	CategoryID *int64          `json:"category_id"`
+	Spent      decimal.Decimal `json:"spent"`
+}
+
+// MonthSummary returns the budget summary for the month containing on
+// (#589). Each budget's figures come from the same per-budget view as its
+// card, so the summary always matches the cards on screen.
+func (s *BudgetService) MonthSummary(ctx context.Context, userID int64, on time.Time) (*BudgetMonthSummary, error) {
+	now := s.now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	if !on.UTC().Before(today.AddDate(0, 0, 1)) {
+		return nil, ErrBudgetDateInFuture
+	}
+	from, to := budgetPeriodWindow(BudgetPeriodMonthly, on)
+	budgets, err := s.repo.List(ctx, repository.UserOwner(userID))
+	if err != nil {
+		return nil, fmt.Errorf("list budgets: %w", err)
+	}
+	out := &BudgetMonthSummary{
+		Month: from.Format("2006-01"), PeriodStart: from, PeriodEnd: to,
+		Unbudgeted: []UnbudgetedSpend{},
+	}
+	budgeted := map[int64]bool{}
+	for i := range budgets {
+		b := &budgets[i]
+		if b.Period != BudgetPeriodMonthly || !b.IsActive {
+			continue
+		}
+		v, err := s.spendView(ctx, userID, b, on)
+		if err != nil {
+			return nil, err
+		}
+		out.BudgetCount++
+		out.Budgeted = out.Budgeted.Add(v.Limit)
+		out.Carryover = out.Carryover.Add(v.Carryover)
+		out.SpentInBudgets = out.SpentInBudgets.Add(v.Spent)
+		budgeted[b.CategoryID] = true
+	}
+	out.Available = out.Budgeted.Add(out.Carryover)
+	out.Remaining = out.Available.Sub(out.SpentInBudgets)
+
+	spend, err := s.repo.SpendAllCategoriesInRange(ctx, userID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("month spending: %w", err)
+	}
+	for _, c := range spend {
+		out.TotalSpending = out.TotalSpending.Add(c.Spent)
+		if c.CategoryID != nil && budgeted[*c.CategoryID] {
+			continue
+		}
+		out.NotInBudget = out.NotInBudget.Add(c.Spent)
+		out.Unbudgeted = append(out.Unbudgeted, UnbudgetedSpend{CategoryID: c.CategoryID, Spent: c.Spent})
+	}
+	return out, nil
 }
 
 // maxRolloverPeriods bounds how far back rollover looks, so one query stays

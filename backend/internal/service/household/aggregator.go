@@ -119,6 +119,34 @@ type BudgetPaceItem struct {
 	Pace      string `json:"pace"`      // ratio 0..N (1.0 = on budget)
 }
 
+// BudgetSummary is the household's current-month budget totals (#589):
+// budgeted, spent against budgets, and spent outside any budget. Figures
+// are sums over balance_and_txns accounts of live members only — the same
+// accounts BudgetPace and the Dashboard spending figure use — so
+// SpentInBudgets + NotInBudget == Dashboard.Spending by construction. No
+// raw transaction rows; Unbudgeted is a per-category sum.
+type BudgetSummary struct {
+	Month          string            `json:"month"` // YYYY-MM
+	PeriodStart    time.Time         `json:"period_start"`
+	PeriodEnd      time.Time         `json:"period_end"` // exclusive
+	BudgetCount    int               `json:"budget_count"`
+	Budgeted       string            `json:"budgeted"`
+	Carryover      string            `json:"carryover"`
+	Available      string            `json:"available"`
+	SpentInBudgets string            `json:"spent_in_budgets"`
+	Remaining      string            `json:"remaining"`
+	NotInBudget    string            `json:"not_in_budget"`
+	TotalSpending  string            `json:"total_spending"`
+	Unbudgeted     []UnbudgetedSpend `json:"unbudgeted"`
+}
+
+// UnbudgetedSpend is one category's spending with no active shared budget
+// (CategoryID nil = uncategorized). An aggregate, never a transaction.
+type UnbudgetedSpend struct {
+	CategoryID *int64 `json:"category_id"`
+	Spent      string `json:"spent"`
+}
+
 // GoalProgressItem reports completion of a shared_goal.
 type GoalProgressItem struct {
 	GoalID        int64      `json:"goal_id"`
@@ -389,6 +417,88 @@ func (a *Aggregator) BudgetPace(ctx context.Context, householdID int64, period s
 		})
 	}
 	return out, nil
+}
+
+// BudgetSummary returns the current month's shared-budget totals (#589).
+// Shared budgets are tracked per calendar month, so every active budget
+// counts, with the same spend and carryover as its BudgetPace card.
+func (a *Aggregator) BudgetSummary(ctx context.Context, householdID int64) (*BudgetSummary, error) {
+	if err := a.requireHousehold(ctx, householdID); err != nil {
+		return nil, err
+	}
+	from, to, err := ResolvePeriod(PeriodCurrentMonth, a.now())
+	if err != nil {
+		return nil, err
+	}
+	budgets, err := a.repo.ListSharedBudgets(ctx, householdID, "")
+	if err != nil {
+		return nil, fmt.Errorf("list household budgets: %w", err)
+	}
+	live, _, err := a.liveAndInGrace(ctx, householdID)
+	if err != nil {
+		return nil, err
+	}
+	txShares, err := a.repo.ListAccountShares(ctx, householdID,
+		[]string{model.VisibilityBalanceAndTxns})
+	if err != nil {
+		return nil, fmt.Errorf("list shares: %w", err)
+	}
+	txAccounts := filterAccountsByUsers(txShares, userIDs(live))
+
+	var count int
+	budgeted, carryover, spentIn := decimal.Zero, decimal.Zero, decimal.Zero
+	inBudget := map[int64]bool{}
+	for i := range budgets {
+		b := &budgets[i]
+		if !b.IsActive || inBudget[b.CategoryID] {
+			continue
+		}
+		spent, err := a.repo.SpendingByCategory(ctx, txAccounts, b.CategoryID, from, to)
+		if err != nil {
+			return nil, fmt.Errorf("spending for budget %d: %w", b.ID, err)
+		}
+		carry := decimal.Zero
+		if b.Rollover {
+			if carry, err = a.monthlyCarryover(ctx, txAccounts, b, from); err != nil {
+				return nil, err
+			}
+		}
+		count++
+		budgeted = budgeted.Add(b.Amount)
+		carryover = carryover.Add(carry)
+		spentIn = spentIn.Add(spent)
+		inBudget[b.CategoryID] = true
+	}
+
+	cats, err := a.repo.SpendingAllCategories(ctx, txAccounts, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("month spending: %w", err)
+	}
+	total, notIn := decimal.Zero, decimal.Zero
+	unbudgeted := make([]UnbudgetedSpend, 0, len(cats))
+	for _, c := range cats {
+		total = total.Add(c.Spent)
+		if c.CategoryID != nil && inBudget[*c.CategoryID] {
+			continue
+		}
+		notIn = notIn.Add(c.Spent)
+		unbudgeted = append(unbudgeted, UnbudgetedSpend{CategoryID: c.CategoryID, Spent: c.Spent.String()})
+	}
+	available := budgeted.Add(carryover)
+	return &BudgetSummary{
+		Month:          from.Format("2006-01"),
+		PeriodStart:    from,
+		PeriodEnd:      to,
+		BudgetCount:    count,
+		Budgeted:       budgeted.String(),
+		Carryover:      carryover.String(),
+		Available:      available.String(),
+		SpentInBudgets: spentIn.String(),
+		Remaining:      available.Sub(spentIn).String(),
+		NotInBudget:    notIn.String(),
+		TotalSpending:  total.String(),
+		Unbudgeted:     unbudgeted,
+	}, nil
 }
 
 // maxRolloverMonths mirrors the personal-budget cap (BudgetService).
