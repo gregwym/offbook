@@ -755,9 +755,14 @@ export function TransactionsPage() {
                 />
               </th>
               <th className="hidden px-3 py-2 text-left md:table-cell">Date</th>
-              <th className="px-3 py-2 text-left">Name</th>
+              <th className="px-2 py-2 text-left md:px-3">
+                <span className="flex justify-between gap-2">
+                  Name
+                  <span className="md:hidden">Amount</span>
+                </span>
+              </th>
               <th className="hidden px-3 py-2 text-left md:table-cell">Bank description</th>
-              <th className="px-3 py-2 text-right">Amount</th>
+              <th className="hidden px-3 py-2 text-right md:table-cell">Amount</th>
               <th className="hidden px-3 py-2 text-left md:table-cell">Account</th>
               <th className="hidden px-3 py-2 text-left md:table-cell">Category</th>
               <th className="hidden px-3 py-2 md:table-cell"><span className="sr-only">Actions</span></th>
@@ -1167,6 +1172,8 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
       // truncate: a long name ends in an ellipsis before the chevron instead
       // of being cut mid-letter on a phone (#579).
       className="min-h-9 w-full min-w-0 truncate rounded border border-gray-300 px-1.5 py-1 text-sm md:w-auto"
+      // A name longer than the box still reads in full on hover / long-press.
+      title={currentCategory?.name ?? 'Uncategorized'}
     >
       <option value="">Uncategorized</option>
       {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -1206,83 +1213,92 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
       </td>
       <td className={`hidden whitespace-nowrap px-3 py-2 align-top text-gray-700 md:table-cell ${indented ? 'pl-8' : ''}`}><DateDisplay value={tx.transaction_date} /></td>
       <td className="px-2 py-2 align-top text-gray-900 md:px-3">
-        <span className="font-medium">{displayName}</span>
-        {unreviewed && <span className="sr-only"> (needs review)</span>}
-        {isReconciling && account && (
-          <Link
-            to={`/accounts/${account.id}/reconciliation`}
-            title="Reconciliation row — see the account's reconciliation view."
-            className="ml-1.5 inline-flex items-center rounded border border-amber-200 bg-amber-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-amber-700 hover:bg-amber-100"
-          >
-            {tx.kind === 'opening_balance' ? 'opening balance' : 'adjustment'}
-          </Link>
-        )}
-        {tx.is_transfer && onUnlinkTransfer && (
-          <button
-            type="button"
-            onClick={() => {
-              if (window.confirm('Unlink this transfer? Both sides will go back to counting as ordinary transactions.')) {
-                void onUnlinkTransfer()
-              }
-            }}
-            title="Confirmed transfer — click to unlink"
-            className="ml-1.5 inline-flex items-center rounded border border-indigo-200 bg-indigo-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-indigo-700 hover:bg-indigo-100"
-          >
-            transfer
-          </button>
-        )}
-        {tx.pending && (
-          <span
-            title={PENDING_HINT}
-            className="ml-1.5 inline-flex items-center rounded border border-sky-200 bg-sky-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-sky-700"
-          >
-            pending
-          </span>
-        )}
-        {hidden && (
-          <span
-            title="You hid this transaction. It still counts toward the account balance but not spending, income or budgets."
-            className="ml-1.5 inline-flex items-center rounded border border-gray-200 bg-gray-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-gray-600"
-          >
-            hidden
-          </span>
-        )}
-        {note !== '' && (
-          <button
-            type="button"
-            onClick={onEditDetails}
-            title={note}
-            aria-label={`Note: ${note}. Edit details for ${label}`}
-            className="ml-1.5 hidden items-center md:inline-flex rounded border border-amber-200 bg-amber-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-amber-800 hover:bg-amber-100"
-          >
-            note
-          </button>
-        )}
-        {unpairedTransfer && (
-          <span
-            title="This row is in the Transfer category but has no matching leg, so it is not counted in spending, income or budgets."
-            className="ml-1.5 inline-flex items-center rounded border border-gray-200 bg-gray-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-gray-600"
-          >
-            not in spending
-          </span>
-        )}
-        {tags.length > 0 && (
-          <div className="mt-1 flex flex-wrap gap-1">
-            {tags.map((name) => (
-              <button
-                key={name}
-                type="button"
-                onClick={() => onTagClick?.(name)}
-                aria-label={`Show transactions tagged ${name}`}
-                title={`Show transactions tagged ${name}`}
-                className="inline-flex max-w-full items-center gap-1 truncate rounded-full border border-violet-200 bg-violet-50 px-2 py-px text-[11px] font-medium leading-4 text-violet-800 hover:bg-violet-100"
+        {/* A phone has no Amount column: the amount sits on the name line so
+            the category picker below gets the row's full width (#590). */}
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <span className="font-medium">{displayName}</span>
+            {unreviewed && <span className="sr-only"> (needs review)</span>}
+            {isReconciling && account && (
+              <Link
+                to={`/accounts/${account.id}/reconciliation`}
+                title="Reconciliation row — see the account's reconciliation view."
+                className="ml-1.5 inline-flex items-center rounded border border-amber-200 bg-amber-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-amber-700 hover:bg-amber-100"
               >
-                <Tag size={10} aria-hidden="true" />
-                {name}
+                {tx.kind === 'opening_balance' ? 'opening balance' : 'adjustment'}
+              </Link>
+            )}
+            {tx.is_transfer && onUnlinkTransfer && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm('Unlink this transfer? Both sides will go back to counting as ordinary transactions.')) {
+                    void onUnlinkTransfer()
+                  }
+                }}
+                title="Confirmed transfer — click to unlink"
+                className="ml-1.5 inline-flex items-center rounded border border-indigo-200 bg-indigo-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-indigo-700 hover:bg-indigo-100"
+              >
+                transfer
               </button>
-            ))}
+            )}
+            {tx.pending && (
+              <span
+                title={PENDING_HINT}
+                className="ml-1.5 inline-flex items-center rounded border border-sky-200 bg-sky-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-sky-700"
+              >
+                pending
+              </span>
+            )}
+            {hidden && (
+              <span
+                title="You hid this transaction. It still counts toward the account balance but not spending, income or budgets."
+                className="ml-1.5 inline-flex items-center rounded border border-gray-200 bg-gray-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-gray-600"
+              >
+                hidden
+              </span>
+            )}
+            {note !== '' && (
+              <button
+                type="button"
+                onClick={onEditDetails}
+                title={note}
+                aria-label={`Note: ${note}. Edit details for ${label}`}
+                className="ml-1.5 hidden items-center md:inline-flex rounded border border-amber-200 bg-amber-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-amber-800 hover:bg-amber-100"
+              >
+                note
+              </button>
+            )}
+            {unpairedTransfer && (
+              <span
+                title="This row is in the Transfer category but has no matching leg, so it is not counted in spending, income or budgets."
+                className="ml-1.5 inline-flex items-center rounded border border-gray-200 bg-gray-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-gray-600"
+              >
+                not in spending
+              </span>
+            )}
+            {tags.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {tags.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    onClick={() => onTagClick?.(name)}
+                    aria-label={`Show transactions tagged ${name}`}
+                    title={`Show transactions tagged ${name}`}
+                    className="inline-flex max-w-full items-center gap-1 truncate rounded-full border border-violet-200 bg-violet-50 px-2 py-px text-[11px] font-medium leading-4 text-violet-800 hover:bg-violet-100"
+                  >
+                    <Tag size={10} aria-hidden="true" />
+                    {name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+          <div className="shrink-0 whitespace-nowrap text-right md:hidden">
+            <AmountDisplay amount={tx.amount} currency={currency} signed />
+          </div>
+        </div>
         {/* Narrow screens drop the Merchant/Account/Category columns; show
             them stacked under the description instead of a squeezed table. */}
         <div className="mt-1 space-y-1.5 md:hidden">
@@ -1334,7 +1350,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
         {/* Empty when the name already is the bank string — no repeat. */}
         {rawDescription && <div className="truncate" title={rawDescription}>{rawDescription}</div>}
       </td>
-      <td className="whitespace-nowrap px-2 py-2 text-right align-top md:px-3">
+      <td className="hidden whitespace-nowrap px-3 py-2 text-right align-top md:table-cell">
         <AmountDisplay amount={tx.amount} currency={currency} signed />
       </td>
       <td className="hidden px-3 py-2 align-top text-gray-700 md:table-cell">{account?.name ?? `#${tx.account_id}`}</td>
@@ -1444,9 +1460,16 @@ function PairedTradeRow({
           <div className="mt-1 text-xs text-gray-500 md:hidden">
             <DateDisplay value={securityLeg.transaction_date} /> · {account?.name ?? `#${securityLeg.account_id}`}
           </div>
+          {/* No Amount column on a phone (#590): both legs under the name. */}
+          <div className="mt-1 flex gap-2 text-xs tabular-nums md:hidden">
+            <AmountDisplay amount={securityLeg.amount} currency={securityCurrency} signed />
+            <span className="text-gray-500">
+              <AmountDisplay amount={cashLeg.amount} currency={cashCurrency} signed />
+            </span>
+          </div>
         </td>
         <td className="hidden px-3 py-2 text-gray-400 md:table-cell">—</td>
-        <td className="px-3 py-2 text-right">
+        <td className="hidden px-3 py-2 text-right md:table-cell">
           <div className="tabular-nums">
             <AmountDisplay amount={securityLeg.amount} currency={securityCurrency} signed />
           </div>
@@ -1456,7 +1479,7 @@ function PairedTradeRow({
         </td>
         <td className="hidden px-3 py-2 text-gray-700 md:table-cell">{account?.name ?? `#${securityLeg.account_id}`}</td>
         <td className="hidden px-3 py-2 text-gray-400 italic text-xs md:table-cell">expand to edit</td>
-        <td className="px-3 py-2"></td>
+        <td className="hidden px-3 py-2 md:table-cell"></td>
       </tr>
       {expanded && (
         <>

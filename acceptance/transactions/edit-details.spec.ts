@@ -58,7 +58,7 @@ test.describe('edit details journey', () => {
     // name, and the bank string is still on screen (Bank description column on
     // desktop, the meta line on a phone).
     const row = page.locator('tbody tr').filter({ hasText: label })
-    await expect(row.locator('td:nth-child(3) > span.font-medium')).toHaveText('Blue Bottle Coffee')
+    await expect(row.locator('td:nth-child(3) span.font-medium')).toHaveText('Blue Bottle Coffee')
     await expect(row.getByText(label, { exact: true }).locator('visible=true').first()).toBeVisible()
     // The category picker ends in an ellipsis inside its own box rather than
     // being cut under the chevron, and doesn't push the row wider (#579).
@@ -71,6 +71,9 @@ test.describe('edit details journey', () => {
     })
     expect(fit.overflow, 'category picker truncates with an ellipsis').toBe('ellipsis')
     expect(fit.inside, 'category picker stays inside its cell').toBe(true)
+    // …but only names longer than the row: a phone reads the whole category
+    // without opening the picker (#590).
+    await expectPickerReadable(page, label, 'Uncategorized')
     const vp = page.viewportSize()!
     let chip
     if (vp.width < 768) {
@@ -106,6 +109,9 @@ test.describe('edit details journey', () => {
 
     // Clearing the merchant hands the name back to the bank/rules.
     await page.reload()
+    await expectPickerReadable(page, label, 'Food & Dining')
+    await expectPickerReadable(page, 'QAEDIT SQ *BLUE BTL 0415', 'Food & Dining')
+    await testInfo.attach(`${testInfo.project.name}-categorised-rows`, { body: await page.screenshot(), contentType: 'image/png' })
     await page.getByRole('button', { name: `More actions for ${label}` }).locator('visible=true').click()
     await page.getByRole('menu').getByRole('menuitem', { name: `Edit details for ${label}` }).click()
     await dlg.getByLabel('Merchant').fill('')
@@ -117,6 +123,27 @@ test.describe('edit details journey', () => {
     expect(await spending(cookie)).toBe(spendBefore)
   })
 })
+
+// expectPickerReadable: the row's category picker shows its whole name (no
+// ellipsis), and on a phone the Reviewed and More actions buttons beside it
+// stay on screen and at least 40px (#590).
+async function expectPickerReadable(page: Page, label: string, category: string) {
+  const row = page.locator('tbody tr').filter({ hasText: label })
+  const picker = row.getByRole('combobox', { name: `Category for ${label}` }).locator('visible=true')
+  await expect(picker.locator('option:checked')).toHaveText(category)
+  await expect(picker).toHaveAttribute('title', category)
+  const fits = await picker.evaluate((el) => el.scrollWidth <= el.clientWidth)
+  expect(fits, `"${category}" fits its picker`).toBe(true)
+  const vp = page.viewportSize()!
+  if (vp.width >= 768) return
+  for (const name of [/^(Mark .* reviewed|Reviewed: )/, /^More actions for /]) {
+    const btn = row.getByRole('button', { name }).locator('visible=true').first()
+    await expect(btn).toBeInViewport({ ratio: 1 })
+    const box = (await btn.boundingBox())!
+    expect(box.width, `${name} width`).toBeGreaterThanOrEqual(40)
+    expect(box.height, `${name} height`).toBeGreaterThanOrEqual(40)
+  }
+}
 
 async function spending(cookie: string) {
   const res = await get(cookie, '/dashboard/spend-by-category?period=current_month')

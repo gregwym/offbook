@@ -680,7 +680,7 @@ describe('TransactionsPage row name (#579)', () => {
 
     const first = rowFor('Blue Bottle')
     // Primary label is the first cell after the checkbox/date; it carries the merchant.
-    const primary = first.querySelector('td:nth-child(3) > span.font-medium')!
+    const primary = first.querySelector('td:nth-child(3) span.font-medium')!
     expect(primary).toHaveTextContent('Blue Bottle')
     // The raw bank string is still in the row (desktop column + phone meta line).
     expect(within(first).getAllByText('QAEDIT SQ *BLUE BTL 0415').length).toBeGreaterThan(0)
@@ -688,11 +688,11 @@ describe('TransactionsPage row name (#579)', () => {
     expect(within(first).getAllByRole('combobox', { name: 'Category for QAEDIT SQ *BLUE BTL 0415' }).length).toBeGreaterThan(0)
 
     const second = rowFor('Corner Bakery')
-    expect(second.querySelector('td:nth-child(3) > span.font-medium')).toHaveTextContent('Corner Bakery')
+    expect(second.querySelector('td:nth-child(3) span.font-medium')).toHaveTextContent('Corner Bakery')
     expect(within(second).getAllByText('TST* CORNER 22').length).toBeGreaterThan(0)
 
     const third = rowFor('ACH DEPOSIT 991')
-    expect(third.querySelector('td:nth-child(3) > span.font-medium')).toHaveTextContent('ACH DEPOSIT 991')
+    expect(third.querySelector('td:nth-child(3) span.font-medium')).toHaveTextContent('ACH DEPOSIT 991')
     // No secondary repeat in the phone meta line when the name is the bank string.
     // The bank string is the name, so it isn't repeated in the column or meta line.
     expect(within(third).getAllByText('ACH DEPOSIT 991')).toHaveLength(1)
