@@ -5,6 +5,8 @@ import { server } from '../test/server'
 import { expectHealthySmoke, renderPage, resetStores, setHouseholdScope } from '../test/testUtils'
 import * as fx from '../test/fixtures'
 import { InsightsPage } from './InsightsPage'
+import { currentMonth, monthLabel, monthWindow, shiftMonth } from '../lib/month'
+import { dayBefore } from '../lib/spendingLink'
 
 describe('InsightsPage smoke', () => {
   beforeEach(() => {
@@ -343,5 +345,94 @@ describe('InsightsPage net-worth missing exchange rate', () => {
     await waitFor(() => expect(posted).not.toBeNull())
     expect(posted!.assetID).toBe('7')
     expect(posted!.body).toMatchObject({ price: '1.5', quote_asset_id: 4 })
+  })
+})
+
+// #607: personal spending steps back a month for the month-end review.
+describe('InsightsPage spending month stepper', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  const prev = shiftMonth(currentMonth(), -1)
+  const prevWindow = monthWindow(prev)
+
+  it('loads the earlier month for categories and merchants and drills into that month', async () => {
+    const requested: { path: string; from: string | null; to: string | null }[] = []
+    const record = (request: Request) => {
+      const u = new URL(request.url)
+      requested.push({ path: u.pathname, from: u.searchParams.get('from'), to: u.searchParams.get('to') })
+    }
+    server.use(
+      http.get('*/dashboard/spend-by-category', ({ request }) => {
+        record(request)
+        const past = new URL(request.url).searchParams.get('from') != null
+        return HttpResponse.json({
+          data: [{ category_id: 7, name: past ? 'Travel' : 'Groceries', amount: past ? '410.250000000000000000' : '120.000000000000000000' }],
+          total: 1,
+        })
+      }),
+      http.get('*/dashboard/top-merchants', ({ request }) => {
+        record(request)
+        const past = new URL(request.url).searchParams.get('from') != null
+        return HttpResponse.json({
+          data: [{ merchant: past ? 'Air Canada' : 'Whole Foods', amount: '410.250000000000000000', count: 1 }],
+          total: 1,
+        })
+      }),
+    )
+    renderPage(<InsightsPage />)
+    const nav = await screen.findByRole('navigation', { name: 'Spending month' })
+    expect(within(nav).getByRole('button', { name: 'Next month' })).toBeDisabled()
+    const band = nav.closest('section') as HTMLElement
+    await within(band).findByRole('link', { name: 'Groceries' })
+
+    fireEvent.click(within(nav).getByRole('button', { name: 'Previous month' }))
+    const travel = await screen.findByRole('link', { name: 'Travel' })
+    expect(screen.getByRole('heading', { name: `Spending by category · ${monthLabel(prev)}` })).toBeInTheDocument()
+    expect(screen.getByText(`Top merchants · ${monthLabel(prev)}`)).toBeInTheDocument()
+    expect(requested).toContainEqual({ path: '/api/v1/dashboard/spend-by-category', ...prevWindow })
+    expect(requested).toContainEqual({ path: '/api/v1/dashboard/top-merchants', ...prevWindow })
+
+    const to = dayBefore(prevWindow.to)
+    expect(travel.getAttribute('href')).toBe(`/transactions?spending=1&category_id=7&from=${prevWindow.from}&to=${to}`)
+    expect(screen.getByRole('link', { name: 'Air Canada' }).getAttribute('href')).toBe(
+      `/transactions?spending=1&merchant=Air+Canada&from=${prevWindow.from}&to=${to}`,
+    )
+
+    fireEvent.click(within(nav).getByRole('button', { name: 'This month' }))
+    expect(await within(band).findByRole('link', { name: 'Groceries' })).toBeInTheDocument()
+    expect(within(nav).getByRole('button', { name: 'Next month' })).toBeDisabled()
+  })
+
+  it('shows an inline error with Retry when the earlier month fails, keeping the page healthy', async () => {
+    let fail = true
+    server.use(
+      http.get('*/dashboard/spend-by-category', ({ request }) => {
+        if (new URL(request.url).searchParams.get('from') == null) {
+          return HttpResponse.json({ data: fx.spendByCategory, total: 1 })
+        }
+        if (fail) return HttpResponse.json({ error: 'boom', code: 'INTERNAL' }, { status: 500 })
+        return HttpResponse.json({ data: [{ category_id: 9, name: 'Dining', amount: '55.000000000000000000' }], total: 1 })
+      }),
+    )
+    renderPage(<InsightsPage />)
+    const nav = await screen.findByRole('navigation', { name: 'Spending month' })
+    fireEvent.click(within(nav).getByRole('button', { name: 'Previous month' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(`Couldn’t load spending for ${monthLabel(prev)}`)
+    expect(screen.getByText(/asset allocation/i)).toBeInTheDocument()
+
+    fail = false
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('Dining')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('has no month stepper in household scope', async () => {
+    setHouseholdScope(1)
+    renderPage(<InsightsPage />)
+    await screen.findByText(/spending by category · this period/i)
+    expect(screen.queryByRole('navigation', { name: 'Spending month' })).toBeNull()
   })
 })
