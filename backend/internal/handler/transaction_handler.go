@@ -85,6 +85,8 @@ func (h *TransactionHandler) Register(g *gin.RouterGroup) {
 //	               figures count; category_id then matches split lines, and
 //	               the response adds spend_total (the matching figure)
 //	merchant     — with spending=true, the exact Top merchants label
+//	subcategory_ids — with spending=true and category_id, comma-separated
+//	               extra categories to match: a group budget's covered set (#596)
 //	limit        — default 50, clamped to [1, 200]
 //	offset       — default 0, must be non-negative
 func (h *TransactionHandler) List(c *gin.Context) {
@@ -160,6 +162,20 @@ func (h *TransactionHandler) List(c *gin.Context) {
 	if f.Merchant != "" && !f.Spending {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "merchant requires spending=true", "code": "INVALID_REQUEST"})
 		return
+	}
+	if v := c.Query("subcategory_ids"); v != "" {
+		if !f.Spending || f.CategoryID == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "subcategory_ids requires spending=true and a category_id", "code": "INVALID_REQUEST"})
+			return
+		}
+		for _, part := range strings.Split(v, ",") {
+			id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
+			if err != nil || id <= 0 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "subcategory_ids must be comma-separated positive integers", "code": "INVALID_REQUEST"})
+				return
+			}
+			f.SubcategoryIDs = append(f.SubcategoryIDs, id)
+		}
 	}
 	if v := c.Query("limit"); v != "" {
 		n, err := strconv.Atoi(v)

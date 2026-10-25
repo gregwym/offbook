@@ -31,6 +31,21 @@ describe('BudgetsPage smoke', () => {
     expect(await screen.findByText(/rolled over/i)).toBeTruthy()
   })
 
+  it('names the subcategories a group budget counts and drills into all of them (#596)', async () => {
+    const produce = { ...fx.categoryGroceries, id: 7, parent_id: 1, name: 'Produce', slug: 'produce', is_system: false }
+    server.use(
+      http.get('*/categories', () => HttpResponse.json({ data: [...fx.categories, produce], total: 3 })),
+      http.get('*/budgets/:id/spend', () =>
+        HttpResponse.json({ data: { ...fx.budgetSpend1, category_ids: [1, 7] } }),
+      ),
+    )
+    renderPage(<BudgetsPage />)
+    expect(await screen.findByText('Includes Produce')).toBeTruthy()
+    const card = screen.getByText('Includes Produce').closest('div.rounded-lg') as HTMLElement
+    const link = within(card).getByRole('link', { name: /see transactions/i })
+    expect(link.getAttribute('href')).toContain('category_id=1&subcategory_ids=7')
+  })
+
   it('words an overspent budget as "over budget" instead of a negative remainder', async () => {
     server.use(
       http.get('*/budgets/:id/spend', () =>

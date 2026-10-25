@@ -637,6 +637,24 @@ describe('TransactionsPage spending drill-down', () => {
     })
   })
 
+  it('passes a group budget drill-down subcategories through and names them (#596)', async () => {
+    const produce = { ...fx.categoryGroceries, id: 7, parent_id: 1, name: 'Produce', slug: 'produce', is_system: false }
+    const subcats: (string | null)[] = []
+    server.use(
+      http.get(`${API}/categories`, () => HttpResponse.json({ data: [...fx.categories, produce], total: 3 })),
+      http.get(`${API}/transactions`, ({ request }) => {
+        const q = new URL(request.url).searchParams
+        if (q.get('spending')) subcats.push(q.get('subcategory_ids'))
+        return HttpResponse.json({ data: fx.transactions, total: 1, spend_total: '20' })
+      }),
+    )
+    renderPage(<TransactionsPage />, '/transactions?spending=1&category_id=1&subcategory_ids=7&from=2026-10-01&to=2026-10-31')
+    const banner = await screen.findByRole('region', { name: /spending drill-down/i })
+    await waitFor(() => expect(within(banner).getByText('Groceries (incl. Produce)')).toBeInTheDocument())
+    await waitFor(() => expect(subcats.length).toBeGreaterThan(0))
+    expect(subcats.every((v) => v === '7')).toBe(true)
+  })
+
   it('passes a merchant drill-down through and labels the banner with it', async () => {
     let merchant: string | null = null
     server.use(

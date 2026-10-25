@@ -32,6 +32,9 @@ export type TransactionListFilter = {
   spending?: boolean
   // With spending: the exact Top merchants label.
   merchant?: string
+  // With spending and category_id: more categories to match, a group
+  // budget's subcategories (#596).
+  subcategory_ids?: number[]
   limit?: number
   offset?: number
 }
@@ -52,6 +55,7 @@ export async function listTransactions(
   if (f.tag) params.tag = f.tag
   if (f.spending) params.spending = 'true'
   if (f.spending && f.merchant) params.merchant = f.merchant
+  if (f.spending && f.category_id != null && f.subcategory_ids?.length) params.subcategory_ids = f.subcategory_ids.join(',')
   if (f.limit !== undefined) params.limit = f.limit
   if (f.offset !== undefined) params.offset = f.offset
 

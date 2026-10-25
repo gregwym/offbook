@@ -39,6 +39,9 @@ type TransactionFilter struct {
 	// then match the allocation's category, so a split row appears under
 	// each category it is split into.
 	Spending bool
+	// SubcategoryIDs, with Spending and CategoryID, widens the category
+	// match to these categories too — a group budget's covered set (#596).
+	SubcategoryIDs []int64
 	// Merchant, with Spending, restricts to rows whose merchant label
 	// (merchantLabelSQL) equals it exactly — the Top merchants grouping.
 	Merchant string
@@ -60,6 +63,9 @@ func spendLineCond(userID int64, f TransactionFilter) (string, []any) {
 	switch {
 	case f.UncategorizedOnly:
 		cond += " AND s.category_id IS NULL"
+	case f.CategoryID != nil && len(f.SubcategoryIDs) > 0:
+		cond += " AND s.category_id IN ?"
+		args = append(args, append([]int64{*f.CategoryID}, f.SubcategoryIDs...))
 	case f.CategoryID != nil:
 		cond += " AND s.category_id = ?"
 		args = append(args, *f.CategoryID)
