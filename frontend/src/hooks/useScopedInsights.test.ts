@@ -105,6 +105,8 @@ describe('useScopedInsights (personal scope)', () => {
         category_name: fx.categoryGroceries.name,
         period: fx.budget1.period,
         limit: fx.budgetSpend1.limit,
+        carryover: fx.budgetSpend1.carryover,
+        available: fx.budgetSpend1.available,
         spent: fx.budgetSpend1.spent,
         pct: fx.budgetSpend1.pct,
         period_start: fx.budgetSpend1.period_start,

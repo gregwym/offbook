@@ -913,24 +913,37 @@ function BudgetsGoalsBand({ data }: { data: InsightsData }) {
               const over = b.pct > 1
               const warn = b.pct > 0.8 && !over
               const barColor = over ? 'bg-red-500' : warn ? 'bg-amber-500' : 'bg-indigo-400'
+              // Same figures as the Budgets card (#613): spent of available
+              // (limit + rollover), the measure pct and the bar use.
+              const carried = Number(b.carryover) > 0
               return (
                 <li key={b.id}>
-                  <div className="flex items-center justify-between">
-                    {b.period_start && b.period_end ? (
-                      <Link
-                        to={spendingHref({ start: b.period_start, end: b.period_end, categoryID: b.category_id })}
-                        title={`See the transactions behind the ${b.category_name} budget`}
-                        className="text-indigo-700 hover:text-indigo-900 hover:underline"
-                      >
-                        {b.category_name}
-                      </Link>
-                    ) : (
-                      <span className="text-gray-700">{b.category_name}</span>
-                    )}
-                    <span className={over ? 'text-red-700' : 'text-gray-700'}>
-                      <AmountDisplay amount={b.spent} /> / <AmountDisplay amount={b.limit} />
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="min-w-0">
+                      {b.period_start && b.period_end ? (
+                        <Link
+                          to={spendingHref({ start: b.period_start, end: b.period_end, categoryID: b.category_id })}
+                          title={`See the transactions behind the ${b.category_name} budget`}
+                          className="text-indigo-700 hover:text-indigo-900 hover:underline"
+                        >
+                          {b.category_name}
+                        </Link>
+                      ) : (
+                        <span className="text-gray-700">{b.category_name}</span>
+                      )}
+                      {b.period !== 'monthly' && (
+                        <span className="ml-1.5 text-xs text-gray-500">{b.period}</span>
+                      )}
+                    </span>
+                    <span className={['shrink-0 text-right', over ? 'text-red-700' : 'text-gray-700'].join(' ')}>
+                      <AmountDisplay amount={b.spent} /> / <AmountDisplay amount={b.available} />
                     </span>
                   </div>
+                  {carried && (
+                    <div className="mt-0.5 text-right text-xs text-emerald-700">
+                      includes <AmountDisplay amount={b.carryover} /> rolled over
+                    </div>
+                  )}
                   <div className="mt-1 h-2 rounded bg-gray-100">
                     <div className={`${barColor} h-full rounded`} style={{ width: `${pct}%` }} />
                   </div>
