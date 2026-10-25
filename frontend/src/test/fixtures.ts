@@ -124,6 +124,7 @@ export const budgetSummary1: BudgetMonthSummary = {
 export const budgetSpend1: BudgetSpend = {
   budget_id: 1,
   category_id: 1,
+  category_ids: [1],
   period: 'monthly',
   period_start: '2026-07-01',
   period_end: '2026-07-31',

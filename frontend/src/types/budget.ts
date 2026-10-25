@@ -22,6 +22,9 @@ export type Budget = {
 export type BudgetSpend = {
   budget_id: number
   category_id: number
+  // Every category this budget counts (#596): its own, then its
+  // subcategories that have no budget of their own.
+  category_ids: number[]
   period: BudgetPeriod
   period_start: string
   period_end: string

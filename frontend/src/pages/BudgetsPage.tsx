@@ -81,12 +81,13 @@ export function BudgetsPage() {
       key={b.id}
       row={b}
       category={categoriesById.get(b.category_id)}
+      includes={b.subcategory_ids.map((id) => categoriesById.get(id)?.name ?? `#${id}`)}
       canMutate={canMutate}
       drillHref={
         // Personal only (#571): a household budget sums members'
         // books, which have no shared transaction list.
         !isHousehold && b.period_start && b.period_end
-          ? spendingHref({ start: b.period_start, end: b.period_end, categoryID: b.category_id })
+          ? spendingHref({ start: b.period_start, end: b.period_end, categoryID: b.category_id, subcategoryIDs: b.subcategory_ids })
           : undefined
       }
       onEdit={() => setEditing(b)}
@@ -390,6 +391,8 @@ function Stat({ label, testID, tone, children }: { label: string; testID: string
 type CardProps = {
   row: ScopedBudgetRow
   category?: Category
+  // Names of the subcategories a group budget also counts (#596).
+  includes: string[]
   canMutate: boolean
   // The current period's spending drill-down (#571), when it has one.
   drillHref?: string
@@ -397,7 +400,7 @@ type CardProps = {
   onDelete: () => Promise<void>
 }
 
-function BudgetCard({ row, category, canMutate, drillHref, onEdit, onDelete }: CardProps) {
+function BudgetCard({ row, category, includes, canMutate, drillHref, onEdit, onDelete }: CardProps) {
   const pct = row.pct != null ? Math.min(100, Math.round(row.pct * 100)) : 0
   const over = row.pct != null && row.pct >= 1
   const warning = row.pct != null && row.pct >= 0.8 && !over
@@ -410,6 +413,9 @@ function BudgetCard({ row, category, canMutate, drillHref, onEdit, onDelete }: C
           <p className="mt-0.5 text-xs text-gray-500">
             {row.period}{row.rollover ? ' · rollover' : ''}{!row.is_active ? ' · paused' : ''}
           </p>
+          {includes.length > 0 && (
+            <p className="mt-0.5 text-xs text-gray-500">Includes {includes.join(', ')}</p>
+          )}
         </div>
         {canMutate && (
           <div className="flex shrink-0 items-center gap-1 text-gray-400">

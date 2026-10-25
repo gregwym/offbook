@@ -53,6 +53,9 @@ export type ScopedBudgetRow = {
   pct: number | null
   period_start: string | null
   period_end: string | null
+  // Subcategories whose spending this budget also counts (#596); empty for
+  // a plain category and in household scope.
+  subcategory_ids: number[]
 }
 
 // ScopedBudgetInput is the single create/update payload the page produces.
@@ -284,6 +287,7 @@ async function loadPersonal(on?: string): Promise<ScopedBudgetRow[]> {
       pct: s ? s.pct : null,
       period_start: s?.period_start ?? null,
       period_end: s?.period_end ?? null,
+      subcategory_ids: (s?.category_ids ?? []).filter((id) => id !== b.category_id),
     }
   })
 }
@@ -311,6 +315,7 @@ async function loadHousehold(householdId: number): Promise<ScopedBudgetRow[]> {
       pct: p ? Number.parseFloat(p.pace) || 0 : null,
       period_start: null,
       period_end: null,
+      subcategory_ids: [],
     }
   })
 }

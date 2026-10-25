@@ -67,6 +67,22 @@ export function TransactionsPage() {
       ? urlParams.get('category_id') ?? ''
       : filter.category_id === undefined ? '' : filter.category_id === null ? 'null' : String(filter.category_id),
   )
+  // A group budget's drill-down also names the subcategories it counts
+  // (#596). They belong to the category they came with: picking another
+  // category drops them.
+  const [subcats] = useState(() => ({
+    category: drillIn ? urlParams.get('category_id') ?? '' : '',
+    ids: drillIn
+      ? (urlParams.get('subcategory_ids') ?? '').split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0)
+      : [],
+  }))
+  const subcategoryIDs = useMemo(
+    () => (categoryID !== '' && categoryID === subcats.category ? subcats.ids : []),
+    [categoryID, subcats],
+  )
+  const subcategoryNames = subcategoryIDs
+    .map((id) => categories.find((c) => c.id === id)?.name ?? `#${id}`)
+    .join(', ')
   const [from, setFrom] = useState<string>(drillIn ? urlParams.get('from') ?? '' : filter.from ?? '')
   const [to, setTo] = useState<string>(drillIn ? urlParams.get('to') ?? '' : filter.to ?? '')
   const [searchInput, setSearchInput] = useState<string>(drillIn ? '' : filter.search ?? '')
@@ -92,7 +108,7 @@ export function TransactionsPage() {
     },
     categoryID && {
       key: 'category',
-      text: `Category: ${categoryID === 'null' ? 'Uncategorized' : categories.find((c) => String(c.id) === categoryID)?.name ?? categoryID}`,
+      text: `Category: ${categoryID === 'null' ? 'Uncategorized' : categories.find((c) => String(c.id) === categoryID)?.name ?? categoryID}${subcategoryNames ? ` + ${subcategoryNames}` : ''}`,
       clear: () => setCategoryID(''),
     },
     from && { key: 'from', text: `From: ${from}`, clear: () => setFrom('') },
@@ -143,7 +159,7 @@ export function TransactionsPage() {
     setSearchParams(
       (prev) => {
         const out = new URLSearchParams(prev)
-        const want: Record<string, string> = { category_id: categoryID, from, to }
+        const want: Record<string, string> = { category_id: categoryID, subcategory_ids: subcategoryIDs.join(','), from, to }
         let changed = false
         for (const [k, v] of Object.entries(want)) {
           if ((prev.get(k) ?? '') === v) continue
@@ -155,12 +171,12 @@ export function TransactionsPage() {
       },
       { replace: true },
     )
-  }, [spending, categoryID, from, to, setSearchParams])
+  }, [spending, categoryID, subcategoryIDs, from, to, setSearchParams])
   const exitSpending = () => {
     setSearchParams(
       (prev) => {
         const out = new URLSearchParams(prev)
-        for (const k of ['spending', 'merchant', 'category_id', 'from', 'to']) out.delete(k)
+        for (const k of ['spending', 'merchant', 'category_id', 'subcategory_ids', 'from', 'to']) out.delete(k)
         return out
       },
       { replace: true },
@@ -183,7 +199,7 @@ export function TransactionsPage() {
     : categoryID === 'null'
       ? 'Uncategorized'
       : categoryID
-        ? categories.find((c) => String(c.id) === categoryID)?.name ?? 'Category'
+        ? `${categories.find((c) => String(c.id) === categoryID)?.name ?? 'Category'}${subcategoryNames ? ` (incl. ${subcategoryNames})` : ''}`
         : 'All categories'
   // Row selection for bulk review, plus the last review action so an
   // accidental click can be undone without a reload.
@@ -260,9 +276,10 @@ export function TransactionsPage() {
       tag: tag === '' ? undefined : tag,
       spending: spending || undefined,
       merchant: merchant === '' ? undefined : merchant,
+      subcategory_ids: spending && subcategoryIDs.length ? subcategoryIDs : undefined,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountID, categoryID, from, to, search, tag, needsReview, spending, merchant])
+  }, [accountID, categoryID, subcategoryIDs, from, to, search, tag, needsReview, spending, merchant])
 
   // Recent-import signal: the most recent last_synced_at across all
   // Plaid-linked accounts. The banner key is built off this so a new

@@ -30,7 +30,8 @@ func seedSummaryCategory(t *testing.T, g *gorm.DB, name string, parent *int64) i
 // spent-in-budgets and not-in-a-budget for May, with spending in budgeted,
 // unbudgeted, child and no category, plus a refund, a transfer, a hidden row
 // and an April row. Spent in budgets + not in a budget equals the Insights
-// spending total exactly, and only active monthly budgets count.
+// spending total exactly, and only active monthly budgets count. A child whose
+// own budget is paused counts in its group's budget (#596).
 func TestBudgetService_MonthSummary_AddsUpToInsightsSpending(t *testing.T) {
 	svc, userID, groceries, g := newBudgetSvc(t)
 	ctx := context.Background()
@@ -62,7 +63,7 @@ func TestBudgetService_MonthSummary_AddsUpToInsightsSpending(t *testing.T) {
 	seed(&groceries, "-60.25", may, false)
 	seed(&groceries, "10.00", may, false) // refund nets against groceries
 	seed(&dining, "-500.10", may, false)
-	seed(&snacks, "-20.00", may, false) // child of groceries: its own category
+	seed(&snacks, "-20.00", may, false) // child of groceries, paused budget: counts in groceries (#596)
 	seed(nil, "-7.77", may, false)      // uncategorized
 	seed(nil, "3000.00", may, false)    // income, not spending
 	seed(&dining, "-1000.00", may, true)
@@ -101,9 +102,9 @@ func TestBudgetService_MonthSummary_AddsUpToInsightsSpending(t *testing.T) {
 	}{
 		{"budgeted", sum.Budgeted, "400"},
 		{"available", sum.Available, "400"},
-		{"spent_in_budgets", sum.SpentInBudgets, "90.25"},
-		{"remaining", sum.Remaining, "309.75"},
-		{"not_in_budget", sum.NotInBudget, "527.87"},
+		{"spent_in_budgets", sum.SpentInBudgets, "110.25"},
+		{"remaining", sum.Remaining, "289.75"},
+		{"not_in_budget", sum.NotInBudget, "507.87"},
 		{"total_spending", sum.TotalSpending, "618.12"},
 	}
 	for _, c := range checks {
@@ -122,12 +123,12 @@ func TestBudgetService_MonthSummary_AddsUpToInsightsSpending(t *testing.T) {
 	breakdown := decimal.Zero
 	for _, u := range sum.Unbudgeted {
 		breakdown = breakdown.Add(u.Spent)
-		if u.CategoryID != nil && *u.CategoryID == groceries {
-			t.Errorf("budgeted category listed as unbudgeted")
+		if u.CategoryID != nil && (*u.CategoryID == groceries || *u.CategoryID == snacks) {
+			t.Errorf("budgeted category %d listed as unbudgeted", *u.CategoryID)
 		}
 	}
-	if !breakdown.Equal(sum.NotInBudget) || len(sum.Unbudgeted) != 3 {
-		t.Errorf("unbudgeted breakdown = %s over %d rows, want %s over 3", breakdown, len(sum.Unbudgeted), sum.NotInBudget)
+	if !breakdown.Equal(sum.NotInBudget) || len(sum.Unbudgeted) != 2 {
+		t.Errorf("unbudgeted breakdown = %s over %d rows, want %s over 2", breakdown, len(sum.Unbudgeted), sum.NotInBudget)
 	}
 	if sum.Unbudgeted[0].CategoryID == nil || *sum.Unbudgeted[0].CategoryID != dining {
 		t.Errorf("largest unbudgeted category = %v, want dining", sum.Unbudgeted[0].CategoryID)
@@ -152,8 +153,8 @@ func TestBudgetService_MonthSummary_AddsUpToInsightsSpending(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SpendOn: %v", err)
 	}
-	if !card.Spent.Equal(decimal.RequireFromString("90.25")) {
-		t.Errorf("groceries card spent = %s, want 90.25", card.Spent)
+	if !card.Spent.Equal(decimal.RequireFromString("110.25")) {
+		t.Errorf("groceries card spent = %s, want 110.25", card.Spent)
 	}
 }
 

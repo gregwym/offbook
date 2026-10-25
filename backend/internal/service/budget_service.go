@@ -62,8 +62,11 @@ type UpdateBudgetInput struct {
 // transactions. Spent is a positive decimal (the codebase's sign convention
 // stores outflows as negative amounts; we flip the sign at the boundary).
 type BudgetSpend struct {
-	BudgetID    int64           `json:"budget_id"`
-	CategoryID  int64           `json:"category_id"`
+	BudgetID   int64 `json:"budget_id"`
+	CategoryID int64 `json:"category_id"`
+	// CategoryIDs is every category whose spending this budget counts: its
+	// own, then its subcategories without a budget of their own (#596).
+	CategoryIDs []int64         `json:"category_ids"`
 	Period      string          `json:"period"`
 	PeriodStart time.Time       `json:"period_start"`
 	PeriodEnd   time.Time       `json:"period_end"` // exclusive
@@ -248,14 +251,51 @@ func (s *BudgetService) SpendOn(ctx context.Context, userID, id int64, on time.T
 	if err != nil {
 		return nil, err
 	}
-	return s.spendView(ctx, userID, b, on)
+	budgets, err := s.repo.List(ctx, repository.UserOwner(userID))
+	if err != nil {
+		return nil, fmt.Errorf("list budgets: %w", err)
+	}
+	covers, err := s.coverage(ctx, userID, budgets)
+	if err != nil {
+		return nil, err
+	}
+	return s.spendView(ctx, userID, b, covers[b.ID], on)
+}
+
+// coverage maps each budget's id to the categories whose spending it counts
+// (#596): its own category, plus each direct subcategory of it that has no
+// active budget of its own. A subcategory's spending therefore belongs to at
+// most one budget — its own if it has one, else its group's — so budgets
+// never count the same dollar twice. Categories nest one level at most.
+func (s *BudgetService) coverage(ctx context.Context, userID int64, budgets []model.Budget) (map[int64][]int64, error) {
+	cats, err := s.catRepo.List(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list categories: %w", err)
+	}
+	ownBudget := map[int64]bool{}
+	for _, b := range budgets {
+		if b.IsActive {
+			ownBudget[b.CategoryID] = true
+		}
+	}
+	children := map[int64][]int64{}
+	for _, c := range cats {
+		if c.ParentID != nil && !ownBudget[c.ID] {
+			children[*c.ParentID] = append(children[*c.ParentID], c.ID)
+		}
+	}
+	out := make(map[int64][]int64, len(budgets))
+	for _, b := range budgets {
+		out[b.ID] = append([]int64{b.CategoryID}, children[b.CategoryID]...)
+	}
+	return out, nil
 }
 
 // spendView is SpendOn for a budget already resolved through an owner-scoped
-// read.
-func (s *BudgetService) spendView(ctx context.Context, userID int64, b *model.Budget, on time.Time) (*BudgetSpend, error) {
+// read; cats is its coverage.
+func (s *BudgetService) spendView(ctx context.Context, userID int64, b *model.Budget, cats []int64, on time.Time) (*BudgetSpend, error) {
 	from, to := budgetPeriodWindow(b.Period, on)
-	spent, err := s.repo.CurrentPeriodSpend(ctx, userID, b.CategoryID, from, to)
+	spent, err := s.repo.CurrentPeriodSpend(ctx, userID, cats, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("compute spend: %w", err)
 	}
@@ -264,7 +304,7 @@ func (s *BudgetService) spendView(ctx context.Context, userID int64, b *model.Bu
 		return nil, err
 	}
 	limit := limits.at(from)
-	carry, err := s.carryoverWith(ctx, userID, b, limits, from)
+	carry, err := s.carryoverWith(ctx, userID, b, cats, limits, from)
 	if err != nil {
 		return nil, err
 	}
@@ -278,6 +318,7 @@ func (s *BudgetService) spendView(ctx context.Context, userID int64, b *model.Bu
 	return &BudgetSpend{
 		BudgetID:    b.ID,
 		CategoryID:  b.CategoryID,
+		CategoryIDs: cats,
 		Period:      b.Period,
 		PeriodStart: from,
 		PeriodEnd:   to,
@@ -340,13 +381,17 @@ func (s *BudgetService) MonthSummary(ctx context.Context, userID int64, on time.
 		Month: from.Format("2006-01"), PeriodStart: from, PeriodEnd: to,
 		Unbudgeted: []UnbudgetedSpend{},
 	}
+	covers, err := s.coverage(ctx, userID, budgets)
+	if err != nil {
+		return nil, err
+	}
 	budgeted := map[int64]bool{}
 	for i := range budgets {
 		b := &budgets[i]
 		if b.Period != BudgetPeriodMonthly || !b.IsActive {
 			continue
 		}
-		v, err := s.spendView(ctx, userID, b, on)
+		v, err := s.spendView(ctx, userID, b, covers[b.ID], on)
 		if err != nil {
 			return nil, err
 		}
@@ -354,7 +399,9 @@ func (s *BudgetService) MonthSummary(ctx context.Context, userID int64, on time.
 		out.Budgeted = out.Budgeted.Add(v.Limit)
 		out.Carryover = out.Carryover.Add(v.Carryover)
 		out.SpentInBudgets = out.SpentInBudgets.Add(v.Spent)
-		budgeted[b.CategoryID] = true
+		for _, id := range v.CategoryIDs {
+			budgeted[id] = true
+		}
 	}
 	out.Available = out.Budgeted.Add(out.Carryover)
 	out.Remaining = out.Available.Sub(out.SpentInBudgets)
@@ -385,7 +432,7 @@ const maxRolloverPeriods = 36
 // (limit - spent) and the running balance never goes below zero, so an
 // overspent period does not penalize later ones. Each past period adds the
 // limit in effect for it (#580).
-func (s *BudgetService) carryover(ctx context.Context, userID int64, b *model.Budget, currentFrom time.Time) (decimal.Decimal, error) {
+func (s *BudgetService) carryover(ctx context.Context, userID int64, b *model.Budget, cats []int64, currentFrom time.Time) (decimal.Decimal, error) {
 	if !b.Rollover {
 		return decimal.Zero, nil
 	}
@@ -393,10 +440,10 @@ func (s *BudgetService) carryover(ctx context.Context, userID int64, b *model.Bu
 	if err != nil {
 		return decimal.Zero, err
 	}
-	return s.carryoverWith(ctx, userID, b, limits, currentFrom)
+	return s.carryoverWith(ctx, userID, b, cats, limits, currentFrom)
 }
 
-func (s *BudgetService) carryoverWith(ctx context.Context, userID int64, b *model.Budget, limits budgetLimits, currentFrom time.Time) (decimal.Decimal, error) {
+func (s *BudgetService) carryoverWith(ctx context.Context, userID int64, b *model.Budget, cats []int64, limits budgetLimits, currentFrom time.Time) (decimal.Decimal, error) {
 	if !b.Rollover {
 		return decimal.Zero, nil
 	}
@@ -423,7 +470,7 @@ func (s *BudgetService) carryoverWith(ctx context.Context, userID int64, b *mode
 	if unit == "" {
 		unit = "month"
 	}
-	spend, err := s.repo.SpendByPeriod(ctx, userID, b.CategoryID, unit, earliest, currentFrom)
+	spend, err := s.repo.SpendByPeriod(ctx, userID, cats, unit, earliest, currentFrom)
 	if err != nil {
 		return decimal.Zero, fmt.Errorf("compute rollover: %w", err)
 	}
@@ -530,7 +577,7 @@ func (s *BudgetService) Alerts(ctx context.Context, userID int64) ([]BudgetAlert
 	}
 	// Active only — repo returns both for the budgets page, but alerts
 	// shouldn't surface a paused budget.
-	active := budgets[:0]
+	active := make([]model.Budget, 0, len(budgets))
 	for _, b := range budgets {
 		if b.IsActive {
 			active = append(active, b)
@@ -538,6 +585,10 @@ func (s *BudgetService) Alerts(ctx context.Context, userID int64) ([]BudgetAlert
 	}
 	if len(active) == 0 {
 		return []BudgetAlert{}, nil
+	}
+	covers, err := s.coverage(ctx, userID, budgets)
+	if err != nil {
+		return nil, err
 	}
 
 	// Bucket budgets by period so we issue exactly one spend-by-category
@@ -575,28 +626,30 @@ func (s *BudgetService) Alerts(ctx context.Context, userID int64) ([]BudgetAlert
 	out := make([]BudgetAlert, 0, len(active))
 	for period, bucket := range byPeriod {
 		from, to := budgetPeriodWindow(period, now)
-		// Distinct categories in this bucket.
+		// Distinct covered categories in this bucket.
 		bucketCatIDs := make([]int64, 0, len(bucket))
 		seen := map[int64]struct{}{}
 		for _, b := range bucket {
-			if _, ok := seen[b.CategoryID]; ok {
-				continue
+			for _, id := range covers[b.ID] {
+				if _, ok := seen[id]; ok {
+					continue
+				}
+				seen[id] = struct{}{}
+				bucketCatIDs = append(bucketCatIDs, id)
 			}
-			seen[b.CategoryID] = struct{}{}
-			bucketCatIDs = append(bucketCatIDs, b.CategoryID)
 		}
 		spend, err := s.repo.SpendByCategoryInRange(ctx, userID, bucketCatIDs, from, to)
 		if err != nil {
 			return nil, fmt.Errorf("spend by category: %w", err)
 		}
 		for _, b := range bucket {
-			spent, ok := spend[b.CategoryID]
-			if !ok {
-				spent = decimal.Zero
+			spent := decimal.Zero
+			for _, id := range covers[b.ID] {
+				spent = spent.Add(spend[id])
 			}
 			available := b.Amount
 			if b.Rollover {
-				carry, err := s.carryover(ctx, userID, &b, from)
+				carry, err := s.carryover(ctx, userID, &b, covers[b.ID], from)
 				if err != nil {
 					return nil, err
 				}

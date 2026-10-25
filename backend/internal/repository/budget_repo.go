@@ -30,21 +30,22 @@ type BudgetRepository interface {
 	AmountHistory(ctx context.Context, budgetID int64) ([]model.BudgetAmount, error)
 	SoftDelete(ctx context.Context, owner PlanOwner, id int64) error
 	// CurrentPeriodSpend returns the sum of -amount (i.e. positive spending)
-	// over [from, to) for transactions matching (userID, categoryID). Outflows
-	// only: amount < 0 in the codebase's sign convention. Returns 0 (not an
-	// error) when no transactions match.
-	CurrentPeriodSpend(ctx context.Context, userID, categoryID int64, from, to time.Time) (decimal.Decimal, error)
+	// over [from, to) for the user's transactions in any of categoryIDs — a
+	// budget's covered categories (#596). Outflows only: amount < 0 in the
+	// codebase's sign convention. Returns 0 (not an error) when no
+	// transactions match.
+	CurrentPeriodSpend(ctx context.Context, userID int64, categoryIDs []int64, from, to time.Time) (decimal.Decimal, error)
 	// SpendByCategoryInRange returns SUM(-amount) FILTER (amount < 0) grouped
 	// by category over [from, to), restricted to the given category_ids.
 	// One query for the whole batch — avoids N round-trips when computing
 	// alerts across many budgets. Categories with no matching transactions
 	// are simply absent from the result map.
 	SpendByCategoryInRange(ctx context.Context, userID int64, categoryIDs []int64, from, to time.Time) (map[int64]decimal.Decimal, error)
-	// SpendByPeriod returns one category's spend (same predicate as
+	// SpendByPeriod returns the spend of categoryIDs (same predicate as
 	// CurrentPeriodSpend) bucketed by calendar period ("month", "week" or
 	// "year", Monday-start weeks) over [from, to). Keys are the UTC bucket
 	// start dates; periods with no spend are absent. Used for rollover.
-	SpendByPeriod(ctx context.Context, userID, categoryID int64, unit string, from, to time.Time) (map[time.Time]decimal.Decimal, error)
+	SpendByPeriod(ctx context.Context, userID int64, categoryIDs []int64, unit string, from, to time.Time) (map[time.Time]decimal.Decimal, error)
 	// SpendAllCategoriesInRange is the month's spending for every category
 	// (nil = uncategorized) over [from, to), with the same predicate as
 	// CurrentPeriodSpend and the Insights spending total — so its rows sum to
@@ -204,7 +205,7 @@ func (r *budgetRepo) SpendByCategoryInRange(ctx context.Context, userID int64, c
 	return out, nil
 }
 
-func (r *budgetRepo) CurrentPeriodSpend(ctx context.Context, userID, categoryID int64, from, to time.Time) (decimal.Decimal, error) {
+func (r *budgetRepo) CurrentPeriodSpend(ctx context.Context, userID int64, categoryIDs []int64, from, to time.Time) (decimal.Decimal, error) {
 	// Sign convention: outflows are negative; we want a positive "spent"
 	// total. SUM(-amount) FILTER (amount < 0) mirrors dashboard_repo.
 	// Transfers are excluded so internal moves don't count as spend.
@@ -214,12 +215,12 @@ func (r *budgetRepo) CurrentPeriodSpend(ctx context.Context, userID, categoryID 
 		FROM spend_lines
 		WHERE deleted_at IS NULL
 		  AND user_id = ?
-		  AND category_id = ?
+		  AND category_id IN ?
 		  AND is_transfer = FALSE
 		  AND kind = 'flow'
 		  AND transaction_date >= ?
 		  AND transaction_date <  ?
-	`, userID, categoryID, from, to).Scan(&s).Error
+	`, userID, categoryIDs, from, to).Scan(&s).Error
 	if err != nil {
 		return decimal.Zero, err
 	}
@@ -230,7 +231,7 @@ func (r *budgetRepo) CurrentPeriodSpend(ctx context.Context, userID, categoryID 
 	return d, nil
 }
 
-func (r *budgetRepo) SpendByPeriod(ctx context.Context, userID, categoryID int64, unit string, from, to time.Time) (map[time.Time]decimal.Decimal, error) {
+func (r *budgetRepo) SpendByPeriod(ctx context.Context, userID int64, categoryIDs []int64, unit string, from, to time.Time) (map[time.Time]decimal.Decimal, error) {
 	switch unit {
 	case "month", "week", "year":
 	default:
@@ -249,13 +250,13 @@ func (r *budgetRepo) SpendByPeriod(ctx context.Context, userID, categoryID int64
 		FROM spend_lines
 		WHERE deleted_at IS NULL
 		  AND user_id = ?
-		  AND category_id = ?
+		  AND category_id IN ?
 		  AND is_transfer = FALSE
 		  AND kind = 'flow'
 		  AND transaction_date >= ?
 		  AND transaction_date <  ?
 		GROUP BY 1
-	`, userID, categoryID, from, to).Scan(&rows).Error; err != nil {
+	`, userID, categoryIDs, from, to).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make(map[time.Time]decimal.Decimal, len(rows))
