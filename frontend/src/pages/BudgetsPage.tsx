@@ -4,7 +4,9 @@
 // allows mutation; household scope gates create/edit/delete on the member's
 // role (owner/contributor). See hooks/useScopedBudgets.ts for the branch.
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ChevronLeft, ChevronRight, Pencil, Plus, Target, Trash2 } from 'lucide-react'
+import { ChevronRight, Pencil, Plus, Target, Trash2 } from 'lucide-react'
+import { MonthStepper } from '../components/MonthStepper'
+import { monthLabel } from '../lib/month'
 import { Link } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import {
@@ -127,7 +129,7 @@ export function BudgetsPage() {
       </div>
 
       {!isHousehold && (rows.length > 0 || month) && (
-        <MonthStepper month={month} onChange={setMonth} />
+        <MonthStepper month={month} onChange={setMonth} label="Budget month" />
       )}
       {/* Each past month shows the limit that applied then (#580). */}
       {month && rows.length > 0 && notShown > 0 && (
@@ -234,51 +236,6 @@ export function BudgetsPage() {
         />
       )}
     </div>
-  )
-}
-
-// currentMonth is the server's current month (budget windows are UTC).
-function currentMonth(): string {
-  return new Date().toISOString().slice(0, 7)
-}
-
-function shiftMonth(month: string, delta: number): string {
-  const [y, m] = month.split('-').map(Number)
-  return new Date(Date.UTC(y, m - 1 + delta, 1)).toISOString().slice(0, 7)
-}
-
-function monthLabel(month: string): string {
-  const [y, m] = month.split('-').map(Number)
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
-}
-
-// MonthStepper steps the Budgets page back through earlier months (#577).
-// month null is the current period; "next" stops there.
-function MonthStepper({ month, onChange }: { month: string | null; onChange: (month: string | null) => void }) {
-  const shown = month ?? currentMonth()
-  const step = (delta: number) => {
-    const next = shiftMonth(shown, delta)
-    onChange(next >= currentMonth() ? null : next)
-  }
-  const btn =
-    'inline-flex h-10 w-10 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40'
-  return (
-    <nav aria-label="Budget month" className="mt-4 flex flex-wrap items-center gap-2">
-      <button type="button" className={btn} onClick={() => step(-1)} aria-label="Previous month">
-        <ChevronLeft size={16} />
-      </button>
-      <span className="min-w-[9rem] text-center text-sm font-medium text-gray-900" aria-live="polite">
-        {monthLabel(shown)}
-      </span>
-      <button type="button" className={btn} onClick={() => step(1)} disabled={month == null} aria-label="Next month">
-        <ChevronRight size={16} />
-      </button>
-      {month && (
-        <button type="button" onClick={() => onChange(null)} className="text-sm font-medium text-indigo-600 hover:text-indigo-800">
-          This month
-        </button>
-      )}
-    </nav>
   )
 }
 

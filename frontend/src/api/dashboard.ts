@@ -24,8 +24,13 @@ export async function getBudgetAlerts(): Promise<BudgetAlert[]> {
   return res.data.data
 }
 
-export async function getSpendByCategory(): Promise<SpendByCategoryItem[]> {
-  const res = await apiClient.get<ApiList<SpendByCategoryItem>>('/dashboard/spend-by-category')
+// window is a [from, to) pair of YYYY-MM-DD dates; omitted = current month.
+export type DateWindow = { from: string; to: string }
+
+export async function getSpendByCategory(window?: DateWindow): Promise<SpendByCategoryItem[]> {
+  const res = await apiClient.get<ApiList<SpendByCategoryItem>>('/dashboard/spend-by-category', {
+    params: window,
+  })
   return res.data.data
 }
 
@@ -51,9 +56,9 @@ export async function getCategoryTrend(months = 6): Promise<CategoryTrendItem[]>
   return res.data.data
 }
 
-export async function getTopMerchants(limit = 10): Promise<MerchantSpendItem[]> {
+export async function getTopMerchants(limit = 10, window?: DateWindow): Promise<MerchantSpendItem[]> {
   const res = await apiClient.get<ApiList<MerchantSpendItem>>('/dashboard/top-merchants', {
-    params: { limit },
+    params: { limit, ...window },
   })
   return res.data.data
 }

@@ -6,12 +6,15 @@
 // The 5 bands map to docs/designs/App Hierarchy v6.html §06:
 //   1) Net worth headline + trend line
 //   2) Allocation (donut by asset kind)
-//   3) Spending by category (current period)
+//   3) Spending by category (current month; personal can step back, #607)
 //   4) Budgets + Goals at-a-glance
 //   5) Account list summary
 import { subDecimal } from '../lib/decimal'
 import { spendingHref } from '../lib/spendingLink'
 import { useState } from 'react'
+import { usePastMonthSpending } from '../hooks/usePastMonthSpending'
+import { MonthStepper } from '../components/MonthStepper'
+import { currentMonth, monthLabel, monthWindow } from '../lib/month'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -536,22 +539,44 @@ function AllocationBand({ data, onSetPrice }: { data: InsightsData; onSetPrice: 
 // bands; these three answer "where does my money go over time" within the
 // spending band's existing scope.
 function SpendingBand({ data }: { data: InsightsData }) {
-  const rows = data.by_category
   // Drill-down to the rows behind a figure (#571) — personal scope only;
   // household figures are aggregates with no member transaction list.
   const drill = data.scope === 'personal'
+  // Month stepper (#607) — personal scope only: step the category list and
+  // top merchants back to an earlier month for the month-end review. null
+  // is the current month, served from the page's own load.
+  const [month, setMonth] = useState<string | null>(null)
+  const past = usePastMonthSpending(month)
+  const period = month ? monthWindow(month) : { from: data.period.from, to: data.period.to }
+  const rows = month ? (past.state === 'ready' ? past.byCategory : []) : data.by_category
+  const merchants = month ? (past.state === 'ready' ? past.topMerchants : []) : data.top_merchants
+  const busy = month != null && past.state === 'loading'
+  const failed = month != null && past.state === 'error'
+  const when = month ? `in ${monthLabel(month)}` : 'in this period yet'
   const max = rows.reduce((acc, r) => Math.max(acc, num(r.amount)), 0)
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-5">
       <div className="flex items-center gap-2">
         <TrendingUp size={16} className="text-gray-500" />
         <h2 className="text-sm font-medium uppercase tracking-wider text-gray-500">
-          Spending by category · this period
+          Spending by category · {drill ? monthLabel(month ?? currentMonth()) : 'this period'}
         </h2>
       </div>
-      {rows.length === 0 ? (
+      {drill && <MonthStepper month={month} onChange={setMonth} label="Spending month" className="mt-3" />}
+      {busy ? (
+        <div className="mt-3 py-6 text-center text-sm text-gray-400" role="status">
+          Loading {monthLabel(month)}…
+        </div>
+      ) : failed ? (
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800" role="alert">
+          <span>Couldn’t load spending for {monthLabel(month)}.</span>
+          <button type="button" onClick={past.retry} className="font-medium text-amber-900 underline hover:no-underline">
+            Retry
+          </button>
+        </div>
+      ) : rows.length === 0 ? (
         <div className="mt-3 py-6 text-center text-sm text-gray-400">
-          No spending in this period yet.
+          No spending {when}.
         </div>
       ) : (
         <ul className="mt-3 space-y-1.5 text-sm">
@@ -563,7 +588,7 @@ function SpendingBand({ data }: { data: InsightsData }) {
               <li key={`${r.category_id ?? 'null'}-${r.name}`} className="flex items-center gap-3">
                 {drill ? (
                   <Link
-                    to={spendingHref({ start: data.period.from, end: data.period.to, categoryID: r.category_id })}
+                    to={spendingHref({ start: period.from, end: period.to, categoryID: r.category_id })}
                     title={`See the transactions behind ${r.name}`}
                     className="w-32 shrink-0 truncate text-indigo-700 hover:text-indigo-900 hover:underline"
                   >
@@ -592,10 +617,15 @@ function SpendingBand({ data }: { data: InsightsData }) {
 
       <div className="mt-5 grid grid-cols-1 gap-5 border-t border-gray-100 pt-4 lg:grid-cols-3">
         <CashFlowTrend months={data.cash_flow} />
-        <CategoryTrendList items={data.category_trend} />
+        <CategoryTrendList
+          items={data.category_trend}
+          title={month ? `${monthLabel(currentMonth())} vs. average` : undefined}
+        />
         <TopMerchantsList
-          rows={data.top_merchants}
-          hrefFor={drill ? (merchant) => spendingHref({ start: data.period.from, end: data.period.to, merchant }) : undefined}
+          rows={merchants}
+          title={month ? `Top merchants · ${monthLabel(month)}` : 'Top merchants'}
+          empty={busy ? 'Loading…' : failed ? 'Not loaded.' : month ? `No merchant spend in ${monthLabel(month)}.` : 'No merchant spend yet.'}
+          hrefFor={drill ? (merchant) => spendingHref({ start: period.from, end: period.to, merchant }) : undefined}
         />
       </div>
 
@@ -684,12 +714,14 @@ function CashFlowTrend({ months }: { months: InsightsData['cash_flow'] }) {
 
 // Month-over-month category trend: this-month vs. trailing average, top 5
 // by this-month spend (#367).
-function CategoryTrendList({ items }: { items: InsightsData['category_trend'] }) {
+// title names the month when the band is stepped back (#607): this list
+// always compares the current month with its trailing average.
+function CategoryTrendList({ items, title = 'Trending vs. average' }: { items: InsightsData['category_trend']; title?: string }) {
   const top = items.slice(0, 5)
   return (
     <div>
       <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">
-        Trending vs. average
+        {title}
       </h3>
       {top.length === 0 ? (
         <div className="mt-2 py-4 text-center text-xs text-gray-400">Not enough history yet.</div>
@@ -726,19 +758,23 @@ function CategoryTrendList({ items }: { items: InsightsData['category_trend'] })
 function TopMerchantsList({
   rows,
   hrefFor,
+  title = 'Top merchants',
+  empty = 'No merchant spend yet.',
 }: {
   rows: InsightsData['top_merchants']
   hrefFor?: (merchant: string) => string
+  title?: string
+  empty?: string
 }) {
   const top = rows.slice(0, 5)
   return (
     <div>
       <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">
-        Top merchants
+        {title}
       </h3>
       {top.length === 0 ? (
         <div className="mt-2 py-4 text-center text-xs text-gray-400">
-          No merchant spend yet.
+          {empty}
         </div>
       ) : (
         <ul className="mt-2 space-y-1.5 text-sm">
