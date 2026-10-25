@@ -570,6 +570,72 @@ func TestDashboard_Summarize_NetWorthCompleteness(t *testing.T) {
 	}
 }
 
+// TestDashboard_Summarize_NamesUnpricedAssets: a partial headline names each
+// asset it left out, once, with its kind and the quote currency (#599), so
+// the UI can ask for "an exchange rate for EUR → USD" rather than a generic
+// price. Once the rate exists the list empties and the EUR balance counts.
+func TestDashboard_Summarize_NamesUnpricedAssets(t *testing.T) {
+	svc, userID, accountID, g := newDashboardSvc(t)
+	svc.WithAssetRepo(repository.NewAssetRepository(g))
+	ctx := context.Background()
+	usdID := testutil.LookupUSDAssetID(t, g)
+	eurID := testutil.LookupAssetID(t, g, "EUR", "fiat")
+	btcID := testutil.LookupAssetID(t, g, "BTC", "crypto")
+
+	seedAllocationPosition(t, g, userID, accountID, usdID, "1000")
+	summary, err := svc.Summarize(ctx, userID, service.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Summarize: %v", err)
+	}
+	if len(summary.NetWorthUnpriced) != 0 || summary.NetWorthCurrency != "USD" {
+		t.Errorf("complete headline: unpriced=%v currency=%q, want [] USD", summary.NetWorthUnpriced, summary.NetWorthCurrency)
+	}
+
+	// A second account holding EUR too, so the same asset appears twice.
+	acc2 := &model.Account{
+		UserID: userID, Name: "DashAcct2-" + time.Now().Format("150405.000000"),
+		InstitutionSlug: "fixture", AccountType: "checking", Currency: "EUR",
+	}
+	if err := g.Create(acc2).Error; err != nil {
+		t.Fatalf("seed account 2: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Account{}, acc2.ID) })
+	seedAllocationPosition(t, g, userID, accountID, eurID, "100")
+	seedAllocationPosition(t, g, userID, acc2.ID, eurID, "50")
+	seedAllocationPosition(t, g, userID, accountID, btcID, "0.5")
+
+	summary, err = svc.Summarize(ctx, userID, service.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Summarize (partial): %v", err)
+	}
+	if summary.NetWorthComplete || summary.NetWorth != "1000" {
+		t.Errorf("partial headline = {%s %v}, want {1000 false}", summary.NetWorth, summary.NetWorthComplete)
+	}
+	got := map[string]string{}
+	for _, u := range summary.NetWorthUnpriced {
+		if _, dup := got[u.Symbol]; dup {
+			t.Errorf("%s listed twice", u.Symbol)
+		}
+		got[u.Symbol] = u.Kind
+	}
+	if len(got) != 2 || got["EUR"] != "fiat" || got["BTC"] != "crypto" {
+		t.Errorf("unpriced = %v, want EUR (fiat) and BTC (crypto)", summary.NetWorthUnpriced)
+	}
+
+	// The user enters the EUR rate: EUR counts (150 × 1.08 = 162), BTC remains.
+	insertNetWorthPrice(t, g, eurID, usdID, "1.08", time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC))
+	summary, err = svc.Summarize(ctx, userID, service.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("Summarize (rate set): %v", err)
+	}
+	if summary.NetWorth != "1162" {
+		t.Errorf("net_worth = %s, want 1162", summary.NetWorth)
+	}
+	if len(summary.NetWorthUnpriced) != 1 || summary.NetWorthUnpriced[0].Symbol != "BTC" {
+		t.Errorf("unpriced = %v, want only BTC", summary.NetWorthUnpriced)
+	}
+}
+
 // TestDashboard_Summarize_ByCategoryExcludesNonFlowKinds: a user whose only
 // transactions are an opening balance and a paired trade (both non-'flow'
 // kinds) must see an EMPTY by-category breakdown and income=spending=0 —

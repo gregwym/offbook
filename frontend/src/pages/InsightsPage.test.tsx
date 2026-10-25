@@ -259,3 +259,54 @@ describe('InsightsPage spending drill-down links', () => {
     await waitFor(() => expect(within(band).queryAllByRole('link')).toHaveLength(0))
   })
 })
+
+describe('InsightsPage net-worth missing exchange rate', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  // #599: a partial headline names the currency with no rate and lets the
+  // user enter it, instead of a Set price that can't pick a currency.
+  it('names each unpriced asset and sets an exchange rate for a currency', async () => {
+    const eur = { ...fx.assetUSD, id: 7, symbol: 'EUR', display_name: 'Euro' }
+    let posted: { assetID: string; body: unknown } | null = null
+    server.use(
+      http.get('/api/v1/dashboard/summary', () =>
+        HttpResponse.json({
+          data: {
+            ...fx.dashboardSummary,
+            net_worth_complete: false,
+            net_worth_currency: 'USD',
+            net_worth_unpriced: [
+              { asset_id: 7, symbol: 'EUR', kind: 'fiat' },
+              { asset_id: 9, symbol: 'MYFUND', kind: 'fund' },
+            ],
+          },
+        }),
+      ),
+      http.get('/api/v1/assets', () => HttpResponse.json({ data: [fx.assetUSD, eur], total: 2 })),
+      http.post('/api/v1/assets/:id/prices', async ({ params, request }) => {
+        posted = { assetID: String(params.id), body: await request.json() }
+        return HttpResponse.json({ data: { id: 1 } }, { status: 201 })
+      }),
+    )
+    renderPage(<InsightsPage />)
+
+    expect(await screen.findByText('EUR → USD')).toBeTruthy()
+    expect(screen.getByText(/Needs an exchange rate:/)).toBeTruthy()
+    expect(screen.getByText('MYFUND')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Set price for MYFUND' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set exchange rate for EUR' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Set exchange rate for EUR')).toBeTruthy()
+    expect(within(dialog).queryByText('Symbol')).toBeNull()
+    fireEvent.change(within(dialog).getByLabelText('1 EUR in USD'), { target: { value: '1.08' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Set rate' }))
+
+    await waitFor(() => expect(posted).not.toBeNull())
+    expect(posted!.assetID).toBe('7')
+    expect(posted!.body).toMatchObject({ price: '1.08' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+})
