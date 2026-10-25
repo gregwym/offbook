@@ -339,7 +339,7 @@ function MonthTotals({ summary, label, categoriesById, otherPeriod, drill, busy 
       {summary.unbudgeted.length > 0 && (
         <details className="group mt-3 border-t border-gray-100 pt-3">
           <summary className="flex min-h-10 cursor-pointer list-none items-center gap-1 text-sm font-medium text-gray-900 [&::-webkit-details-marker]:hidden">
-            <ChevronRight size={16} aria-hidden="true" className="text-gray-400 transition-transform group-open:rotate-90" />
+            <ChevronRight size={16} aria-hidden="true" className="text-gray-400 group-open:rotate-90" />
             Where the spending outside budgets went
           </summary>
           <ul className="mt-1 divide-y divide-gray-100">
