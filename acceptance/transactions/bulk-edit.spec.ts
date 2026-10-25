@@ -31,7 +31,7 @@ test.describe('transaction bulk edit', () => {
     await page.goto('/transactions')
     await page.getByLabel('Search').fill('Corner Shop')
     await expect(page.getByText('Salary Deposit')).toHaveCount(0)
-    for (const d of shop) await expect(page.getByText(d).first()).toBeVisible()
+    for (const d of shop) await expect(page.getByText(d).locator('visible=true').first()).toBeVisible()
 
     // Select the filtered page and set one category.
     await page.getByLabel('Select all transactions on this page').check()
