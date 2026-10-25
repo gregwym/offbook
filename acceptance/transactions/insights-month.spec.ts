@@ -8,7 +8,8 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 // month-end review, drills into that month's rows (the banner total equals
 // the figure), and "This month" returns. The month's income, spending and net
 // (#609) follow the stepper; spending equals the category rows and drills in.
-// Throwaway user; desktop and mobile.
+// The "vs. average" category trend (#611) follows the stepper as well: each
+// figure equals that month's category row. Throwaway user; desktop and mobile.
 
 test.describe('insights spending month', () => {
   test('step back to last month and drill into its spending', async ({ page }, testInfo) => {
@@ -51,6 +52,9 @@ test.describe('insights spending month', () => {
     const band = page.locator('section', { has: stepper })
     const row = (name: string) => band.getByRole('listitem').filter({ has: page.getByRole('link', { name, exact: true }) })
     const merchants = band.locator('div', { has: page.getByRole('heading', { name: /^Top merchants/ }) }).last()
+    const trend = (monthOffset: number) =>
+      band.locator('div', { has: page.getByRole('heading', { name: `${label(monthOffset)} vs. average` }) }).last()
+    const trendRow = (monthOffset: number, name: string) => trend(monthOffset).getByRole('listitem').filter({ hasText: name })
 
     await expect(band.getByRole('heading', { name: `Spending by category · ${label(0)}` })).toBeVisible()
     await expect(stepper.getByRole('button', { name: 'Next month' })).toBeDisabled()
@@ -62,6 +66,9 @@ test.describe('insights spending month', () => {
     await expect(totals(0)).toContainText('Spending40.00 USD')
     await expect(totals(0)).toContainText('Net-40.00 USD')
     await expect(totals(0)).toContainText('Spent more than came in')
+    // 40 this month vs. last month's 130 averaged over the 5 months before (26).
+    await expect(trendRow(0, groceries.name)).toContainText('40.00')
+    await expect(trendRow(0, groceries.name)).toContainText('▲ 54%')
 
     await stepper.getByRole('button', { name: 'Previous month' }).click()
     await expect(band.getByRole('heading', { name: `Spending by category · ${label(-1)}` })).toBeVisible()
@@ -77,6 +84,10 @@ test.describe('insights spending month', () => {
     await expect(totals(-1)).toContainText('Spending540.25 USD')
     await expect(totals(-1)).toContainText('Net2,659.75 USD')
     await expect(totals(-1)).toContainText('Kept after spending')
+    // The trend follows the stepper (#611): last month's figures, not this month's.
+    await expect(trend(0)).toHaveCount(0)
+    await expect(trendRow(-1, travel.name)).toContainText('410.25')
+    await expect(trendRow(-1, groceries.name)).toContainText('130.00')
     await band.scrollIntoViewIfNeeded()
     await testInfo.attach(`${testInfo.project.name}-insights-last-month`, {
       body: await page.screenshot({ fullPage: true }), contentType: 'image/png',

@@ -84,14 +84,29 @@ func readFromToParams(c *gin.Context) (from, to time.Time, ok bool) {
 	return from, to, true
 }
 
-// CategoryTrend handles ?months=6 (default 6, capped at 36) — the
-// month-over-month category spending trend (#367).
+// CategoryTrend handles ?months=6&month=YYYY-MM (months default 6, capped
+// at 36) — the month-over-month category spending trend (#367). month
+// anchors the window's last month (#611); omitted = the current month.
 func (h *DashboardHandler) CategoryTrend(c *gin.Context) {
 	months := readMonthsParam(c, 6, 36)
 	if months < 0 {
 		return
 	}
-	items, err := h.svc.CategoryTrend(c.Request.Context(), auth.MustUserID(c.Request.Context()), months)
+	ctx := c.Request.Context()
+	userID := auth.MustUserID(ctx)
+	var (
+		items []service.CategoryTrendItem
+		err   error
+	)
+	if v := c.Query("month"); v != "" {
+		through, ok := readMonthParam(c, v)
+		if !ok {
+			return
+		}
+		items, err = h.svc.CategoryTrendThrough(ctx, userID, through, months)
+	} else {
+		items, err = h.svc.CategoryTrend(ctx, userID, months)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
 		return
@@ -152,13 +167,8 @@ func (h *DashboardHandler) CashFlow(c *gin.Context) {
 		err   error
 	)
 	if v := c.Query("month"); v != "" {
-		through, perr := time.Parse("2006-01", v)
-		if perr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "month must be YYYY-MM", "code": "INVALID_REQUEST"})
-			return
-		}
-		if through.After(time.Now().UTC()) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "month must not be in the future", "code": "INVALID_REQUEST"})
+		through, ok := readMonthParam(c, v)
+		if !ok {
 			return
 		}
 		items, err = h.svc.CashFlowThrough(ctx, userID, through, months)
@@ -184,6 +194,21 @@ func (h *DashboardHandler) NetWorth(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items, "total": int64(len(items))})
+}
+
+// readMonthParam parses a ?month=YYYY-MM anchor (#609, #611). Writes a 400
+// response and returns ok=false on a malformed or future month.
+func readMonthParam(c *gin.Context, v string) (time.Time, bool) {
+	through, err := time.Parse("2006-01", v)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "month must be YYYY-MM", "code": "INVALID_REQUEST"})
+		return time.Time{}, false
+	}
+	if through.After(time.Now().UTC()) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "month must not be in the future", "code": "INVALID_REQUEST"})
+		return time.Time{}, false
+	}
+	return through, true
 }
 
 func readMonthsParam(c *gin.Context, def, max int) int {

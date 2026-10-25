@@ -550,6 +550,8 @@ function SpendingBand({ data }: { data: InsightsData }) {
   const period = month ? monthWindow(month) : { from: data.period.from, to: data.period.to }
   const rows = month ? (past.state === 'ready' ? past.byCategory : []) : data.by_category
   const merchants = month ? (past.state === 'ready' ? past.topMerchants : []) : data.top_merchants
+  // The month vs. the months before it (#611) follows the stepper too.
+  const trend = month ? (past.state === 'ready' ? past.categoryTrend : []) : data.category_trend
   // The month's income / spending / net (#609): the current month comes
   // from the page's cash-flow series, an earlier one from its own load.
   const totals = month
@@ -636,8 +638,9 @@ function SpendingBand({ data }: { data: InsightsData }) {
       <div className="mt-5 grid grid-cols-1 gap-5 border-t border-gray-100 pt-4 lg:grid-cols-3">
         <CashFlowTrend months={data.cash_flow} />
         <CategoryTrendList
-          items={data.category_trend}
-          title={month ? `${monthLabel(currentMonth())} vs. average` : undefined}
+          items={trend}
+          title={drill ? `${monthLabel(month ?? currentMonth())} vs. average` : undefined}
+          empty={busy ? 'Loading…' : failed ? 'Not loaded.' : undefined}
         />
         <TopMerchantsList
           rows={merchants}
@@ -784,7 +787,15 @@ function CashFlowTrend({ months }: { months: InsightsData['cash_flow'] }) {
 // by this-month spend (#367).
 // title names the month when the band is stepped back (#607): this list
 // always compares the current month with its trailing average.
-function CategoryTrendList({ items, title = 'Trending vs. average' }: { items: InsightsData['category_trend']; title?: string }) {
+function CategoryTrendList({
+  items,
+  title = 'Trending vs. average',
+  empty = 'Not enough history yet.',
+}: {
+  items: InsightsData['category_trend']
+  title?: string
+  empty?: string
+}) {
   const top = items.slice(0, 5)
   return (
     <div>
@@ -792,7 +803,7 @@ function CategoryTrendList({ items, title = 'Trending vs. average' }: { items: I
         {title}
       </h3>
       {top.length === 0 ? (
-        <div className="mt-2 py-4 text-center text-xs text-gray-400">Not enough history yet.</div>
+        <div className="mt-2 py-4 text-center text-xs text-gray-400">{empty}</div>
       ) : (
         <ul className="mt-2 space-y-1.5 text-sm">
           {top.map((c) => {

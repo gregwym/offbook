@@ -359,6 +359,7 @@ describe('InsightsPage spending month stepper', () => {
 
   it('loads the earlier month for categories and merchants and drills into that month', async () => {
     const requested: { path: string; from: string | null; to: string | null }[] = []
+    const trendMonths: (string | null)[] = []
     const record = (request: Request) => {
       const u = new URL(request.url)
       requested.push({ path: u.pathname, from: u.searchParams.get('from'), to: u.searchParams.get('to') })
@@ -380,19 +381,31 @@ describe('InsightsPage spending month stepper', () => {
           total: 1,
         })
       }),
+      http.get('*/dashboard/category-trend', ({ request }) => {
+        const month = new URL(request.url).searchParams.get('month')
+        trendMonths.push(month)
+        const item = month
+          ? { category_id: 7, name: 'Travel', this_month: '410.250000000000000000', trailing_average: '205.125000000000000000' }
+          : { category_id: 3, name: 'Groceries', this_month: '120.000000000000000000', trailing_average: '150.000000000000000000' }
+        return HttpResponse.json({ data: [{ ...item, months: [] }], total: 1 })
+      }),
     )
     renderPage(<InsightsPage />)
     const nav = await screen.findByRole('navigation', { name: 'Spending month' })
     expect(within(nav).getByRole('button', { name: 'Next month' })).toBeDisabled()
     const band = nav.closest('section') as HTMLElement
     await within(band).findByRole('link', { name: 'Groceries' })
+    const trendOf = (month: string) => screen.getByText(`${monthLabel(month)} vs. average`).parentElement as HTMLElement
+    expect(trendOf(currentMonth())).toHaveTextContent('Groceries120.00 USD▼ 20%')
 
     fireEvent.click(within(nav).getByRole('button', { name: 'Previous month' }))
     const travel = await screen.findByRole('link', { name: 'Travel' })
     expect(screen.getByRole('heading', { name: `Spending by category · ${monthLabel(prev)}` })).toBeInTheDocument()
     expect(screen.getByText(`Top merchants · ${monthLabel(prev)}`)).toBeInTheDocument()
-    // The trend list stays on the current month and says so.
-    expect(screen.getByText(`${monthLabel(currentMonth())} vs. average`)).toBeInTheDocument()
+    // The trend list follows the stepper too (#611): that month vs. the months before it.
+    expect(trendOf(prev)).toHaveTextContent('Travel410.25 USD▲ 100%')
+    expect(screen.queryByText(`${monthLabel(currentMonth())} vs. average`)).toBeNull()
+    expect(trendMonths).toEqual([null, prev])
     expect(requested).toContainEqual({ path: '/api/v1/dashboard/spend-by-category', ...prevWindow })
     expect(requested).toContainEqual({ path: '/api/v1/dashboard/top-merchants', ...prevWindow })
 

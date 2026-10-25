@@ -802,6 +802,80 @@ func TestDashboard_CategoryTrend_ThisMonthVsTrailingAverage(t *testing.T) {
 	}
 }
 
+// TestDashboard_CategoryTrendThrough_AnchorsWindow: the month-end review
+// (#611) steps back to an earlier month. ThisMonth is that month and
+// TrailingAverage the months before it; later months, transfers and another
+// user's rows stay out.
+func TestDashboard_CategoryTrendThrough_AnchorsWindow(t *testing.T) {
+	svc, userID, accountID, g := newDashboardSvc(t)
+	ctx := context.Background()
+
+	suffix := time.Now().Format("150405.000000")
+	dining := &model.Category{Name: "TrendDining-" + suffix, Slug: "trend-d-" + suffix}
+	if err := g.Create(dining).Error; err != nil {
+		t.Fatalf("seed cat: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, dining.ID) })
+
+	// Window through Jan 2026 crosses the year boundary: Nov, Dec, Jan.
+	seedChartTxn(t, g, userID, accountID, &dining.ID, time.Date(2025, 10, 31, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-1000), false)
+	seedChartTxn(t, g, userID, accountID, &dining.ID, time.Date(2025, 11, 1, 0, 0, 0, 0, time.UTC), decimal.RequireFromString("-40.10"), false)
+	seedChartTxn(t, g, userID, accountID, &dining.ID, time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC), decimal.RequireFromString("-19.90"), false)
+	seedChartTxn(t, g, userID, accountID, &dining.ID, time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC), decimal.RequireFromString("-90.25"), false)
+	seedChartTxn(t, g, userID, accountID, &dining.ID, time.Date(2026, 1, 20, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-500), true)
+	// After the anchor: the clock's own month (May 2026) must not count.
+	seedChartTxn(t, g, userID, accountID, &dining.ID, time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-777), false)
+
+	userB := seedTestUser(t, g)
+	accB := &model.Account{
+		UserID: userB, Name: "TrendB-" + suffix,
+		InstitutionSlug: "fixture", AccountType: "checking", Currency: "USD",
+	}
+	if err := g.Create(accB).Error; err != nil {
+		t.Fatalf("seed B account: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("account_id = ?", accB.ID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, accB.ID)
+	})
+	seedChartTxn(t, g, userB, accB.ID, &dining.ID, time.Date(2026, 1, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-9999), false)
+
+	tests := []struct {
+		name    string
+		through time.Time
+	}{
+		{"first of month", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{"mid month", time.Date(2026, 1, 17, 12, 0, 0, 0, time.UTC)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			items, err := svc.CategoryTrendThrough(ctx, userID, tc.through, 3)
+			if err != nil {
+				t.Fatalf("CategoryTrendThrough: %v", err)
+			}
+			if len(items) != 1 {
+				t.Fatalf("got %d categories, want 1: %+v", len(items), items)
+			}
+			item := items[0]
+			want := []service.CategoryTrendMonth{{Month: "2025-11-01", Amount: "40.1"}, {Month: "2025-12-01", Amount: "19.9"}, {Month: "2026-01-01", Amount: "90.25"}}
+			if len(item.Months) != len(want) {
+				t.Fatalf("months = %+v, want %+v", item.Months, want)
+			}
+			for i := range want {
+				if item.Months[i] != want[i] {
+					t.Errorf("months[%d] = %+v, want %+v", i, item.Months[i], want[i])
+				}
+			}
+			if item.ThisMonth != "90.25" {
+				t.Errorf("ThisMonth = %s, want 90.25 (January, transfer excluded)", item.ThisMonth)
+			}
+			if item.TrailingAverage != "30" {
+				t.Errorf("TrailingAverage = %s, want 30 (avg of Nov 40.10 + Dec 19.90)", item.TrailingAverage)
+			}
+		})
+	}
+}
+
 // TestDashboard_CategoryTrend_TenantIsolation: user B's spend must never
 // appear in user A's category trend.
 func TestDashboard_CategoryTrend_TenantIsolation(t *testing.T) {
