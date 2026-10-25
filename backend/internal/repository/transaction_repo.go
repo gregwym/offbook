@@ -136,10 +136,12 @@ type TransactionRepository interface {
 	// (account, asset) pair ordered by transaction_date ASC, id ASC. Used
 	// by the cost-basis recompute, which walks the entire trade history
 	// per (account, asset) and folds quantities + cash legs together.
+	// Takes the position lock first (see lockPosition).
 	ListByAccountAndAsset(ctx context.Context, userID, accountID, assetID int64) ([]model.Transaction, error)
 	// FoldQuantity returns Σ amount over non-deleted transactions for the
 	// (account, asset) pair — the quantity the position should equal
-	// (ADR-0017). Returns 0 when there are no rows.
+	// (ADR-0017). Returns 0 when there are no rows. Takes the position lock
+	// first (see lockPosition).
 	FoldQuantity(ctx context.Context, userID, accountID, assetID int64) (decimal.Decimal, error)
 	// HasReconcilingTxn reports whether an opening_balance or adjustment row
 	// already exists for the (account, asset) pair. The first reconciling
@@ -744,7 +746,26 @@ func (r *transactionRepo) ListByTransferPairID(ctx context.Context, userID, pair
 	return out, nil
 }
 
+// lockPosition takes a transaction-scoped advisory lock on the (account,
+// asset) position before its ledger is folded (#593). Every position write
+// folds the ledger and then upserts the result; without the lock, two
+// concurrent writers can each fold before seeing the other's row and the
+// slower upsert commits a stale quantity. Under the lock the last writer's
+// fold runs after every earlier writer committed, so it sees all their rows.
+// It must be its own statement: under READ COMMITTED the fold's snapshot is
+// taken when the fold starts, i.e. after the lock is granted. Outside a
+// transaction the lock is released when the statement ends, so read-only
+// callers only wait out an in-flight writer.
+func (r *transactionRepo) lockPosition(ctx context.Context, accountID, assetID int64) error {
+	return r.db.WithContext(ctx).
+		Exec(`SELECT pg_advisory_xact_lock(hashtextextended(format('position:%s:%s', ?::bigint, ?::bigint), 0))`, accountID, assetID).
+		Error
+}
+
 func (r *transactionRepo) ListByAccountAndAsset(ctx context.Context, userID, accountID, assetID int64) ([]model.Transaction, error) {
+	if err := r.lockPosition(ctx, accountID, assetID); err != nil {
+		return nil, err
+	}
 	var out []model.Transaction
 	if err := r.db.WithContext(ctx).
 		Where("user_id = ? AND account_id = ? AND asset_id = ?", userID, accountID, assetID).
@@ -756,6 +777,9 @@ func (r *transactionRepo) ListByAccountAndAsset(ctx context.Context, userID, acc
 }
 
 func (r *transactionRepo) FoldQuantity(ctx context.Context, userID, accountID, assetID int64) (decimal.Decimal, error) {
+	if err := r.lockPosition(ctx, accountID, assetID); err != nil {
+		return decimal.Zero, err
+	}
 	var s string
 	if err := r.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(SUM(amount), 0)::text
