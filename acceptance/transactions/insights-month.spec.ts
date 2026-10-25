@@ -6,7 +6,9 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 // Insights spending month stepper (#607): on Insights the user steps the
 // "Spending by category" list and Top merchants back to last month for the
 // month-end review, drills into that month's rows (the banner total equals
-// the figure), and "This month" returns. Throwaway user; desktop and mobile.
+// the figure), and "This month" returns. The month's income, spending and net
+// (#609) follow the stepper; spending equals the category rows and drills in.
+// Throwaway user; desktop and mobile.
 
 test.describe('insights spending month', () => {
   test('step back to last month and drill into its spending', async ({ page }, testInfo) => {
@@ -54,6 +56,12 @@ test.describe('insights spending month', () => {
     await expect(stepper.getByRole('button', { name: 'Next month' })).toBeDisabled()
     await expect(row(groceries.name)).toContainText('40.00')
     await expect(row(travel.name)).toHaveCount(0)
+    // This month: nothing in yet, 40 out (#609).
+    const totals = (monthOffset: number) => band.getByLabel(`${label(monthOffset)} totals`)
+    await expect(totals(0)).toContainText('Income0.00 USD')
+    await expect(totals(0)).toContainText('Spending40.00 USD')
+    await expect(totals(0)).toContainText('Net-40.00 USD')
+    await expect(totals(0)).toContainText('Spent more than came in')
 
     await stepper.getByRole('button', { name: 'Previous month' }).click()
     await expect(band.getByRole('heading', { name: `Spending by category · ${label(-1)}` })).toBeVisible()
@@ -64,6 +72,11 @@ test.describe('insights spending month', () => {
     await expect(merchants.getByRole('listitem').filter({ hasText: 'Month Airline' })).toContainText('410.25')
     await expect(merchants.getByRole('listitem').filter({ hasText: 'Month Grocer' })).toContainText('130.00')
     await expect(stepper.getByRole('button', { name: 'Next month' })).toBeEnabled()
+    // Last month's totals: salary in, 410.25 + 130.00 out, the rest kept.
+    await expect(totals(-1)).toContainText('Income3,200.00 USD')
+    await expect(totals(-1)).toContainText('Spending540.25 USD')
+    await expect(totals(-1)).toContainText('Net2,659.75 USD')
+    await expect(totals(-1)).toContainText('Kept after spending')
     await band.scrollIntoViewIfNeeded()
     await testInfo.attach(`${testInfo.project.name}-insights-last-month`, {
       body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
@@ -77,6 +90,17 @@ test.describe('insights spending month', () => {
     await expect(banner).toContainText('2 transactions')
     await expect(page.getByText('Month Grocer today')).toHaveCount(0)
     await testInfo.attach(`${testInfo.project.name}-insights-last-month-drill`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
+
+    // Last month's spending total opens every row behind it, and only those.
+    await page.goBack()
+    await stepper.getByRole('button', { name: 'Previous month' }).click()
+    await totals(-1).getByRole('link', { name: '540.25 USD' }).click()
+    await expect(banner.getByTestId('spend-total')).toContainText('540.25')
+    await expect(banner).toContainText('3 transactions')
+    await expect(page.getByText('Month Salary')).toHaveCount(0)
+    await testInfo.attach(`${testInfo.project.name}-insights-last-month-total-drill`, {
       body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
     })
 
@@ -94,6 +118,7 @@ test.describe('insights spending month', () => {
     await stepper.getByRole('button', { name: 'Previous month' }).click()
     await expect(band.getByText(`No spending in ${label(-2)}.`)).toBeVisible()
     await expect(merchants.getByText(`No merchant spend in ${label(-2)}.`)).toBeVisible()
+    await expect(totals(-2)).toHaveCount(0)
     await stepper.getByRole('button', { name: 'This month' }).click()
     await expect(band.getByRole('heading', { name: `Spending by category · ${label(0)}` })).toBeVisible()
     await expect(row(groceries.name)).toContainText('40.00')

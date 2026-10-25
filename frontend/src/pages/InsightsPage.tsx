@@ -550,6 +550,13 @@ function SpendingBand({ data }: { data: InsightsData }) {
   const period = month ? monthWindow(month) : { from: data.period.from, to: data.period.to }
   const rows = month ? (past.state === 'ready' ? past.byCategory : []) : data.by_category
   const merchants = month ? (past.state === 'ready' ? past.topMerchants : []) : data.top_merchants
+  // The month's income / spending / net (#609): the current month comes
+  // from the page's cash-flow series, an earlier one from its own load.
+  const totals = month
+    ? past.state === 'ready' ? past.cashFlow : null
+    : data.cash_flow.find((m) => m.month.slice(0, 7) === currentMonth()) ?? null
+  // A month with nothing in or out leaves the "No spending" line alone.
+  const hasTotals = totals != null && (num(totals.inflow) !== 0 || num(totals.outflow) !== 0)
   const busy = month != null && past.state === 'loading'
   const failed = month != null && past.state === 'error'
   const when = month ? `in ${monthLabel(month)}` : 'in this period yet'
@@ -574,45 +581,56 @@ function SpendingBand({ data }: { data: InsightsData }) {
             Retry
           </button>
         </div>
-      ) : rows.length === 0 ? (
-        <div className="mt-3 py-6 text-center text-sm text-gray-400">
-          No spending {when}.
-        </div>
       ) : (
-        <ul className="mt-3 space-y-1.5 text-sm">
-          {rows.map((r) => {
-            const v = num(r.amount)
-            const isNetRefund = v < 0
-            const pct = max > 0 && v > 0 ? (v / max) * 100 : 0
-            return (
-              <li key={`${r.category_id ?? 'null'}-${r.name}`} className="flex items-center gap-3">
-                {drill ? (
-                  <Link
-                    to={spendingHref({ start: period.from, end: period.to, categoryID: r.category_id })}
-                    title={`See the transactions behind ${r.name}`}
-                    className="w-32 shrink-0 truncate text-indigo-700 hover:text-indigo-900 hover:underline"
-                  >
-                    {r.name}
-                  </Link>
-                ) : (
-                  <span className="w-32 shrink-0 truncate text-gray-700">{r.name}</span>
-                )}
-                <div className="relative h-2 flex-1 rounded bg-gray-100">
-                  <div
-                    className="absolute inset-y-0 left-0 rounded bg-indigo-400"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                <span className="min-w-28 shrink-0 text-right text-gray-700">
-                  <AmountDisplay amount={r.amount} />
-                  {isNetRefund && (
-                    <span className="block text-xs text-gray-400">net refund</span>
-                  )}
-                </span>
-              </li>
-            )
-          })}
-        </ul>
+        <>
+          {drill && hasTotals && (
+            <MonthTotals
+              totals={totals!}
+              label={monthLabel(month ?? currentMonth())}
+              spendingHref={spendingHref({ start: period.from, end: period.to })}
+            />
+          )}
+          {rows.length === 0 ? (
+            <div className="mt-3 py-6 text-center text-sm text-gray-400">
+              No spending {when}.
+            </div>
+          ) : (
+            <ul className="mt-3 space-y-1.5 text-sm">
+              {rows.map((r) => {
+                const v = num(r.amount)
+                const isNetRefund = v < 0
+                const pct = max > 0 && v > 0 ? (v / max) * 100 : 0
+                return (
+                  <li key={`${r.category_id ?? 'null'}-${r.name}`} className="flex items-center gap-3">
+                    {drill ? (
+                      <Link
+                        to={spendingHref({ start: period.from, end: period.to, categoryID: r.category_id })}
+                        title={`See the transactions behind ${r.name}`}
+                        className="w-32 shrink-0 truncate text-indigo-700 hover:text-indigo-900 hover:underline"
+                      >
+                        {r.name}
+                      </Link>
+                    ) : (
+                      <span className="w-32 shrink-0 truncate text-gray-700">{r.name}</span>
+                    )}
+                    <div className="relative h-2 flex-1 rounded bg-gray-100">
+                      <div
+                        className="absolute inset-y-0 left-0 rounded bg-indigo-400"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className="min-w-28 shrink-0 text-right text-gray-700">
+                      <AmountDisplay amount={r.amount} />
+                      {isNetRefund && (
+                        <span className="block text-xs text-gray-400">net refund</span>
+                      )}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </>
       )}
 
       <div className="mt-5 grid grid-cols-1 gap-5 border-t border-gray-100 pt-4 lg:grid-cols-3">
@@ -631,6 +649,54 @@ function SpendingBand({ data }: { data: InsightsData }) {
 
       {data.scope === 'personal' && <RecurringList items={data.recurring} />}
     </section>
+  )
+}
+
+// MonthTotals is the month-end answer in figures (#609): what came in, what
+// went out, what was kept. Spending uses the category rows' predicate, so it
+// equals their sum, and it drills into exactly those rows.
+function MonthTotals({
+  totals,
+  label,
+  spendingHref,
+}: {
+  totals: InsightsData['cash_flow'][number]
+  label: string
+  spendingHref: string
+}) {
+  const overspent = totals.net.trim().startsWith('-')
+  const cell = 'flex flex-col rounded-md bg-gray-50 px-3 py-2'
+  const term = 'text-xs font-medium uppercase tracking-wider text-gray-500'
+  return (
+    <dl aria-label={`${label} totals`} className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
+      <div className={cell}>
+        <dt className={term}>Income</dt>
+        <dd className="mt-0.5 text-base font-medium text-gray-900">
+          <AmountDisplay amount={totals.inflow} />
+        </dd>
+      </div>
+      <div className={cell}>
+        <dt className={term}>Spending</dt>
+        <dd className="mt-0.5 text-base font-medium">
+          <Link
+            to={spendingHref}
+            title={`See the transactions behind ${label} spending`}
+            className="text-indigo-700 hover:text-indigo-900 hover:underline"
+          >
+            <AmountDisplay amount={totals.outflow} />
+          </Link>
+        </dd>
+      </div>
+      <div className={cell}>
+        <dt className={term}>Net</dt>
+        <dd className="mt-0.5 text-base font-medium">
+          <AmountDisplay amount={totals.net} signed />
+          <span className="block text-xs font-normal text-gray-500">
+            {overspent ? 'Spent more than came in' : 'Kept after spending'}
+          </span>
+        </dd>
+      </div>
+    </dl>
   )
 }
 

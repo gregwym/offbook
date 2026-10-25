@@ -431,6 +431,38 @@ describe('InsightsPage spending month stepper', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
+  // #609: the month's income, spending and net, as figures that follow the stepper.
+  it('shows the month totals for the current and an earlier month, with spending drilling in', async () => {
+    const asked: (string | null)[] = []
+    const cur = currentMonth()
+    server.use(
+      http.get('*/dashboard/cash-flow', ({ request }) => {
+        const month = new URL(request.url).searchParams.get('month')
+        asked.push(month)
+        const row = month
+          ? { month: `${month}-01`, inflow: '2400.100000000000000000', outflow: '2610.550000000000000000', net: '-210.450000000000000000' }
+          : { month: `${cur}-01`, inflow: '5000.000000000000000000', outflow: '120.000000000000000000', net: '4880.000000000000000000' }
+        return HttpResponse.json({ data: [row], total: 1 })
+      }),
+    )
+    renderPage(<InsightsPage />)
+    const current = await screen.findByLabelText(`${monthLabel(cur)} totals`)
+    expect(current).toHaveTextContent('Income5,000.00 USD')
+    expect(current).toHaveTextContent('Spending120.00 USD')
+    expect(current).toHaveTextContent('Net4,880.00 USD')
+    expect(current).toHaveTextContent('Kept after spending')
+
+    const nav = screen.getByRole('navigation', { name: 'Spending month' })
+    fireEvent.click(within(nav).getByRole('button', { name: 'Previous month' }))
+    const past = await screen.findByLabelText(`${monthLabel(prev)} totals`)
+    expect(past).toHaveTextContent('Income2,400.10 USD')
+    expect(past).toHaveTextContent('Net-210.45 USD')
+    expect(past).toHaveTextContent('Spent more than came in')
+    expect(asked).toContain(prev)
+    const link = within(past).getByRole('link', { name: '2,610.55 USD' })
+    expect(link.getAttribute('href')).toBe(`/transactions?spending=1&from=${prevWindow.from}&to=${dayBefore(prevWindow.to)}`)
+  })
+
   it('has no month stepper in household scope', async () => {
     setHouseholdScope(1)
     renderPage(<InsightsPage />)

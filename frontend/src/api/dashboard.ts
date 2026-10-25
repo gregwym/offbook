@@ -34,8 +34,9 @@ export async function getSpendByCategory(window?: DateWindow): Promise<SpendByCa
   return res.data.data
 }
 
-export async function getCashFlow(months = 12): Promise<CashFlowMonth[]> {
-  const res = await apiClient.get<ApiList<CashFlowMonth>>('/dashboard/cash-flow', { params: { months } })
+// month (YYYY-MM) anchors the window's last month (#609); omitted = now.
+export async function getCashFlow(months = 12, month?: string): Promise<CashFlowMonth[]> {
+  const res = await apiClient.get<ApiList<CashFlowMonth>>('/dashboard/cash-flow', { params: { months, month } })
   return res.data.data
 }
 
