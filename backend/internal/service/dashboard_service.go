@@ -33,15 +33,15 @@ var ErrInvalidPeriod = errors.New("invalid period")
 // had no fresh price, so NetWorth is a partial sum (#282/#344) — the UI
 // flags it instead of presenting a confident-but-understated figure.
 type DashboardSummary struct {
-	Period           PeriodWindow                    `json:"period"`
-	NetWorth         string                          `json:"net_worth"`
-	NetWorthComplete bool                            `json:"net_worth_complete"`
+	Period           PeriodWindow `json:"period"`
+	NetWorth         string       `json:"net_worth"`
+	NetWorthComplete bool         `json:"net_worth_complete"`
 	// NetWorthUnpriced names each asset left out of NetWorth (#599), so the
 	// UI can say which price or exchange rate is missing; [] when complete.
 	// NetWorthCurrency is the quote currency the headline is in (the user's
 	// primary currency), for "EUR → USD" wording. Both need the asset repo.
-	NetWorthUnpriced []UnpricedAsset `json:"net_worth_unpriced"`
-	NetWorthCurrency string          `json:"net_worth_currency,omitempty"`
+	NetWorthUnpriced []UnpricedAsset                 `json:"net_worth_unpriced"`
+	NetWorthCurrency string                          `json:"net_worth_currency,omitempty"`
 	Income           string                          `json:"income"`
 	Spending         string                          `json:"spending"`
 	AccountCount     int64                           `json:"account_count"`
