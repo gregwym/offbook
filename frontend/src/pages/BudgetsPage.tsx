@@ -438,7 +438,7 @@ function BudgetFormModal({ mode, isHousehold, categories, budget, onClose, onSub
             <span className="block text-xs text-gray-500">
               {isHousehold
                 ? 'Shared budgets are tracked per calendar month; unspent balance carries month to month, and an overspent month resets it to zero.'
-                : 'Starts from the balance below in the period you create it; an overspent period resets the balance to zero.'}
+                : 'You can set a starting balance. An overspent period resets the balance to zero.'}
             </span>
           </span>
         </label>

@@ -97,6 +97,15 @@ describe('BudgetsPage smoke', () => {
     expect(body).toMatchObject({ rollover: true, rollover_start: '40.00', amount: '200' })
   })
 
+  it('words the rollover hint so it reads before the starting-balance field appears (#590)', async () => {
+    server.use(http.get('*/budgets', () => HttpResponse.json({ data: [], total: 0 })))
+    renderPage(<BudgetsPage />)
+    fireEvent.click(await screen.findByRole('button', { name: /new budget/i }))
+    expect(screen.queryByLabelText('Starting balance')).toBeNull()
+    expect(screen.getByText('You can set a starting balance. An overspent period resets the balance to zero.')).toBeTruthy()
+    expect(screen.queryByText(/balance below/i)).toBeNull()
+  })
+
   it('explains a carryover that includes a starting balance', async () => {
     server.use(
       http.get('*/budgets', () =>

@@ -33,9 +33,9 @@ test.describe('rollover budget journey', () => {
     await page.getByLabel('Category').selectOption({ label: dining.name })
     await page.getByLabel('Amount').fill('200.00')
     // The starting balance only appears once rollover is on.
-    await expect(page.getByLabel('Starting balance')).toHaveCount(0)
+    await expect(page.getByRole('textbox', { name: 'Starting balance' })).toHaveCount(0)
     await page.getByRole('checkbox', { name: /Roll unspent balance/ }).check()
-    const start = page.getByLabel('Starting balance')
+    const start = page.getByRole('textbox', { name: 'Starting balance' })
     await expect(start).toBeVisible()
     await expectNoOverflow(page)
     await start.fill('-5')
@@ -55,7 +55,7 @@ test.describe('rollover budget journey', () => {
 
     // Edit shows the saved value without NUMERIC padding.
     await card.getByRole('button', { name: 'Edit' }).click()
-    await expect(page.getByLabel('Starting balance')).toHaveValue('40')
+    await expect(page.getByRole('textbox', { name: 'Starting balance' })).toHaveValue('40')
     await page.getByRole('checkbox', { name: /Roll unspent balance/ }).uncheck()
     await page.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(card).not.toContainText('rolled over')
@@ -65,7 +65,7 @@ test.describe('rollover budget journey', () => {
     // Re-enabling restores the kept starting balance; persists on reload.
     await card.getByRole('button', { name: 'Edit' }).click()
     await page.getByRole('checkbox', { name: /Roll unspent balance/ }).check()
-    await expect(page.getByLabel('Starting balance')).toHaveValue('40')
+    await expect(page.getByRole('textbox', { name: 'Starting balance' })).toHaveValue('40')
     await page.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(card).toContainText('90.00 USD remaining')
     await page.reload()
