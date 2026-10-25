@@ -1,0 +1,27 @@
+# Overlay for the lost-volume backup→restore drill (drill.sh, #605). Layer it on
+# the base stack as its own compose project (offbook-drill) so the drill never
+# touches a dev, QA or prod instance:
+#
+#   docker compose -p offbook-drill -f docker-compose.yml -f infra/backup/docker-compose.drill.yml
+#
+# Postgres gets a NAMED volume (the base bind-mounts ./data/postgres) so the
+# drill can lose it with `down -v`, exactly like a dead disk. Ports are moved
+# off the dev/QA ones. The backend reads no env file: the drill hands it a
+# throwaway SESSION_SECRET and nothing else — no Plaid, no AI keys.
+services:
+  postgres:
+    ports: !override
+      - "25432:5432"
+    volumes: !override
+      - drill_postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+
+  backend:
+    ports: !override
+      - "28000:8000"
+    env_file: !reset []
+    environment:
+      SESSION_SECRET: ${DRILL_SESSION_SECRET:?drill.sh sets a throwaway secret}
+
+volumes:
+  drill_postgres_data:
