@@ -91,6 +91,28 @@ This restores the **latest** dump into a throwaway scratch database
 drops the scratch DB. It **never touches the live database**, so it is safe to
 run on a schedule — the nightly timer runs it after every backup.
 
+## Restore drill (the whole recovery path, tested on every PR)
+
+`backup-verify` proves a dump restores; it does not prove *your money* comes
+back. The drill rehearses the "Recovering from a lost volume" steps below end
+to end on a throwaway compose project (`offbook-drill`, its own volume and
+ports — it never touches this instance):
+
+```sh
+command make backup-drill
+```
+
+It seeds synthetic data through the API (first-boot admin, two manual
+accounts, exact-decimal transactions down to 1e-18, a manual category pick),
+fingerprints the API-visible balances and transactions plus SQL money sums,
+runs `backup.sh` and `verify.sh`, **drops the postgres volume**, brings up a
+fresh empty stack, runs `restore.sh`, restarts the backend, signs in with the
+original password and requires the fingerprint to be identical. CI runs it as
+the `Backup restore drill (lost volume)` job on every PR (#605).
+
+It does not replace an owner-run restore on the real host: once per release,
+run `command make backup-verify FLAVOR=prod` there and record the result.
+
 ## Restoring (disaster recovery)
 
 **This is destructive**: it drops and recreates the live database, replacing all

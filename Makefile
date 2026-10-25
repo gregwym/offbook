@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help verify acceptance qa-smoke qa-journeys qa-suite require-env ensure-env pre-deploy-backup deploy deployed-sha down teardown auto-deploy-install auto-deploy-uninstall backup restore backup-verify backup-list backup-install backup-uninstall delivery-install delivery-uninstall
+.PHONY: help verify acceptance qa-smoke qa-journeys qa-suite require-env ensure-env pre-deploy-backup deploy deployed-sha down teardown auto-deploy-install auto-deploy-uninstall backup restore backup-verify backup-drill backup-list backup-install backup-uninstall delivery-install delivery-uninstall
 
 # ─── Deploy configuration (ADR-0016) ─────────────────────────────────────────
 # Near-zero config by convention. The common case — one instance, behind
@@ -79,6 +79,7 @@ help:
 	@printf '%s\n' '  command make backup [FLAVOR=prod]        Dump the DB now (+ prune, + off-host if configured).'
 	@printf '%s\n' '  command make backup-verify               Prove the latest dump restores (into a scratch DB).'
 	@printf '%s\n' '  command make restore BACKUP=<file>       Recover the DB from a dump (destructive; typed confirm).'
+	@printf '%s\n' '  command make backup-drill                Lost-volume drill on a throwaway stack: backup, wipe, restore, diff (#605).'
 	@printf '%s\n' '  command make backup-list                 List the dumps on hand for this instance.'
 	@printf '%s\n' '  command make backup-install              Install the user-level nightly backup timer.'
 	@printf '%s\n' '  command make backup-uninstall            Remove the nightly backup timer.'
@@ -257,6 +258,13 @@ restore: require-env
 # never the live one. An unrestored backup is not a backup. Part of the nightly run.
 backup-verify: require-env
 	@$(BACKUP_ENV) infra/backup/verify.sh $(BACKUP)
+
+# backup-drill: rehearse the runbook's lost-volume recovery end to end on a
+# throwaway compose project (offbook-drill) — seed synthetic money through the
+# API, backup + verify, drop the volume, restore, and require a byte-identical
+# ledger. Never touches this instance's DB. CI runs it on every PR (#605).
+backup-drill:
+	@infra/backup/drill.sh
 
 # backup-list: show the dumps on hand for this instance, newest last.
 backup-list:

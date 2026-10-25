@@ -259,6 +259,19 @@ jobs:
         if: always()
         run: docker compose -p offbook-qa -f docker-compose.yml -f docker-compose.qa.yml down -v
 
+  # Lost-volume disaster-recovery drill (#605): seeds synthetic money through
+  # the API, runs the nightly backup + verify, drops the postgres volume,
+  # restores per docs/ops/backup-restore.md and requires a byte-identical
+  # ledger (balances, amounts to 18 dp, counts) plus a working sign-in. An
+  # untested restore path is not a backup. Throwaway project; no secrets.
+  backup-drill:
+    name: Backup restore drill (lost volume)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run drill
+        run: make backup-drill
+
   # Every acceptance journey spec (#603), desktop + mobile, on every PR —
   # month-fixture money agreement, pending→posted, duplicate upload, import
   # undo, reconciliation, re-auth, budgets, household. Until now these ran
