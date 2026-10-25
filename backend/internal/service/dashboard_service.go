@@ -247,10 +247,17 @@ func (s *DashboardService) SpendByCategory(ctx context.Context, userID int64, fr
 // CashFlow returns the trailing `months` months of in/out/net. Defaults
 // to 12.
 func (s *DashboardService) CashFlow(ctx context.Context, userID int64, months int) ([]CashFlowMonth, error) {
+	return s.CashFlowThrough(ctx, userID, s.now(), months)
+}
+
+// CashFlowThrough is CashFlow with the window ending at the month containing
+// `through` instead of the current one — the month-end review steps back to
+// an arbitrary earlier month (#609).
+func (s *DashboardService) CashFlowThrough(ctx context.Context, userID int64, through time.Time, months int) ([]CashFlowMonth, error) {
 	if months <= 0 {
 		months = 12
 	}
-	rows, err := s.repo.CashFlowByMonth(ctx, userID, s.now(), months)
+	rows, err := s.repo.CashFlowByMonth(ctx, userID, through, months)
 	if err != nil {
 		return nil, err
 	}

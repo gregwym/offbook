@@ -137,14 +137,34 @@ func (h *DashboardHandler) Recurring(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": items, "total": int64(len(items))})
 }
 
-// CashFlow handles ?months=12. Cap to a sane upper bound to keep the
-// query bounded.
+// CashFlow handles ?months=12&month=YYYY-MM. Cap to a sane upper bound to
+// keep the query bounded. month anchors the window's last month (#609);
+// omitted = the current month.
 func (h *DashboardHandler) CashFlow(c *gin.Context) {
 	months := readMonthsParam(c, 12, 36)
 	if months < 0 {
 		return // handler already responded
 	}
-	items, err := h.svc.CashFlow(c.Request.Context(), auth.MustUserID(c.Request.Context()), months)
+	ctx := c.Request.Context()
+	userID := auth.MustUserID(ctx)
+	var (
+		items []service.CashFlowMonth
+		err   error
+	)
+	if v := c.Query("month"); v != "" {
+		through, perr := time.Parse("2006-01", v)
+		if perr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "month must be YYYY-MM", "code": "INVALID_REQUEST"})
+			return
+		}
+		if through.After(time.Now().UTC()) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "month must not be in the future", "code": "INVALID_REQUEST"})
+			return
+		}
+		items, err = h.svc.CashFlowThrough(ctx, userID, through, months)
+	} else {
+		items, err = h.svc.CashFlow(ctx, userID, months)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": "INTERNAL"})
 		return

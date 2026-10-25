@@ -294,6 +294,60 @@ func TestDashboard_CashFlow_EmptyMonthsPaddedZeros(t *testing.T) {
 	}
 }
 
+// TestDashboard_CashFlowThrough_AnchorsWindow: the month-end review (#609)
+// asks for one arbitrary earlier month. The window ends with the anchor's
+// month, not the current one, and another user's rows never leak in.
+func TestDashboard_CashFlowThrough_AnchorsWindow(t *testing.T) {
+	svc, userID, accountID, g := newDashboardSvc(t)
+	ctx := context.Background()
+
+	seedChartTxn(t, g, userID, accountID, nil, time.Date(2025, 9, 3, 0, 0, 0, 0, time.UTC), decimal.RequireFromString("2400.10"), false)
+	seedChartTxn(t, g, userID, accountID, nil, time.Date(2025, 9, 14, 0, 0, 0, 0, time.UTC), decimal.RequireFromString("-120.45"), false)
+	seedChartTxn(t, g, userID, accountID, nil, time.Date(2025, 9, 30, 0, 0, 0, 0, time.UTC), decimal.RequireFromString("-80.05"), false)
+	// Transfer in the same month must not count.
+	seedChartTxn(t, g, userID, accountID, nil, time.Date(2025, 9, 20, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-500), true)
+	// Neighbouring months stay outside a one-month window.
+	seedChartTxn(t, g, userID, accountID, nil, time.Date(2025, 8, 31, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-7), false)
+	seedChartTxn(t, g, userID, accountID, nil, time.Date(2025, 10, 1, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-9), false)
+
+	userB := seedTestUser(t, g)
+	accB := &model.Account{
+		UserID: userB, Name: "B-" + time.Now().Format("150405.000000"),
+		InstitutionSlug: "fixture", AccountType: "checking", Currency: "USD",
+	}
+	if err := g.Create(accB).Error; err != nil {
+		t.Fatalf("seed B account: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("account_id = ?", accB.ID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, accB.ID)
+	})
+	seedChartTxn(t, g, userB, accB.ID, nil, time.Date(2025, 9, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-9999), false)
+
+	tests := []struct {
+		name    string
+		through time.Time
+	}{
+		{"first of month", time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)},
+		{"mid month", time.Date(2025, 9, 17, 12, 0, 0, 0, time.UTC)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := svc.CashFlowThrough(ctx, userID, tc.through, 1)
+			if err != nil {
+				t.Fatalf("CashFlowThrough: %v", err)
+			}
+			if len(rows) != 1 {
+				t.Fatalf("got %d rows, want 1", len(rows))
+			}
+			got := rows[0]
+			if got.Month != "2025-09-01" || got.Inflow != "2400.1" || got.Outflow != "200.5" || got.Net != "2199.6" {
+				t.Errorf("Sep 2025 = %+v, want month=2025-09-01 inflow=2400.1 outflow=200.5 net=2199.6", got)
+			}
+		})
+	}
+}
+
 // TestDashboard_NetWorth_BackDerives: today's balance is $1000. Two
 // outflows ($-100 each) happened on May 5 and May 10. The month-end
 // rows for April and earlier should back-derive to $1200 (current +

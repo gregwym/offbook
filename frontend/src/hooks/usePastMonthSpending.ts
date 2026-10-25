@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { getSpendByCategory, getTopMerchants } from '../api/dashboard'
+import { getCashFlow, getSpendByCategory, getTopMerchants } from '../api/dashboard'
 import { monthWindow } from '../lib/month'
 import type { InsightsData } from './useScopedInsights'
 
@@ -9,17 +9,27 @@ export type PastMonthSpending =
       state: 'ready'
       byCategory: InsightsData['by_category']
       topMerchants: InsightsData['top_merchants']
+      // The month's income / spending / net (#609); null if the server
+      // returned no row for it.
+      cashFlow: InsightsData['cash_flow'][number] | null
       retry: () => void
     }
 
 type Loaded =
-  | { key: string; ok: true; byCategory: InsightsData['by_category']; topMerchants: InsightsData['top_merchants'] }
+  | {
+      key: string
+      ok: true
+      byCategory: InsightsData['by_category']
+      topMerchants: InsightsData['top_merchants']
+      cashFlow: InsightsData['cash_flow'][number] | null
+    }
   | { key: string; ok: false }
 
-// usePastMonthSpending loads one earlier month's category spend and top
-// merchants (#607); month null (the current month) loads nothing. Results
-// are keyed by month + attempt, so a slow response for a month the user has
-// already stepped away from can't paint the wrong month.
+// usePastMonthSpending loads one earlier month's category spend, top
+// merchants (#607) and income / spending totals (#609); month null (the
+// current month) loads nothing. Results are keyed by month + attempt, so a
+// slow response for a month the user has already stepped away from can't
+// paint the wrong month.
 export function usePastMonthSpending(month: string | null): PastMonthSpending {
   const [attempt, setAttempt] = useState(0)
   const [loaded, setLoaded] = useState<Loaded | null>(null)
@@ -30,9 +40,9 @@ export function usePastMonthSpending(month: string | null): PastMonthSpending {
     if (month == null || key == null) return
     let cancelled = false
     const span = monthWindow(month)
-    Promise.all([getSpendByCategory(span), getTopMerchants(10, span)])
-      .then(([byCategory, topMerchants]) => {
-        if (!cancelled) setLoaded({ key, ok: true, byCategory, topMerchants })
+    Promise.all([getSpendByCategory(span), getTopMerchants(10, span), getCashFlow(1, month)])
+      .then(([byCategory, topMerchants, cashFlow]) => {
+        if (!cancelled) setLoaded({ key, ok: true, byCategory, topMerchants, cashFlow: cashFlow[0] ?? null })
       })
       .catch(() => {
         if (!cancelled) setLoaded({ key, ok: false })
@@ -45,5 +55,5 @@ export function usePastMonthSpending(month: string | null): PastMonthSpending {
   if (key == null) return { state: 'idle', retry }
   if (loaded?.key !== key) return { state: 'loading', retry }
   if (!loaded.ok) return { state: 'error', retry }
-  return { state: 'ready', byCategory: loaded.byCategory, topMerchants: loaded.topMerchants, retry }
+  return { state: 'ready', byCategory: loaded.byCategory, topMerchants: loaded.topMerchants, cashFlow: loaded.cashFlow, retry }
 }
