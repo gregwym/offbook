@@ -617,7 +617,10 @@ function SpendingBand({ data }: { data: InsightsData }) {
 
       <div className="mt-5 grid grid-cols-1 gap-5 border-t border-gray-100 pt-4 lg:grid-cols-3">
         <CashFlowTrend months={data.cash_flow} />
-        <CategoryTrendList items={data.category_trend} />
+        <CategoryTrendList
+          items={data.category_trend}
+          title={month ? `${monthLabel(currentMonth())} vs. average` : undefined}
+        />
         <TopMerchantsList
           rows={merchants}
           title={month ? `Top merchants · ${monthLabel(month)}` : 'Top merchants'}
@@ -711,12 +714,14 @@ function CashFlowTrend({ months }: { months: InsightsData['cash_flow'] }) {
 
 // Month-over-month category trend: this-month vs. trailing average, top 5
 // by this-month spend (#367).
-function CategoryTrendList({ items }: { items: InsightsData['category_trend'] }) {
+// title names the month when the band is stepped back (#607): this list
+// always compares the current month with its trailing average.
+function CategoryTrendList({ items, title = 'Trending vs. average' }: { items: InsightsData['category_trend']; title?: string }) {
   const top = items.slice(0, 5)
   return (
     <div>
       <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">
-        Trending vs. average
+        {title}
       </h3>
       {top.length === 0 ? (
         <div className="mt-2 py-4 text-center text-xs text-gray-400">Not enough history yet.</div>

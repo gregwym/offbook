@@ -391,6 +391,8 @@ describe('InsightsPage spending month stepper', () => {
     const travel = await screen.findByRole('link', { name: 'Travel' })
     expect(screen.getByRole('heading', { name: `Spending by category · ${monthLabel(prev)}` })).toBeInTheDocument()
     expect(screen.getByText(`Top merchants · ${monthLabel(prev)}`)).toBeInTheDocument()
+    // The trend list stays on the current month and says so.
+    expect(screen.getByText(`${monthLabel(currentMonth())} vs. average`)).toBeInTheDocument()
     expect(requested).toContainEqual({ path: '/api/v1/dashboard/spend-by-category', ...prevWindow })
     expect(requested).toContainEqual({ path: '/api/v1/dashboard/top-merchants', ...prevWindow })
 
