@@ -353,6 +353,46 @@ func TestAggregator_NetWorthTrend_OpeningBalanceAnchorsDayZero(t *testing.T) {
 	}
 }
 
+// TestAggregator_NetWorthTrend_StartsAtFirstSharedMonth (#618): the household
+// trend starts at the first month-end the shared set holds anything. A private
+// account's older history neither shows nor moves the start, and an empty
+// shared set yields no points instead of a run of confident zeros.
+func TestAggregator_NetWorthTrend_StartsAtFirstSharedMonth(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	usd := testutil.LookupUSDAssetID(t, g)
+	ownerID := seedUser(t, g, "nwt-start-owner")
+	hh := seedHouseholdRow(t, g, ownerID, "NWTStart", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+	agg.SetClock(func() time.Time { return time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) })
+
+	private := seedAccount(t, g, ownerID, "private-old")
+	seedHoldingTxn(t, g, ownerID, private.ID, usd, model.KindOpeningBalance, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), "9999")
+	out, err := agg.NetWorthTrend(ctx, hh.ID, 3)
+	if err != nil {
+		t.Fatalf("NetWorthTrend: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("no shared accounts: got %+v, want no points", out)
+	}
+
+	shared := seedAccount(t, g, ownerID, "shared-new")
+	seedHoldingTxn(t, g, ownerID, shared.ID, usd, model.KindOpeningBalance, time.Date(2026, 4, 3, 0, 0, 0, 0, time.UTC), "42.50")
+	setShare(t, g, shared.ID, hh.ID, model.VisibilityBalanceOnly)
+	out, err = agg.NetWorthTrend(ctx, hh.ID, 3) // Mar, Apr, May
+	if err != nil {
+		t.Fatalf("NetWorthTrend: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("len(out) = %d (%+v), want 2 (Apr, May)", len(out), out)
+	}
+	for i, p := range out {
+		if p.Date.Month() != time.Month(4+i) || p.Value != "42.5" || !p.Complete {
+			t.Errorf("point[%d] = {%s %s %v}, want {month %d 42.5 true}", i, p.Date, p.Value, p.Complete, 4+i)
+		}
+	}
+}
+
 // TestAggregator_NetWorthTrend_InGraceExcluded covers (c) on the trend.
 func TestAggregator_NetWorthTrend_InGraceExcluded(t *testing.T) {
 	agg, g := newAggregator(t)

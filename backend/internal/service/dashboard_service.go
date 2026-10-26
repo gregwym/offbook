@@ -295,9 +295,13 @@ func (s *DashboardService) NetWorth(ctx context.Context, userID int64, months in
 	kindOf := map[int64]string{}
 	// byKind[asOf] collects the per-kind valuations for the drill-in.
 	byKind := map[time.Time][]NetWorthKindValue{}
+	// held[asOf] records whether the fold had any position at that month-end;
+	// month-ends before the first one are unknown history, not a $0 (#618).
+	held := map[time.Time]bool{}
 	series, err := val.Series(ctx, asOfs, user.PrimaryCurrencyAssetID,
 		func(ctx context.Context, asOf time.Time) ([]model.Position, error) {
 			positions, err := s.txns.FoldByUserAsOf(ctx, userID, asOf)
+			held[asOf] = len(positions) > 0
 			if err != nil || s.assets == nil {
 				return positions, err
 			}
@@ -333,7 +337,7 @@ func (s *DashboardService) NetWorth(ctx context.Context, userID int64, months in
 	}
 
 	out := make([]NetWorthPoint, 0, len(series))
-	for _, p := range series {
+	for _, p := range valuation.TrimUnknownStart(series, held) {
 		out = append(out, NetWorthPoint{
 			Date:     p.AsOf.Format("2006-01-02"),
 			Total:    p.Value.String(),

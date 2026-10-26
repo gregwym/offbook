@@ -187,6 +187,20 @@ func MonthEndGrid(now time.Time, months int) []time.Time {
 	return out
 }
 
+// TrimUnknownStart drops the leading points whose instant held no position
+// (held[asOf] false): before the first ledger row or balance observation the
+// set's history is unknown, and plotting it as a confident $0 reads as a jump
+// from zero (#618). A later empty month (an account drawn to nothing) is a
+// known zero and stays.
+func TrimUnknownStart(series []SeriesPoint, held map[time.Time]bool) []SeriesPoint {
+	for i, p := range series {
+		if held[p.AsOf] {
+			return series[i:]
+		}
+	}
+	return nil
+}
+
 // SeriesPoint is one timestamped entry of a valuation series.
 type SeriesPoint struct {
 	AsOf time.Time

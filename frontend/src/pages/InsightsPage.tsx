@@ -331,6 +331,15 @@ function NetWorthBand({
             <div className="flex h-full items-center justify-center py-6 text-sm text-gray-400">
               No trend data yet — net worth will appear here as snapshots accumulate.
             </div>
+          ) : trend.length === 1 ? (
+            // One known month-end is not a line (#618): the server omits the
+            // months before any account data instead of plotting them as $0.
+            <>
+              <div className="flex items-center justify-center py-6 text-sm text-gray-500">
+                History starts {monthLabel(trend[0].date.slice(0, 7))} — the trend appears after another month-end.
+              </div>
+              <KindBreakdown trend={trend} />
+            </>
           ) : (
             <>
               <ResponsiveContainer width="100%" height={hasPartialMonths ? 124 : 140}>
@@ -352,9 +361,11 @@ function NetWorthBand({
                   />
                   {/* Months with an unpriced asset render a hollow amber dot —
                       the value plotted there is a partial sum (#339). */}
+                  {/* Linear, not monotone: a smoothed curve invents a gradual
+                      rise between month-ends that never happened (#618). */}
                   <Line
                     isAnimationActive={false}
-                    type="monotone"
+                    type="linear"
                     dataKey="total"
                     stroke="#6366F1"
                     strokeWidth={2}

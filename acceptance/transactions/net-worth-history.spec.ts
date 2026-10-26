@@ -6,8 +6,9 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 // headline for manual accounts with dated history, the range selector
 // (3M/6M/1Y/3Y) refetches a longer series without breaking the headline,
 // the choice survives nothing it shouldn't (reload resets to the default),
-// earlier month-ends include the opening balance (#528), and neither
-// viewport overflows. Throwaway user; desktop + mobile projects.
+// earlier month-ends include the opening balance (#528), the trend starts
+// at the first month with data instead of a run of $0 points (#618), and
+// neither viewport overflows. Throwaway user; desktop + mobile projects.
 
 test.describe('net worth history journey', () => {
   test('headline is exact and the range selector extends the trend', async ({ page }, testInfo) => {
@@ -42,7 +43,7 @@ test.describe('net worth history journey', () => {
 
     const first = trendResponse(12)
     await page.goto('/insights')
-    await first
+    const series1Y: { date: string; total: string }[] = (await (await first).json()).data
     const band = page.locator('section', { hasText: 'Net worth' }).first()
     await expect(band).toContainText(expected)
     await expect(band).not.toContainText('partial')
@@ -76,7 +77,18 @@ test.describe('net worth history journey', () => {
     }
     expect(pointAt(2)).toMatch(/^3680\.4/)
     expect(pointAt(5)).toMatch(/^2800\.55/)
-    expect(Number(pointAt(9) ?? '0')).toBe(0)
+    // #618: nothing before the oldest row (8 months ago) — no $0 run-up on
+    // 1Y or 3Y; the first point is that month and every point is real money.
+    expect(pointAt(9)).toBeUndefined()
+    for (const s of [series1Y, series]) {
+      expect(s[0].date.slice(0, 7)).toBe(monthsAgo(8).slice(0, 7))
+      expect(s.every((p) => Number(p.total) > 0)).toBe(true)
+    }
+    expect(series).toHaveLength(series1Y.length)
+    await band.scrollIntoViewIfNeeded()
+    await testInfo.attach(`${testInfo.project.name}-net-worth-3y`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
     await expectNoOverflow(page)
 
     await page.reload()
