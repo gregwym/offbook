@@ -774,12 +774,16 @@ func (a *Aggregator) NetWorthTrend(ctx context.Context, householdID int64, month
 	val := a.val.WithStaleWindow(0)
 	kindOf := map[int64]string{}
 	byKind := map[time.Time][]AssetClassAllocation{}
+	// Month-ends before the shared set's first position are unknown history,
+	// not a $0 (#618).
+	held := map[time.Time]bool{}
 	series, err := val.Series(ctx, asOfs, quoteAssetID,
 		func(ctx context.Context, asOf time.Time) ([]model.Position, error) {
 			positions, err := a.repo.FoldByAccountSetAsOf(ctx, accountIDs, asOf)
 			if err != nil {
 				return nil, err
 			}
+			held[asOf] = len(positions) > 0
 			var missing []int64
 			for _, p := range positions {
 				if _, ok := kindOf[p.AssetID]; !ok {
@@ -817,7 +821,7 @@ func (a *Aggregator) NetWorthTrend(ctx context.Context, householdID int64, month
 		return nil, fmt.Errorf("net worth series: %w", err)
 	}
 	out := make([]NetWorthPoint, 0, len(series))
-	for _, p := range series {
+	for _, p := range valuation.TrimUnknownStart(series, held) {
 		out = append(out, NetWorthPoint{
 			Date:     p.AsOf,
 			Value:    p.Value.String(),

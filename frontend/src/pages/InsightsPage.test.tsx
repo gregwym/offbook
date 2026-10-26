@@ -55,6 +55,24 @@ describe('InsightsPage net-worth card and period footer', () => {
   })
 })
 
+// #618: a single known month-end reads as where history starts, not a line.
+describe('InsightsPage net-worth history start', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('names the start month instead of drawing a one-point line', async () => {
+    server.use(
+      http.get('*/dashboard/net-worth', () =>
+        HttpResponse.json({ data: [{ date: '2026-10-31', total: '2600.10', complete: true }], total: 1 }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    expect(await screen.findByText(/History starts October 2026/)).toBeInTheDocument()
+    expect(screen.queryByText(/No trend data yet/)).toBeNull()
+  })
+})
+
 describe('InsightsPage first run', () => {
   beforeEach(() => {
     resetStores()

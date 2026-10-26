@@ -420,12 +420,13 @@ func TestDashboard_NetWorth_OpeningBalanceAnchorsDayZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NetWorth: %v", err)
 	}
-	if len(rows) != 4 {
-		t.Fatalf("got %d rows, want 4", len(rows))
+	// Feb: before any row, so unknown and omitted (#618). Mar: 6200 − 400.25.
+	// Apr: + other's 250.50 − 799.75. May: + 100.10 adjustment = 5,000.00 +
+	// 100.10 + 250.50.
+	if len(rows) != 3 || rows[0].Date != "2026-03-31" {
+		t.Fatalf("got %d rows starting %v, want 3 starting 2026-03-31", len(rows), rows)
 	}
-	// Feb: nothing yet. Mar: 6200 − 400.25. Apr: + other's 250.50 − 799.75.
-	// May: + 100.10 adjustment = 5,000.00 + 100.10 + 250.50.
-	want := []string{"0", "5799.75", "5250.5", "5350.6"}
+	want := []string{"5799.75", "5250.5", "5350.6"}
 	for i, w := range want {
 		got := decimal.RequireFromString(rows[i].Total)
 		if !got.Equal(decimal.RequireFromString(w)) {
@@ -498,6 +499,58 @@ func TestDashboard_NetWorth_TenantIsolation(t *testing.T) {
 		if r.Total != "0" {
 			t.Errorf("user A net worth row = %s, want 0 (user B's $9999 must not leak)", r.Total)
 		}
+	}
+}
+
+// TestDashboard_NetWorth_StartsAtFirstKnownMonth (#618): month-ends before the
+// user's first ledger row are unknown history and are omitted, not plotted as
+// $0. Another user's earlier row does not move the start (tenancy), and a
+// later month where the balance is drawn to zero is a known zero and stays.
+func TestDashboard_NetWorth_StartsAtFirstKnownMonth(t *testing.T) {
+	svc, userA, accountA, g := newDashboardSvc(t)
+	ctx := context.Background()
+	usdID := testutil.LookupUSDAssetID(t, g)
+	userB := seedTestUser(t, g)
+	accB := &model.Account{
+		UserID: userB, Name: "B-start-" + time.Now().Format("150405.000000"),
+		InstitutionSlug: "fixture", AccountType: "checking", Currency: "USD",
+	}
+	if err := g.Create(accB).Error; err != nil {
+		t.Fatalf("seed B: %v", err)
+	}
+	t.Cleanup(func() {
+		g.Unscoped().Where("account_id = ?", accB.ID).Delete(&model.Transaction{})
+		g.Unscoped().Delete(&model.Account{}, accB.ID)
+	})
+	seedNetWorthTxn(t, g, userB, accB.ID, usdID, model.KindOpeningBalance, time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC), "500")
+
+	tests := []struct {
+		name  string
+		seed  func()
+		dates []string
+		want  []string
+	}{
+		{"no rows", func() {}, nil, nil},
+		{"first row in April", func() {
+			seedNetWorthTxn(t, g, userA, accountA, usdID, model.KindOpeningBalance, time.Date(2026, 4, 20, 0, 0, 0, 0, time.UTC), "2600.10")
+		}, []string{"2026-04-30", "2026-05-31"}, []string{"2600.1", "2600.1"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.seed()
+			rows, err := svc.NetWorth(ctx, userA, 5) // Jan … May
+			if err != nil {
+				t.Fatalf("NetWorth: %v", err)
+			}
+			if len(rows) != len(tc.dates) {
+				t.Fatalf("got %d rows %+v, want %d", len(rows), rows, len(tc.dates))
+			}
+			for i := range rows {
+				if rows[i].Date != tc.dates[i] || rows[i].Total != tc.want[i] || !rows[i].Complete {
+					t.Errorf("row[%d] = {%s %s %v}, want {%s %s true}", i, rows[i].Date, rows[i].Total, rows[i].Complete, tc.dates[i], tc.want[i])
+				}
+			}
+		})
 	}
 }
 
