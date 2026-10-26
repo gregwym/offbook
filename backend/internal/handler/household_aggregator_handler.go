@@ -26,8 +26,8 @@ func NewHouseholdAggregatorHandler(agg *household.Aggregator, members repository
 
 // Register mounts /h/dashboard, /h/budgets/pace, /h/budgets/summary,
 // /h/goals/progress,
-// /h/ai/context, and the /h/insights/* trio (allocation, net-worth,
-// accounts). All are gated by the secured group + the membership lookup
+// /h/ai/context, and the /h/insights/* views (allocation, net-worth,
+// accounts, spend-by-category, category-trend, top-merchants, cash-flow). All are gated by the secured group + the membership lookup
 // below (no membership ⇒ 403).
 func (h *HouseholdAggregatorHandler) Register(g *gin.RouterGroup) {
 	r := g.Group("/h")
@@ -39,6 +39,7 @@ func (h *HouseholdAggregatorHandler) Register(g *gin.RouterGroup) {
 	r.GET("/insights/allocation", h.Allocation)
 	r.GET("/insights/net-worth", h.NetWorthTrend)
 	r.GET("/insights/accounts", h.AccountSummaries)
+	r.GET("/insights/spend-by-category", h.SpendByCategory)
 	r.GET("/insights/category-trend", h.CategoryTrend)
 	r.GET("/insights/top-merchants", h.TopMerchants)
 	r.GET("/insights/cash-flow", h.CashFlow)
@@ -181,8 +182,29 @@ func (h *HouseholdAggregatorHandler) AccountSummaries(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out, "total": int64(len(out))})
 }
 
-// CategoryTrend handles ?months=6 (default 6, capped at 36) — the household
-// month-over-month category spending trend (#367).
+// SpendByCategory handles ?from=YYYY-MM-DD&to=YYYY-MM-DD — household
+// spending by category over shared balance_and_txns accounts (#619). Bounds
+// default to the current calendar month.
+func (h *HouseholdAggregatorHandler) SpendByCategory(c *gin.Context) {
+	hhID, ok := h.requireHousehold(c)
+	if !ok {
+		return
+	}
+	from, to, ok := readFromToParams(c)
+	if !ok {
+		return
+	}
+	out, err := h.agg.SpendByCategory(c.Request.Context(), hhID, from, to)
+	if err != nil {
+		writeAggregatorErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out, "total": int64(len(out))})
+}
+
+// CategoryTrend handles ?months=6&month=YYYY-MM (default 6, capped at 36) —
+// the household month-over-month category spending trend (#367). month
+// anchors the window's last month (#619); omitted = the current month.
 func (h *HouseholdAggregatorHandler) CategoryTrend(c *gin.Context) {
 	hhID, ok := h.requireHousehold(c)
 	if !ok {
@@ -192,7 +214,19 @@ func (h *HouseholdAggregatorHandler) CategoryTrend(c *gin.Context) {
 	if months < 0 {
 		return
 	}
-	out, err := h.agg.CategoryTrend(c.Request.Context(), hhID, months)
+	var (
+		out []household.CategoryTrendItem
+		err error
+	)
+	if v := c.Query("month"); v != "" {
+		through, ok := readMonthParam(c, v)
+		if !ok {
+			return
+		}
+		out, err = h.agg.CategoryTrendThrough(c.Request.Context(), hhID, through, months)
+	} else {
+		out, err = h.agg.CategoryTrend(c.Request.Context(), hhID, months)
+	}
 	if err != nil {
 		writeAggregatorErr(c, err)
 		return
@@ -232,8 +266,9 @@ func (h *HouseholdAggregatorHandler) TopMerchants(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": out, "total": int64(len(out))})
 }
 
-// CashFlow handles ?months=6 (default 6, capped at 36) — the household
-// income-vs-spending trend by month (#367).
+// CashFlow handles ?months=6&month=YYYY-MM (default 6, capped at 36) — the
+// household income-vs-spending trend by month (#367). month anchors the
+// window's last month (#619); omitted = the current month.
 func (h *HouseholdAggregatorHandler) CashFlow(c *gin.Context) {
 	hhID, ok := h.requireHousehold(c)
 	if !ok {
@@ -243,7 +278,19 @@ func (h *HouseholdAggregatorHandler) CashFlow(c *gin.Context) {
 	if months < 0 {
 		return
 	}
-	out, err := h.agg.CashFlow(c.Request.Context(), hhID, months)
+	var (
+		out []household.CashFlowMonth
+		err error
+	)
+	if v := c.Query("month"); v != "" {
+		through, ok := readMonthParam(c, v)
+		if !ok {
+			return
+		}
+		out, err = h.agg.CashFlowThrough(c.Request.Context(), hhID, through, months)
+	} else {
+		out, err = h.agg.CashFlow(c.Request.Context(), hhID, months)
+	}
 	if err != nil {
 		writeAggregatorErr(c, err)
 		return

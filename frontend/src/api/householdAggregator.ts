@@ -1,6 +1,7 @@
 import { apiClient, type ApiItem, type ApiList } from './client'
 import type {
   BudgetPaceItem,
+  CategorySpendingItem,
   GoalProgressItem,
   HouseholdAccountSummary,
   HouseholdAssetClassAllocation,
@@ -12,6 +13,7 @@ import type {
   HouseholdPeriodKey,
 } from '../types/householdAggregator'
 import type { BudgetMonthSummary } from '../types/budget'
+import type { DateWindow } from './dashboard'
 
 export async function getHouseholdDashboard(
   period: HouseholdPeriodKey = 'current_month',
@@ -53,23 +55,34 @@ export async function getHouseholdAccountSummaries(): Promise<HouseholdAccountSu
   return res.data.data
 }
 
-export async function getHouseholdCategoryTrend(months = 6): Promise<HouseholdCategoryTrendItem[]> {
+// Spending by category over shared balance_and_txns accounts (#619);
+// window omitted = the current month.
+export async function getHouseholdSpendByCategory(window?: DateWindow): Promise<CategorySpendingItem[]> {
+  const res = await apiClient.get<ApiList<CategorySpendingItem>>('/h/insights/spend-by-category', {
+    params: window,
+  })
+  return res.data.data
+}
+
+// month (YYYY-MM) anchors the window's last month (#619); omitted = now.
+export async function getHouseholdCategoryTrend(months = 6, month?: string): Promise<HouseholdCategoryTrendItem[]> {
   const res = await apiClient.get<ApiList<HouseholdCategoryTrendItem>>('/h/insights/category-trend', {
-    params: { months },
+    params: { months, month },
   })
   return res.data.data
 }
 
-export async function getHouseholdTopMerchants(limit = 10): Promise<HouseholdMerchantSpendItem[]> {
+export async function getHouseholdTopMerchants(limit = 10, window?: DateWindow): Promise<HouseholdMerchantSpendItem[]> {
   const res = await apiClient.get<ApiList<HouseholdMerchantSpendItem>>('/h/insights/top-merchants', {
-    params: { limit },
+    params: { limit, ...window },
   })
   return res.data.data
 }
 
-export async function getHouseholdCashFlow(months = 6): Promise<HouseholdCashFlowMonth[]> {
+// month (YYYY-MM) anchors the window's last month (#619); omitted = now.
+export async function getHouseholdCashFlow(months = 6, month?: string): Promise<HouseholdCashFlowMonth[]> {
   const res = await apiClient.get<ApiList<HouseholdCashFlowMonth>>('/h/insights/cash-flow', {
-    params: { months },
+    params: { months, month },
   })
   return res.data.data
 }

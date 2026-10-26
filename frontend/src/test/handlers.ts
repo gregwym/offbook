@@ -76,4 +76,5 @@ export const handlers = [
   http.get(`${API}/h/insights/category-trend`, () => list(fx.householdCategoryTrend)),
   http.get(`${API}/h/insights/top-merchants`, () => list(fx.householdTopMerchants)),
   http.get(`${API}/h/insights/cash-flow`, () => list(fx.householdCashFlow)),
+  http.get(`${API}/h/insights/spend-by-category`, () => list(fx.householdSpendByCategory)),
 ]

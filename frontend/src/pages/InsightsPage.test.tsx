@@ -530,11 +530,58 @@ describe('InsightsPage spending month stepper', () => {
     expect(link.getAttribute('href')).toBe(`/transactions?spending=1&from=${prevWindow.from}&to=${dayBefore(prevWindow.to)}`)
   })
 
-  it('has no month stepper in household scope', async () => {
+  // #619: household Insights steps months like personal, from the
+  // aggregator's month-anchored endpoints, with no drill-through links.
+  it('steps the household spending band back a month with the same tiles and titles', async () => {
     setHouseholdScope(1)
+    const asked: Record<string, (string | null)[]> = { spend: [], cash: [], trend: [], merchants: [] }
+    const cur = currentMonth()
+    server.use(
+      http.get('*/h/insights/spend-by-category', ({ request }) => {
+        const from = new URL(request.url).searchParams.get('from')
+        asked.spend.push(from)
+        return HttpResponse.json({
+          data: [{ category_id: 2, name: 'Dining', amount: from ? '310.40' : '55.00' }],
+          total: 1,
+        })
+      }),
+      http.get('*/h/insights/cash-flow', ({ request }) => {
+        const month = new URL(request.url).searchParams.get('month')
+        asked.cash.push(month)
+        const row = month
+          ? { month: `${month}-01`, inflow: '4100.000000000000000000', outflow: '310.400000000000000000', net: '3789.600000000000000000' }
+          : { month: `${cur}-01`, inflow: '0', outflow: '55.000000000000000000', net: '-55.000000000000000000' }
+        return HttpResponse.json({ data: [row], total: 1 })
+      }),
+      http.get('*/h/insights/category-trend', ({ request }) => {
+        asked.trend.push(new URL(request.url).searchParams.get('month'))
+        return HttpResponse.json({ data: [], total: 0 })
+      }),
+      http.get('*/h/insights/top-merchants', ({ request }) => {
+        asked.merchants.push(new URL(request.url).searchParams.get('from'))
+        return HttpResponse.json({ data: [], total: 0 })
+      }),
+    )
     renderPage(<InsightsPage />)
-    await screen.findByText(/spending by category · this period/i)
-    expect(screen.queryByRole('navigation', { name: 'Spending month' })).toBeNull()
+    await screen.findByText(`Spending by category · ${monthLabel(cur)}`, { exact: false })
+    const current = await screen.findByLabelText(`${monthLabel(cur)} totals`)
+    expect(current).toHaveTextContent('Spending55.00 USD')
+    expect(screen.getByText(`${monthLabel(cur)} vs. average`)).toBeInTheDocument()
+
+    const nav = screen.getByRole('navigation', { name: 'Spending month' })
+    fireEvent.click(within(nav).getByRole('button', { name: 'Previous month' }))
+    const past = await screen.findByLabelText(`${monthLabel(prev)} totals`)
+    expect(past).toHaveTextContent('Income4,100.00 USD')
+    expect(past).toHaveTextContent('Spending310.40 USD')
+    expect(past).toHaveTextContent('Net3,789.60 USD')
+    expect(screen.getByText(`${monthLabel(prev)} vs. average`)).toBeInTheDocument()
+    expect(asked.spend).toContain(prevWindow.from)
+    expect(asked.cash).toContain(prev)
+    expect(asked.trend).toContain(prev)
+    expect(asked.merchants).toContain(prevWindow.from)
+    // Aggregates only: no drill-through links in household scope.
+    expect(within(past).queryByRole('link')).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Dining' })).toBeNull()
   })
 })
 

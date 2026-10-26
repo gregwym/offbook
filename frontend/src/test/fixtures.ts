@@ -17,6 +17,7 @@ import type {
   RecurringItem,
 } from '../types/dashboard'
 import type {
+  CategorySpendingItem,
   HouseholdAccountSummary,
   HouseholdAssetClassAllocation,
   HouseholdCashFlowMonth,
@@ -316,6 +317,7 @@ export const householdAccountSummaries: HouseholdAccountSummary[] = []
 export const householdCategoryTrend: HouseholdCategoryTrendItem[] = []
 export const householdTopMerchants: HouseholdMerchantSpendItem[] = []
 export const householdCashFlow: HouseholdCashFlowMonth[] = []
+export const householdSpendByCategory: CategorySpendingItem[] = []
 
 export const reconciliationReport: ReconciliationReport = {
   account_id: 1,
