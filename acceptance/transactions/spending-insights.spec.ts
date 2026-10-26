@@ -54,8 +54,8 @@ test.describe('insights spending band', () => {
     const w = await bar.evaluate((el) => (el as HTMLElement).getBoundingClientRect().width)
     expect(w, 'groceries bar has width').toBeGreaterThan(0)
     // The unconfirmed 500 transfer pair is not spending.
-    await expect(page.getByText(/spending:/i).first()).toContainText('130.00')
-    await expect(page.getByText(/spending:/i).first()).not.toContainText('630.00')
+    await expect(page.getByLabel(/^[A-Z][a-z]+ \d{4} totals$/)).toContainText('Spending130.00')
+    await expect(page.getByLabel(/^[A-Z][a-z]+ \d{4} totals$/)).not.toContainText('Spending630.00')
 
     // Top merchants nets the refund (100 - 30 = 70, two rows) and lists
     // neither the salary nor the transfer legs, so its rows add up to the

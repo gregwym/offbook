@@ -18,3 +18,16 @@ export function monthLabel(month: string): string {
 export function monthWindow(month: string): { from: string; to: string } {
   return { from: `${month}-01`, to: `${shiftMonth(month, 1)}-01` }
 }
+
+// rangeLabel reads a [from, to) window (YYYY-MM-DD or RFC3339) as an
+// inclusive human range: "Oct 1 – Oct 31, 2026", or with both years when
+// the window crosses one ("Dec 1, 2025 – Jan 31, 2026").
+export function rangeLabel(from: string, to: string): string {
+  const start = new Date(`${from.slice(0, 10)}T00:00:00Z`)
+  const end = new Date(`${to.slice(0, 10)}T00:00:00Z`)
+  end.setUTCDate(end.getUTCDate() - 1)
+  const day = (d: Date, year: boolean) =>
+    d.toLocaleString('en-US', { month: 'short', day: 'numeric', ...(year ? { year: 'numeric' } : {}), timeZone: 'UTC' })
+  const sameYear = start.getUTCFullYear() === end.getUTCFullYear()
+  return `${day(start, !sameYear)} – ${day(end, true)}`
+}

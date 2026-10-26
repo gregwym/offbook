@@ -74,7 +74,7 @@ test.describe('first run', () => {
     // Insights is populated: the empty state is gone and spending counts the two debits.
     await page.goto('/insights')
     await expect(page.getByRole('heading', { name: 'Add your first account' })).toHaveCount(0)
-    await expect(page.getByText(/spending:/i).first()).toContainText('56.60')
+    await expect(page.getByLabel(/^[A-Z][a-z]+ \d{4} totals$/)).toContainText('Spending56.60')
 
     // #524: allocation names the class in plain language and the donut is
     // fully drawn on first paint (no entry animation leaving it blank).
