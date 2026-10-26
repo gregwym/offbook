@@ -19,6 +19,42 @@ describe('InsightsPage smoke', () => {
   })
 })
 
+// #617: the net-worth card is about balance — cash flow lives only in the
+// Spending card's month tiles — and the footer reads as an inclusive range.
+describe('InsightsPage net-worth card and period footer', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('shows no income/spending line on the personal net-worth card', async () => {
+    renderPage(<InsightsPage />)
+    const band = (await screen.findByRole('group', { name: 'Net worth date range' })).closest('section') as HTMLElement
+    expect(within(band).queryByText(/income/i)).toBeNull()
+    expect(within(band).queryByText(/spending/i)).toBeNull()
+  })
+
+  it('shows no income/spending line on the household net-worth card', async () => {
+    setHouseholdScope(1)
+    renderPage(<InsightsPage />)
+    const band = (await screen.findByRole('group', { name: 'Net worth date range' })).closest('section') as HTMLElement
+    expect(within(band).queryByText(/income/i)).toBeNull()
+    expect(within(band).queryByText(/spending/i)).toBeNull()
+  })
+
+  it('formats the exclusive period window as an inclusive range', async () => {
+    server.use(
+      http.get('*/dashboard/summary', () =>
+        HttpResponse.json({
+          data: { ...fx.dashboardSummary, period: { key: 'current_month', from: '2026-10-01T00:00:00Z', to: '2026-11-01T00:00:00Z' } },
+        }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    expect(await screen.findByText('This period: Oct 1 – Oct 31, 2026')).toBeInTheDocument()
+    expect(screen.queryByText(/2026-11-01/)).toBeNull()
+  })
+})
+
 describe('InsightsPage first run', () => {
   beforeEach(() => {
     resetStores()

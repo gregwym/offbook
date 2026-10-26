@@ -9,7 +9,9 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 // the figure), and "This month" returns. The month's income, spending and net
 // (#609) follow the stepper; spending equals the category rows and drills in.
 // The "vs. average" category trend (#611) follows the stepper as well: each
-// figure equals that month's category row. Throwaway user; desktop and mobile.
+// figure equals that month's category row. Once stepped back, no figure on the
+// page still shows this month's income or spending (#617), and the footer reads
+// as an inclusive range. Throwaway user; desktop and mobile.
 
 test.describe('insights spending month', () => {
   test('step back to last month and drill into its spending', async ({ page }, testInfo) => {
@@ -59,6 +61,12 @@ test.describe('insights spending month', () => {
     await expect(band.getByRole('heading', { name: `Spending by category · ${label(0)}` })).toBeVisible()
     await expect(stepper.getByRole('button', { name: 'Next month' })).toBeDisabled()
     await expect(row(groceries.name)).toContainText('40.00')
+    // #617: the footer is an inclusive human range, not the raw [from, to) window.
+    const day = (monthOffset: number, d: number, year: boolean) =>
+      new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + monthOffset, d))
+        .toLocaleString('en-US', { month: 'short', day: 'numeric', ...(year ? { year: 'numeric' } : {}), timeZone: 'UTC' })
+    await expect(page.getByText(`This period: ${day(0, 1, false)} – ${day(1, 0, true)}`)).toBeVisible()
+    await expect(page.getByText(/Income \(period\)/)).toHaveCount(0)
     await expect(row(travel.name)).toHaveCount(0)
     // This month: nothing in yet, 40 out (#609).
     const totals = (monthOffset: number) => band.getByLabel(`${label(monthOffset)} totals`)
@@ -84,6 +92,10 @@ test.describe('insights spending month', () => {
     await expect(totals(-1)).toContainText('Spending540.25 USD')
     await expect(totals(-1)).toContainText('Net2,659.75 USD')
     await expect(totals(-1)).toContainText('Kept after spending')
+    // #617: nothing on the page still shows this month's 40.00 spending or a
+    // second income/spending pair — the month tiles are the only cash-flow figures.
+    await expect(page.getByText(/(^|[^\d,.])40\.00 USD/).filter({ visible: true })).toHaveCount(0)
+    await expect(page.getByText(/Income \(period\)/)).toHaveCount(0)
     // The trend follows the stepper (#611): last month's figures, not this month's.
     await expect(trend(0)).toHaveCount(0)
     await expect(trendRow(-1, travel.name)).toContainText('410.25')

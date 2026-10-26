@@ -14,7 +14,7 @@ import { spendingHref } from '../lib/spendingLink'
 import { useState } from 'react'
 import { usePastMonthSpending } from '../hooks/usePastMonthSpending'
 import { MonthStepper } from '../components/MonthStepper'
-import { currentMonth, monthLabel, monthWindow } from '../lib/month'
+import { currentMonth, monthLabel, monthWindow, rangeLabel } from '../lib/month'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -158,7 +158,7 @@ function InsightsBody({
       <BudgetsGoalsBand data={data} />
       <AccountsBand data={data} />
       <p className="text-xs text-gray-400">
-        {data.period.from.slice(0, 10)} → {data.period.to.slice(0, 10)}
+        This period: {rangeLabel(data.period.from, data.period.to)}
       </p>
     </>
   )
@@ -300,10 +300,6 @@ function NetWorthBand({
               })}
             </ul>
           )}
-          <div className="mt-1 text-xs text-gray-400">
-            Income (period): <AmountDisplay amount={data.income} /> · Spending:{' '}
-            <AmountDisplay amount={data.spending} />
-          </div>
         </div>
         <div className="md:col-span-2">
           <div className="mb-1 flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
