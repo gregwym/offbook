@@ -507,6 +507,7 @@ func TestAggregator_NoRawTransactionRows(t *testing.T) {
 	check("CategoryTrendItem", household.CategoryTrendItem{})
 	check("MerchantSpendItem", household.MerchantSpendItem{})
 	check("CashFlowMonth", household.CashFlowMonth{})
+	check("CategorySpendingItem", household.CategorySpendingItem{})
 	check("BudgetSummary", household.BudgetSummary{})
 }
 

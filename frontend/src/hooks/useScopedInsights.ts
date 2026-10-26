@@ -28,6 +28,7 @@ import {
   getHouseholdCashFlow,
   getHouseholdCategoryTrend,
   getHouseholdDashboard,
+  getHouseholdSpendByCategory,
   getHouseholdNetWorthTrend,
   getHouseholdTopMerchants,
 } from '../api/householdAggregator'
@@ -383,10 +384,13 @@ async function loadHousehold(trendMonths = 12): Promise<InsightsData> {
 
   // Spending-depth bands (#367) — own Promise.allSettled so a failure on
   // any one degrades just that band, not the whole page (#266 pattern).
-  const [trendResult, merchantsResult, cashFlowResult] = await Promise.allSettled([
+  const [trendResult, merchantsResult, cashFlowResult, spendResult] = await Promise.allSettled([
     getHouseholdCategoryTrend(6),
     getHouseholdTopMerchants(10),
     getHouseholdCashFlow(6),
+    // Positive spend per category, income excluded — the personal predicate
+    // (#619); dashboard.by_category is the signed ledger sum.
+    getHouseholdSpendByCategory(),
   ])
 
   // BudgetPace names each category server-side (#615); "Category #N"
@@ -411,7 +415,7 @@ async function loadHousehold(trendMonths = 12): Promise<InsightsData> {
     net_worth_unpriced: dashboard.net_worth_unpriced,
     income: dashboard.income,
     spending: dashboard.spending,
-    by_category: dashboard.by_category,
+    by_category: spendResult.status === 'fulfilled' ? spendResult.value : [],
     net_worth_trend: trend.map((p) => ({
       date: p.date.slice(0, 10),
       value: p.value,

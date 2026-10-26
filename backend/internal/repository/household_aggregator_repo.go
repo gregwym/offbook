@@ -70,6 +70,12 @@ type HouseholdAggregatorRepository interface {
 	// `LEFT JOIN categories` so uncategorized rows are bucketed as "Uncategorized".
 	CategoryAggregates(ctx context.Context, accountIDs []int64, from, to time.Time) ([]CategoryAggregate, error)
 
+	// CategorySpend is spending by category over [from, to): SUM(-amount)
+	// over outflows and refunds, transfers and non-flow rows excluded — the
+	// personal Insights predicate (dashboardRepo.SpendByCategory) over an
+	// account set, so both scopes' spending bands mean the same thing (#619).
+	CategorySpend(ctx context.Context, accountIDs []int64, from, to time.Time) ([]CategoryAggregate, error)
+
 	// SpendingByCategory returns SUM(-amount) FILTER (amount < 0) for one
 	// category over [from, to) across the given account IDs. Returns a
 	// positive number (spending). Used by BudgetPace.
@@ -349,6 +355,47 @@ func (r *householdAggregatorRepo) PeriodTransactionCount(ctx context.Context, ac
 		  AND transaction_date <  ?
 	`, accountIDs, from, to).Scan(&n).Error
 	return n, err
+}
+
+func (r *householdAggregatorRepo) CategorySpend(ctx context.Context, accountIDs []int64, from, to time.Time) ([]CategoryAggregate, error) {
+	if len(accountIDs) == 0 {
+		return nil, nil
+	}
+	type rawRow struct {
+		CategoryID *int64
+		Name       *string
+		Amount     string
+	}
+	var rows []rawRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT t.category_id                     AS category_id,
+		       c.name                            AS name,
+		       COALESCE(SUM(-t.amount), 0)::text AS amount
+		FROM spend_lines t
+		LEFT JOIN categories c ON c.id = t.category_id
+		WHERE t.deleted_at IS NULL
+		  AND t.account_id IN ?
+		  AND t.kind = 'flow'
+		  AND t.is_transfer = FALSE
+		  AND (t.amount < 0 OR t.is_refund)
+		  AND t.transaction_date >= ?
+		  AND t.transaction_date <  ?
+		GROUP BY t.category_id, c.name
+		ORDER BY SUM(-t.amount) DESC
+	`, accountIDs, from, to).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CategoryAggregate, 0, len(rows))
+	for _, row := range rows {
+		amt, _ := decimal.NewFromString(row.Amount)
+		name := "Uncategorized"
+		if row.Name != nil {
+			name = *row.Name
+		}
+		out = append(out, CategoryAggregate{CategoryID: row.CategoryID, Name: name, Amount: amt})
+	}
+	return out, nil
 }
 
 func (r *householdAggregatorRepo) CategoryAggregates(ctx context.Context, accountIDs []int64, from, to time.Time) ([]CategoryAggregate, error) {

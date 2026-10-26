@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getCashFlow, getCategoryTrend, getSpendByCategory, getTopMerchants } from '../api/dashboard'
+import {
+  getHouseholdCashFlow,
+  getHouseholdCategoryTrend,
+  getHouseholdSpendByCategory,
+  getHouseholdTopMerchants,
+} from '../api/householdAggregator'
 import { monthWindow } from '../lib/month'
 import type { InsightsData } from './useScopedInsights'
 
@@ -31,19 +37,29 @@ type Loaded =
 // usePastMonthSpending loads one earlier month's category spend, top
 // merchants (#607), income / spending totals (#609) and category trend
 // against the months before it (#611); month null (the current month) loads
-// nothing. Results are keyed by month + attempt, so a slow response for a
+// nothing. Household scope reads the same figures from the aggregator (#619).
+// Results are keyed by scope + month + attempt, so a slow response for a
 // month the user has already stepped away from can't paint the wrong month.
-export function usePastMonthSpending(month: string | null): PastMonthSpending {
+export function usePastMonthSpending(month: string | null, scope: InsightsData['scope'] = 'personal'): PastMonthSpending {
   const [attempt, setAttempt] = useState(0)
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const retry = useCallback(() => setAttempt((n) => n + 1), [])
-  const key = month == null ? null : `${month}#${attempt}`
+  const key = month == null ? null : `${scope}:${month}#${attempt}`
 
   useEffect(() => {
     if (month == null || key == null) return
     let cancelled = false
     const span = monthWindow(month)
-    Promise.all([getSpendByCategory(span), getTopMerchants(10, span), getCashFlow(1, month), getCategoryTrend(6, month)])
+    const load =
+      scope === 'household'
+        ? Promise.all([
+            getHouseholdSpendByCategory(span),
+            getHouseholdTopMerchants(10, span),
+            getHouseholdCashFlow(1, month),
+            getHouseholdCategoryTrend(6, month),
+          ])
+        : Promise.all([getSpendByCategory(span), getTopMerchants(10, span), getCashFlow(1, month), getCategoryTrend(6, month)])
+    load
       .then(([byCategory, topMerchants, cashFlow, categoryTrend]) => {
         if (!cancelled) setLoaded({ key, ok: true, byCategory, topMerchants, cashFlow: cashFlow[0] ?? null, categoryTrend })
       })
@@ -53,7 +69,7 @@ export function usePastMonthSpending(month: string | null): PastMonthSpending {
     return () => {
       cancelled = true
     }
-  }, [month, key])
+  }, [month, scope, key])
 
   if (key == null) return { state: 'idle', retry }
   if (loaded?.key !== key) return { state: 'loading', retry }

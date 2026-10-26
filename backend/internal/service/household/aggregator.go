@@ -926,6 +926,13 @@ type CashFlowMonth struct {
 // (#367) — same visibility floor as BudgetPace/CategoryAggregates. Defaults
 // to 6 months.
 func (a *Aggregator) CategoryTrend(ctx context.Context, householdID int64, months int) ([]CategoryTrendItem, error) {
+	return a.CategoryTrendThrough(ctx, householdID, a.now(), months)
+}
+
+// CategoryTrendThrough is CategoryTrend with the window ending at the month
+// containing `through` — the household month stepper (#619), mirroring the
+// personal DashboardService.CategoryTrendThrough (#611).
+func (a *Aggregator) CategoryTrendThrough(ctx context.Context, householdID int64, through time.Time, months int) ([]CategoryTrendItem, error) {
 	if err := a.requireHousehold(ctx, householdID); err != nil {
 		return nil, err
 	}
@@ -944,7 +951,7 @@ func (a *Aggregator) CategoryTrend(ctx context.Context, householdID int64, month
 	}
 	txAccounts := filterAccountsByUsers(txShares, liveUserIDs)
 
-	now := a.now().UTC()
+	now := through.UTC()
 	end := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, 1, 0)
 	start := end.AddDate(0, -months, 0)
 
@@ -1023,6 +1030,45 @@ func (a *Aggregator) CategoryTrend(ctx context.Context, householdID int64, month
 	return items, nil
 }
 
+// SpendByCategory returns spending by category over [from, to) across the
+// household's balance_and_txns shares owned by LIVE members (#619): the
+// same predicate as personal Insights (positive outflow, refunds netted,
+// income and transfers excluded), so the household spending band and its
+// month stepper read like personal. balance_only accounts never contribute
+// category rows. Bounds default to the current calendar month.
+func (a *Aggregator) SpendByCategory(ctx context.Context, householdID int64, from, to time.Time) ([]CategorySpendingItem, error) {
+	if err := a.requireHousehold(ctx, householdID); err != nil {
+		return nil, err
+	}
+	if from.IsZero() || to.IsZero() {
+		f, t, err := ResolvePeriod(PeriodCurrentMonth, a.now())
+		if err != nil {
+			return nil, err
+		}
+		from, to = f, t
+	}
+	live, _, err := a.liveAndInGrace(ctx, householdID)
+	if err != nil {
+		return nil, err
+	}
+	txShares, err := a.repo.ListAccountShares(ctx, householdID,
+		[]string{model.VisibilityBalanceAndTxns})
+	if err != nil {
+		return nil, fmt.Errorf("list shares: %w", err)
+	}
+	txAccounts := filterAccountsByUsers(txShares, userIDs(live))
+
+	rows, err := a.repo.CategorySpend(ctx, txAccounts, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("category spend: %w", err)
+	}
+	out := make([]CategorySpendingItem, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, CategorySpendingItem{CategoryID: r.CategoryID, Name: r.Name, Amount: r.Amount.String()})
+	}
+	return out, nil
+}
+
 // TopMerchants returns the top-spending merchants over [from, to) across
 // the household's balance_and_txns shares owned by LIVE members (#367).
 func (a *Aggregator) TopMerchants(ctx context.Context, householdID int64, from, to time.Time, limit int) ([]MerchantSpendItem, error) {
@@ -1064,6 +1110,12 @@ func (a *Aggregator) TopMerchants(ctx context.Context, householdID int64, from, 
 // (#367) — the household analogue of service.DashboardService.CashFlow.
 // Defaults to 6 months.
 func (a *Aggregator) CashFlow(ctx context.Context, householdID int64, months int) ([]CashFlowMonth, error) {
+	return a.CashFlowThrough(ctx, householdID, a.now(), months)
+}
+
+// CashFlowThrough is CashFlow with the window ending at the month containing
+// `through` — the household month stepper's Income/Spending/Net tiles (#619).
+func (a *Aggregator) CashFlowThrough(ctx context.Context, householdID int64, through time.Time, months int) ([]CashFlowMonth, error) {
 	if err := a.requireHousehold(ctx, householdID); err != nil {
 		return nil, err
 	}
@@ -1082,7 +1134,7 @@ func (a *Aggregator) CashFlow(ctx context.Context, householdID int64, months int
 	}
 	txAccounts := filterAccountsByUsers(txShares, liveUserIDs)
 
-	rows, err := a.repo.CashFlowByMonth(ctx, txAccounts, a.now(), months)
+	rows, err := a.repo.CashFlowByMonth(ctx, txAccounts, through, months)
 	if err != nil {
 		return nil, fmt.Errorf("cash flow: %w", err)
 	}

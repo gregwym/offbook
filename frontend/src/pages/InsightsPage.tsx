@@ -549,11 +549,12 @@ function SpendingBand({ data }: { data: InsightsData }) {
   // Drill-down to the rows behind a figure (#571) — personal scope only;
   // household figures are aggregates with no member transaction list.
   const drill = data.scope === 'personal'
-  // Month stepper (#607) — personal scope only: step the category list and
-  // top merchants back to an earlier month for the month-end review. null
-  // is the current month, served from the page's own load.
+  // Month stepper (#607; household since #619): step the category list, the
+  // month's totals, the trend and top merchants back to an earlier month for
+  // the month-end review. null is the current month, served from the page's
+  // own load.
   const [month, setMonth] = useState<string | null>(null)
-  const past = usePastMonthSpending(month)
+  const past = usePastMonthSpending(month, data.scope)
   const period = month ? monthWindow(month) : { from: data.period.from, to: data.period.to }
   const rows = month ? (past.state === 'ready' ? past.byCategory : []) : data.by_category
   const merchants = month ? (past.state === 'ready' ? past.topMerchants : []) : data.top_merchants
@@ -575,10 +576,10 @@ function SpendingBand({ data }: { data: InsightsData }) {
       <div className="flex items-center gap-2">
         <TrendingUp size={16} className="text-gray-500" />
         <h2 className="text-sm font-medium uppercase tracking-wider text-gray-500">
-          Spending by category · {drill ? monthLabel(month ?? currentMonth()) : 'this period'}
+          Spending by category · {monthLabel(month ?? currentMonth())}
         </h2>
       </div>
-      {drill && <MonthStepper month={month} onChange={setMonth} label="Spending month" className="mt-3" />}
+      <MonthStepper month={month} onChange={setMonth} label="Spending month" className="mt-3" />
       {busy ? (
         <div className="mt-3 py-6 text-center text-sm text-gray-400" role="status">
           Loading {monthLabel(month)}…
@@ -592,11 +593,11 @@ function SpendingBand({ data }: { data: InsightsData }) {
         </div>
       ) : (
         <>
-          {drill && hasTotals && (
+          {hasTotals && (
             <MonthTotals
               totals={totals!}
               label={monthLabel(month ?? currentMonth())}
-              spendingHref={spendingHref({ start: period.from, end: period.to })}
+              spendingHref={drill ? spendingHref({ start: period.from, end: period.to }) : undefined}
             />
           )}
           {rows.length === 0 ? (
@@ -646,7 +647,7 @@ function SpendingBand({ data }: { data: InsightsData }) {
         <CashFlowTrend months={data.cash_flow} />
         <CategoryTrendList
           items={trend}
-          title={drill ? `${monthLabel(month ?? currentMonth())} vs. average` : undefined}
+          title={`${monthLabel(month ?? currentMonth())} vs. average`}
           empty={busy ? 'Loading…' : failed ? 'Not loaded.' : undefined}
         />
         <TopMerchantsList
@@ -672,7 +673,8 @@ function MonthTotals({
 }: {
   totals: InsightsData['cash_flow'][number]
   label: string
-  spendingHref: string
+  // Personal only: household spending is an aggregate with no row list.
+  spendingHref?: string
 }) {
   const overspent = totals.net.trim().startsWith('-')
   // Narrow screens: one label · amount line per figure; sm+: three tiles.
@@ -690,13 +692,19 @@ function MonthTotals({
       <div className={cell}>
         <dt className={term}>Spending</dt>
         <dd className="text-base font-medium sm:mt-0.5">
-          <Link
-            to={spendingHref}
-            title={`See the transactions behind ${label} spending`}
-            className="text-indigo-700 hover:text-indigo-900 hover:underline"
-          >
-            <AmountDisplay amount={totals.outflow} />
-          </Link>
+          {spendingHref ? (
+            <Link
+              to={spendingHref}
+              title={`See the transactions behind ${label} spending`}
+              className="text-indigo-700 hover:text-indigo-900 hover:underline"
+            >
+              <AmountDisplay amount={totals.outflow} />
+            </Link>
+          ) : (
+            <span className="text-gray-900">
+              <AmountDisplay amount={totals.outflow} />
+            </span>
+          )}
         </dd>
       </div>
       <div className={cell}>
