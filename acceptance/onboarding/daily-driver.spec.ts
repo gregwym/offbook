@@ -98,6 +98,9 @@ test.describe('daily driver journey', () => {
     await shot('review-selected')
     await page.getByRole('region', { name: 'Bulk actions' }).getByRole('button', { name: /mark reviewed/i }).click()
     await expect(page.getByText(/all caught up/i)).toBeVisible()
+    // The inbox empties optimistically; the toast is the server-confirmed
+    // "saved" signal, so wait for it before leaving the page.
+    await expect(page.getByRole('status').filter({ hasText: '4 transactions marked reviewed' })).toBeVisible()
 
     // Reload: categories, the split and the reviewed state all persisted.
     await page.reload()
