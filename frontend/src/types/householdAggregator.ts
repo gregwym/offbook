@@ -28,6 +28,7 @@ export type HouseholdMemberContribution = {
 export type BudgetPaceItem = {
   budget_id: number
   category_id: number
+  category_name: string // '' if the category is gone (#615)
   period: 'monthly' | 'weekly' | 'annual'
   budget: string
   spent: string

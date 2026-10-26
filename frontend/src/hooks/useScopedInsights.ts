@@ -389,14 +389,12 @@ async function loadHousehold(trendMonths = 12): Promise<InsightsData> {
     getHouseholdCashFlow(6),
   ])
 
-  // BudgetPace lacks category names — surface category_id, the page
-  // shows "Category #N" if we can't resolve. (The household budget
-  // CRUD UI is still backlogged so a category lookup endpoint at the
-  // household level isn't worth wiring just for this band.)
+  // BudgetPace names each category server-side (#615), including another
+  // member's custom category; "Category #N" only if the category is gone.
   const budgetRows: InsightsBudgetRow[] = budgetPace.map((p) => ({
     id: p.budget_id,
     category_id: p.category_id,
-    category_name: `Category #${p.category_id}`,
+    category_name: p.category_name || `Category #${p.category_id}`,
     period: p.period,
     limit: p.budget,
     carryover: p.carryover,

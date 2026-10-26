@@ -121,11 +121,14 @@ type CategorySpendingItem struct {
 // BudgetPaceItem is one shared_budget rolled up with its current-period spend.
 // Pace is spend / budget (when budget > 0); 0 otherwise.
 type BudgetPaceItem struct {
-	BudgetID   int64  `json:"budget_id"`
-	CategoryID int64  `json:"category_id"`
-	Period     string `json:"period"`
-	Budget     string `json:"budget"`
-	Spent      string `json:"spent"`
+	BudgetID   int64 `json:"budget_id"`
+	CategoryID int64 `json:"category_id"`
+	// CategoryName is the tracked category's label (#615), resolved even
+	// when it is another member's custom category; "" if it is gone.
+	CategoryName string `json:"category_name"`
+	Period       string `json:"period"`
+	Budget       string `json:"budget"`
+	Spent        string `json:"spent"`
 	// Carryover is the unspent balance rolled in from earlier months (zero
 	// unless the budget has rollover on and the window is current_month).
 	// Available = Budget + Carryover; Pace is Spent / Available.
@@ -413,6 +416,14 @@ func (a *Aggregator) BudgetPace(ctx context.Context, householdID int64, period s
 		return nil, fmt.Errorf("list shares: %w", err)
 	}
 	txAccounts := filterAccountsByUsers(txShares, liveUserIDs)
+	catIDs := make([]int64, 0, len(budgets))
+	for _, b := range budgets {
+		catIDs = append(catIDs, b.CategoryID)
+	}
+	names, err := a.repo.CategoryNames(ctx, catIDs)
+	if err != nil {
+		return nil, fmt.Errorf("category names: %w", err)
+	}
 
 	out := make([]BudgetPaceItem, 0, len(budgets))
 	for _, b := range budgets {
@@ -433,15 +444,16 @@ func (a *Aggregator) BudgetPace(ctx context.Context, householdID int64, period s
 			pace = spent.Div(available)
 		}
 		out = append(out, BudgetPaceItem{
-			BudgetID:   b.ID,
-			CategoryID: b.CategoryID,
-			Period:     b.Period,
-			Budget:     b.Amount.String(),
-			Spent:      spent.String(),
-			Carryover:  carry.String(),
-			Available:  available.String(),
-			Remaining:  available.Sub(spent).String(),
-			Pace:       pace.String(),
+			BudgetID:     b.ID,
+			CategoryID:   b.CategoryID,
+			CategoryName: names[b.CategoryID],
+			Period:       b.Period,
+			Budget:       b.Amount.String(),
+			Spent:        spent.String(),
+			Carryover:    carry.String(),
+			Available:    available.String(),
+			Remaining:    available.Sub(spent).String(),
+			Pace:         pace.String(),
 		})
 	}
 	return out, nil

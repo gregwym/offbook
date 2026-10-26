@@ -86,6 +86,37 @@ describe('BudgetsPage smoke', () => {
     expect(await screen.findByText(/rolled over/i)).toBeTruthy()
   })
 
+  it("names a shared budget on another member's category from the aggregator (#615)", async () => {
+    setHouseholdScope(10)
+    server.use(
+      http.get('*/households/:id/shared-budgets', () =>
+        HttpResponse.json({ data: [{ ...fx.budget1, household_id: 10, category_id: 99 }], total: 1 }),
+      ),
+      http.get('*/h/budgets/pace', () =>
+        HttpResponse.json({
+          data: [
+            {
+              budget_id: fx.budget1.id,
+              category_id: 99,
+              category_name: 'Pet food',
+              period: 'monthly',
+              budget: '500',
+              spent: '100',
+              carryover: '0',
+              available: '500',
+              remaining: '400',
+              pace: '0.2',
+            },
+          ],
+          total: 1,
+        }),
+      ),
+    )
+    renderPage(<BudgetsPage />)
+    expect(await screen.findByRole('heading', { name: 'Pet food' })).toBeTruthy()
+    expect(screen.queryByText('#99')).toBeNull()
+  })
+
   it('sends a rollover starting balance and rejects a negative one', async () => {
     let body: Record<string, unknown> | null = null
     server.use(

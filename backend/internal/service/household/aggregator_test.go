@@ -363,6 +363,55 @@ func TestAggregator_InGraceExcludedFromBudgetPace(t *testing.T) {
 	}
 }
 
+// TestAggregator_BudgetPace_CategoryName: each pace item names its category
+// (#615), including a custom category owned by another member, so household
+// Insights never falls back to "Category #N".
+func TestAggregator_BudgetPace_CategoryName(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+
+	ownerID := seedUser(t, g, "bpn-owner")
+	otherID := seedUser(t, g, "bpn-other")
+	hh := seedHouseholdRow(t, g, ownerID, "BPN House", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+	addMember(t, g, hh.ID, otherID, model.RoleContributor, nil)
+
+	sys := &model.Category{Name: "BPN Groceries", Slug: fmt.Sprintf("bpn-groceries-%d", time.Now().UnixNano())}
+	custom := &model.Category{UserID: &otherID, Name: "BPN Pet food", Slug: fmt.Sprintf("bpn-pet-%d", time.Now().UnixNano())}
+	for _, c := range []*model.Category{sys, custom} {
+		if err := g.Create(c).Error; err != nil {
+			t.Fatalf("seed category: %v", err)
+		}
+		id := c.ID
+		t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, id) })
+	}
+
+	hhID := hh.ID
+	want := map[int64]string{}
+	for _, c := range []*model.Category{sys, custom} {
+		b := &model.Budget{HouseholdID: &hhID, CategoryID: c.ID, Period: "monthly", Amount: decimal.NewFromInt(50), IsActive: true}
+		if err := g.Create(b).Error; err != nil {
+			t.Fatalf("seed shared budget: %v", err)
+		}
+		bid := b.ID
+		t.Cleanup(func() { g.Unscoped().Delete(&model.Budget{}, bid) })
+		want[b.ID] = c.Name
+	}
+
+	items, err := agg.BudgetPace(ctx, hh.ID, household.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("BudgetPace: %v", err)
+	}
+	if len(items) != len(want) {
+		t.Fatalf("got %d items, want %d: %+v", len(items), len(want), items)
+	}
+	for _, it := range items {
+		if it.CategoryName != want[it.BudgetID] {
+			t.Errorf("budget %d CategoryName = %q, want %q", it.BudgetID, it.CategoryName, want[it.BudgetID])
+		}
+	}
+}
+
 // TestAggregator_BudgetPace_Rollover: a rollover shared budget carries unspent
 // balance (floored at zero, seeded by its starting balance) from completed
 // months into the current month, while a non-rollover budget stays at its
