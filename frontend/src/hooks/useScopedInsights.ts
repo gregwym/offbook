@@ -389,8 +389,8 @@ async function loadHousehold(trendMonths = 12): Promise<InsightsData> {
     getHouseholdCashFlow(6),
   ])
 
-  // BudgetPace names each category server-side (#615), including another
-  // member's custom category; "Category #N" only if the category is gone.
+  // BudgetPace names each category server-side (#615); "Category #N"
+  // only if the category is gone.
   const budgetRows: InsightsBudgetRow[] = budgetPace.map((p) => ({
     id: p.budget_id,
     category_id: p.category_id,

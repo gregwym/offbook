@@ -56,10 +56,6 @@ export type ScopedBudgetRow = {
   // Subcategories whose spending this budget also counts (#596); empty for
   // a plain category and in household scope.
   subcategory_ids: number[]
-  // Server-resolved category label for a shared budget (#615): it may track
-  // another member's custom category the viewer's list doesn't hold. Null
-  // in personal scope, where the viewer's own categories always resolve.
-  category_name: string | null
 }
 
 // ScopedBudgetInput is the single create/update payload the page produces.
@@ -292,7 +288,6 @@ async function loadPersonal(on?: string): Promise<ScopedBudgetRow[]> {
       period_start: s?.period_start ?? null,
       period_end: s?.period_end ?? null,
       subcategory_ids: (s?.category_ids ?? []).filter((id) => id !== b.category_id),
-      category_name: null,
     }
   })
 }
@@ -321,7 +316,6 @@ async function loadHousehold(householdId: number): Promise<ScopedBudgetRow[]> {
       period_start: null,
       period_end: null,
       subcategory_ids: [],
-      category_name: p?.category_name || null,
     }
   })
 }

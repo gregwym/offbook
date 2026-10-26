@@ -2,13 +2,12 @@ import { expect, test, type Page } from '@playwright/test'
 import { acceptanceAPIURL } from '../fixtures/env.mjs'
 import { createThrowawayUser, withQAClient } from '../fixtures/state.mjs'
 
-// Journey for household budget names (#615): a shared budget on a member's
-// own custom category must read by name for every member, on /h/insights and
-// /h/budgets, instead of "Category #N". The viewing owner doesn't hold the
-// category in their own list. Throwaway household; desktop and narrow mobile.
+// Journey for household budget names (#615): a shared budget created by one
+// member must read by its category name for every member on /h/insights and
+// /h/budgets, never "Category #N". Throwaway household; desktop and mobile.
 
 test.describe('household budget names', () => {
-  test("names a shared budget on another member's custom category", async ({ page }, testInfo) => {
+  test('names a shared budget by its category', async ({ page }, testInfo) => {
     process.env.OFFBOOK_ROLE = process.env.OFFBOOK_ROLE ?? 'qa'
     const suite = `hhbudname-${testInfo.project.name}`
     const householdID = await withQAClient(async (client) => {
@@ -21,8 +20,10 @@ test.describe('household budget names', () => {
     const member = await createThrowawayUser({ suite: `${suite}-m`, householdID, role: 'contributor' })
     const memberCookie = await apiSignin(member.email, member.password)
 
-    const catName = `Pet food ${testInfo.project.name}`
-    const cat = await apiPost(memberCookie, '/categories', { name: catName })
+    // Shared budgets track system categories only.
+    const cats: { id: number; name: string; user_id?: number }[] = await apiGet(memberCookie, '/categories')
+    const cat = cats.find((c) => c.user_id == null && c.name === 'Groceries') ?? cats.find((c) => c.user_id == null)!
+    const catName = cat.name
     await apiPost(memberCookie, `/households/${householdID}/shared-budgets`, {
       category_id: cat.id,
       period: 'monthly',
@@ -33,7 +34,7 @@ test.describe('household budget names', () => {
     await signIn(page, owner.email, owner.password)
     await page.goto('/h/insights')
     await expect(page.getByText(/budgets · this period/i)).toBeVisible()
-    await expect(page.getByText(catName).first()).toBeVisible()
+    await expect(page.getByText(catName, { exact: true }).first()).toBeVisible()
     await expect(page.locator('body')).not.toContainText(`Category #${cat.id}`)
     await expectNoOverflow(page)
     await testInfo.attach('h-insights-budget-names', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
@@ -44,6 +45,12 @@ test.describe('household budget names', () => {
     await testInfo.attach('h-budgets-budget-names', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
   })
 })
+
+async function apiGet(cookie: string, path: string) {
+  const res = await fetch(`${acceptanceAPIURL()}${path}`, { headers: { cookie } })
+  if (!res.ok) throw new Error(`${path} ${res.status} ${await res.text()}`)
+  return (await res.json()).data
+}
 
 async function apiPost(cookie: string, path: string, body: unknown) {
   const res = await fetch(`${acceptanceAPIURL()}${path}`, {

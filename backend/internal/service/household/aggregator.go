@@ -123,8 +123,7 @@ type CategorySpendingItem struct {
 type BudgetPaceItem struct {
 	BudgetID   int64 `json:"budget_id"`
 	CategoryID int64 `json:"category_id"`
-	// CategoryName is the tracked category's label (#615), resolved even
-	// when it is another member's custom category; "" if it is gone.
+	// CategoryName is the tracked category's label (#615); "" if it is gone.
 	CategoryName string `json:"category_name"`
 	Period       string `json:"period"`
 	Budget       string `json:"budget"`

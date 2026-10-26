@@ -90,10 +90,9 @@ type HouseholdAggregatorRepository interface {
 	// `budgets` table with household_id set; readers tolerate an empty set.
 	ListSharedBudgets(ctx context.Context, householdID int64, period string) ([]model.Budget, error)
 
-	// CategoryNames maps each of the given category IDs to its name (#615),
-	// whoever owns the category — a shared budget may track another member's
-	// custom category. A name is a label, not PII. Unknown or soft-deleted
-	// IDs are absent; empty input → empty map, no SQL issued.
+	// CategoryNames maps each of the given category IDs to its name (#615).
+	// A name is a label, not PII. Unknown or soft-deleted IDs are absent;
+	// empty input → empty map, no SQL issued.
 	CategoryNames(ctx context.Context, categoryIDs []int64) (map[int64]string, error)
 
 	// ListSharedGoals returns the household-owned savings goals (unified
