@@ -55,7 +55,7 @@ test.describe('budget month totals', () => {
 
     await signIn(page, user.email, user.password)
     await page.goto('/insights')
-    await expect(page.getByText(/spending:/i).first()).toContainText('177.09')
+    await expect(page.getByLabel(/^[A-Z][a-z]+ \d{4} totals$/)).toContainText('Spending177.09')
 
     await page.goto('/budgets')
     const strip = page.getByRole('region', { name: `${label} totals` })

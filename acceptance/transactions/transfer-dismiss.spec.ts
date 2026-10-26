@@ -81,7 +81,7 @@ test.describe('reject a wrong transfer match', () => {
 
 async function expectSpending(page: Page, amount: string) {
   await page.goto('/insights')
-  await expect(page.getByText(/spending:/i).first()).toContainText(amount)
+  await expect(page.getByLabel(/^[A-Z][a-z]+ \d{4} totals$/)).toContainText(`Spending${amount}`)
   await expectNoOverflow(page)
 }
 

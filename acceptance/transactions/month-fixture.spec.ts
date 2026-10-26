@@ -141,8 +141,8 @@ test.describe('acceptance month fixture', () => {
     const nw = page.locator('section', { hasText: 'Net worth' }).first()
     await expect(nw).toContainText(fmt(netWorth))
     await expect(nw).not.toContainText('partial')
-    await expect(page.getByText(/spending:/i).first()).toContainText(fmt(spending))
-    await expect(page.getByText(/income \(period\)/i).first()).toContainText(fmt(income))
+    await expect(page.getByLabel(/^[A-Z][a-z]+ \d{4} totals$/)).toContainText(`Spending${fmt(spending)}`)
+    await expect(page.getByLabel(/^[A-Z][a-z]+ \d{4} totals$/)).toContainText(`Income${fmt(income)}`)
     const band = page.locator('section', { hasText: 'Spending by category' }).first()
     for (const slug of budgeted) {
       await expect(band.getByRole('listitem').filter({ hasText: cat(slug).name }).first()).toContainText(fmt(spend[slug]))
@@ -183,7 +183,7 @@ test.describe('acceptance month fixture', () => {
     // A reload changes nothing.
     await page.goto('/insights')
     await expect(page.locator('section', { hasText: 'Net worth' }).first()).toContainText(fmt(netWorth))
-    await expect(page.getByText(/spending:/i).first()).toContainText(fmt(spending))
+    await expect(page.getByLabel(/^[A-Z][a-z]+ \d{4} totals$/)).toContainText(`Spending${fmt(spending)}`)
   })
 })
 
