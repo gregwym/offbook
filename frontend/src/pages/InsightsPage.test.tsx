@@ -522,4 +522,26 @@ describe('InsightsPage budget rows', () => {
     expect(rows[1].textContent).not.toMatch(/rolled over/)
     expect(rows[1].querySelector('.text-red-700')?.textContent).toMatch(/60\.00.*\/.*50\.00/)
   })
+
+  it('names household budget rows from the aggregator, never "Category #N" (#615)', async () => {
+    setHouseholdScope(1)
+    const pace = { period: 'monthly', budget: '100', carryover: '0', available: '100', remaining: '60', pace: '0.4', spent: '40' }
+    server.use(
+      http.get('*/h/budgets/pace', () =>
+        HttpResponse.json({
+          data: [
+            { ...pace, budget_id: 7, category_id: 42, category_name: 'Pet food' },
+            { ...pace, budget_id: 8, category_id: 43, category_name: '' },
+          ],
+          total: 2,
+        }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    const band = (await screen.findByText(/budgets · this period/i)).closest('div.rounded-lg') as HTMLElement
+    const rows = await within(band).findAllByRole('listitem')
+    expect(rows[0]).toHaveTextContent('Pet food')
+    expect(rows[0]).not.toHaveTextContent('Category #42')
+    expect(rows[1]).toHaveTextContent('Category #43')
+  })
 })

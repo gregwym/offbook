@@ -90,6 +90,11 @@ type HouseholdAggregatorRepository interface {
 	// `budgets` table with household_id set; readers tolerate an empty set.
 	ListSharedBudgets(ctx context.Context, householdID int64, period string) ([]model.Budget, error)
 
+	// CategoryNames maps each of the given category IDs to its name (#615).
+	// A name is a label, not PII. Unknown or soft-deleted IDs are absent;
+	// empty input → empty map, no SQL issued.
+	CategoryNames(ctx context.Context, categoryIDs []int64) (map[int64]string, error)
+
 	// ListSharedGoals returns the household-owned savings goals (unified
 	// `savings_goals` table, household_id set).
 	ListSharedGoals(ctx context.Context, householdID int64) ([]model.SavingsGoal, error)
@@ -497,6 +502,22 @@ func (r *householdAggregatorRepo) ListSharedBudgets(ctx context.Context, househo
 	var out []model.Budget
 	if err := q.Order("id").Find(&out).Error; err != nil {
 		return nil, err
+	}
+	return out, nil
+}
+
+func (r *householdAggregatorRepo) CategoryNames(ctx context.Context, categoryIDs []int64) (map[int64]string, error) {
+	out := map[int64]string{}
+	if len(categoryIDs) == 0 {
+		return out, nil
+	}
+	var rows []model.Category
+	if err := r.db.WithContext(ctx).Select("id", "name").
+		Where("id IN ?", categoryIDs).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, c := range rows {
+		out[c.ID] = c.Name
 	}
 	return out, nil
 }
