@@ -14,6 +14,7 @@ import {
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { HouseholdJoinModal } from './HouseholdJoinModal'
+import { ReconnectBanner } from './ReconnectBanner'
 import { useAuthStore } from '../store/authStore'
 import { useScopeStore } from '../store/scopeStore'
 import { SCOPE_HOUSEHOLD, SCOPE_PERSONAL, type Scope } from '../types/scope'
@@ -176,6 +177,9 @@ export function AppShell() {
         {/* Tighter horizontal padding on mobile so narrow viewports actually
             get usable width. The mx-auto + max-w-6xl still caps wide layouts. */}
         <div className="mx-auto max-w-6xl px-4 py-4 md:px-8 md:py-8">
+          {/* Plaid surfaces are personal-scope only (AGENTS.md), so the
+              reconnect prompt is too (#641). */}
+          {hydrated && active === SCOPE_PERSONAL && <ReconnectBanner />}
           <Outlet />
         </div>
       </main>

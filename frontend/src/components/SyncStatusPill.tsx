@@ -1,4 +1,6 @@
 import { useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
+import { RECONNECT_PATH } from '../lib/plaidReconnect'
 import type { Account, SyncStatus } from '../types/account'
 import { PartialBadge } from './PartialBadge'
 import { TimeAgo } from './TimeAgo'
@@ -22,8 +24,10 @@ function isStale(status: SyncStatus, lastSyncedAt: string | null, nowMs: number)
 // account. Manual accounts (last_sync_status === null) render nothing — the
 // issue spec is explicit that there's no pill for non-Plaid rows.
 //
-// `error`, `ok_with_errors`, and `reauth_required` are click-to-expand so the
-// message stays inline without blowing up the table row by default.
+// `error` and `ok_with_errors` are click-to-expand so the message stays
+// inline without blowing up the table row by default. `reauth_required` is
+// a link to the Reconnect action instead (#641) — the raw Plaid error tells
+// the user nothing they can act on, and the fix lives in Settings.
 export function SyncStatusPill({ account, now }: { account: Account; now?: () => number }) {
   const [open, setOpen] = useState(false)
   const status = account.last_sync_status
@@ -31,9 +35,19 @@ export function SyncStatusPill({ account, now }: { account: Account; now?: () =>
 
   const label = pillLabel(status, account.last_synced_at)
   const tone = pillTone(status)
-  const expandable =
-    (status === 'error' || status === 'ok_with_errors' || status === 'reauth_required') &&
-    !!account.last_sync_error
+  if (status === 'reauth_required') {
+    return (
+      <Link
+        to={RECONNECT_PATH}
+        className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium underline-offset-2 hover:underline ${tone}`}
+        title="This bank stopped syncing until you sign in again. Reconnect it in Settings."
+      >
+        <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${dotTone(status)}`} />
+        {label}
+      </Link>
+    )
+  }
+  const expandable = (status === 'error' || status === 'ok_with_errors') && !!account.last_sync_error
   const stale = isStale(status, account.last_synced_at, (now ?? Date.now)())
 
   return (

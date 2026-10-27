@@ -3,6 +3,7 @@
 // silently falling through to a blank pill) and flag a Plaid-linked account
 // as stale when it's gone quiet well past the daily scheduler's cadence.
 import { fireEvent, render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
 import { account1 } from '../test/fixtures'
 import type { SyncStatus } from '../types/account'
@@ -25,10 +26,24 @@ describe('SyncStatusPill', () => {
     ['never', 'Not synced'],
     ['syncing', 'Syncing…'],
     ['error', 'Sync failed'],
-    ['reauth_required', 'Needs reconnect'],
   ])('labels %s as %s', (status, expected) => {
     render(<SyncStatusPill account={withStatus(status)} now={now} />)
     expect(screen.getByText(expected)).toBeInTheDocument()
+  })
+
+  // #641: the reauth pill is a way to fix it, not a raw-error expander.
+  it('links a reauth_required account to the Settings reconnect action', () => {
+    render(
+      <MemoryRouter>
+        <SyncStatusPill
+          account={withStatus('reauth_required', '2026-07-08T00:00:00Z', 'ITEM_LOGIN_REQUIRED: login changed')}
+          now={now}
+        />
+      </MemoryRouter>,
+    )
+    const link = screen.getByRole('link', { name: /Needs reconnect/ })
+    expect(link).toHaveAttribute('href', '/settings#linked-institutions')
+    expect(screen.queryByText(/ITEM_LOGIN_REQUIRED/)).not.toBeInTheDocument()
   })
 
   it('labels ok_with_errors distinctly from a clean ok sync', () => {

@@ -33,7 +33,7 @@ describe('SettingsPage smoke', () => {
               institution_name: 'Test Bank',
               status: 'active',
               last_sync_status: 'reauth_required',
-              last_sync_error: 'the login details of this item have changed',
+              last_sync_error: 'ITEM_LOGIN_REQUIRED: the login details of this item have changed',
               unresolved_sync_errors: 0,
               created_at: '2026-01-01T00:00:00Z',
               updated_at: '2026-01-01T00:00:00Z',
@@ -47,8 +47,40 @@ describe('SettingsPage smoke', () => {
     renderPage(<SettingsPage />)
 
     expect(await screen.findByRole('button', { name: 'Reconnect Test Bank' })).toBeInTheDocument()
-    expect(screen.getByText(/needs you to reconnect/)).toBeInTheDocument()
+    expect(screen.getByText(/needs you to sign in again/)).toBeInTheDocument()
+    // #641: the raw Plaid code tells the user nothing they can act on.
+    expect(screen.queryByText(/ITEM_LOGIN_REQUIRED/)).not.toBeInTheDocument()
+    expect(document.getElementById('linked-institutions')).not.toBeNull()
     await expectHealthySmoke()
+  })
+
+  // #641: a failed Reconnect used to clear its own message (the error was
+  // tied to the in-flight item id, which the failure resets).
+  it('keeps a failed Reconnect message on the row', async () => {
+    server.use(
+      http.get(`${API}/plaid/items`, () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: 1, user_id: 1, plaid_item_id: 'item-reauth-1', institution_name: 'Test Bank', status: 'active',
+              last_sync_status: 'reauth_required', last_sync_error: null, unresolved_sync_errors: 0,
+              created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+            },
+          ],
+          total: 1,
+        }),
+      ),
+      http.post(`${API}/plaid/link/token`, () =>
+        HttpResponse.json({ error: 'plaid is not configured on this instance', code: 'PLAID_NOT_CONFIGURED' }, { status: 503 }),
+      ),
+    )
+    renderPage(<SettingsPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Reconnect Test Bank' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Couldn’t start the reconnect: Plaid is not configured on this instance.',
+    )
+    expect(screen.getByRole('button', { name: 'Reconnect Test Bank' })).toHaveTextContent('Reconnect')
   })
 
   // #366: the AI categorization opt-in persists via PATCH /me/settings, same
