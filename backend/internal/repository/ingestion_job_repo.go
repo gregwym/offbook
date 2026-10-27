@@ -18,6 +18,10 @@ type IngestionJobRepository interface {
 	GetForUser(ctx context.Context, userID, id int64) (*model.IngestionJob, error)
 	// Update persists a full row (status, rows_imported, completed_at, …).
 	Update(ctx context.Context, job *model.IngestionJob) error
+	// TransitionStatus atomically moves the user's job from one status to
+	// another and reports whether it did; false means the job was not in
+	// status `from` (e.g. a concurrent commit already claimed it).
+	TransitionStatus(ctx context.Context, userID, id int64, from, to string) (bool, error)
 	// ListCompletedByAccount returns the user's completed imports into one
 	// account, newest first, WITHOUT the staged extraction blob (history is a
 	// read-only audit view; undone imports are included). Empty slice for a foreign/unknown account.
@@ -54,6 +58,16 @@ func (r *ingestionJobRepo) GetForUser(ctx context.Context, userID, id int64) (*m
 
 func (r *ingestionJobRepo) Update(ctx context.Context, job *model.IngestionJob) error {
 	return r.db.WithContext(ctx).Save(job).Error
+}
+
+func (r *ingestionJobRepo) TransitionStatus(ctx context.Context, userID, id int64, from, to string) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&model.IngestionJob{}).
+		Where("id = ? AND user_id = ? AND status = ?", id, userID, from).
+		Update("status", to)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
 }
 
 func (r *ingestionJobRepo) ListCompletedByAccount(ctx context.Context, userID, accountID int64, limit int) ([]model.IngestionJob, error) {

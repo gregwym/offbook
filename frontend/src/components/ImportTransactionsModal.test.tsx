@@ -211,6 +211,38 @@ describe('ImportTransactionsModal import history (#376)', () => {
     await waitFor(() => expect(screen.queryByText(/already imported this exact statement/)).not.toBeInTheDocument())
   })
 
+  it('a commit refused as already imported drops the preview and refreshes history (#649)', async () => {
+    let historyCalls = 0
+    server.use(
+      http.get(`${API}/accounts/:id/imports`, () => {
+        historyCalls++
+        return HttpResponse.json({ data: [], total: 0 })
+      }),
+      http.post(`${API}/accounts/:id/transactions/import/extract`, () =>
+        HttpResponse.json({
+          data: {
+            committed: false, source: 'pdf', mapping: { date: '', amount: '', description: '' }, headers: [],
+            total_rows: 1, new_count: 1, duplicate_count: 0, error_count: 0, review_count: 0, inserted_count: 0,
+            rows: [{ line: 1, date: '2026-05-15T00:00:00Z', amount: '-4.5', description: 'Coffee', status: 'new', confidence: 0.9, needs_review: false }],
+            job_id: 9,
+          },
+        }),
+      ),
+      http.post(`${API}/transactions/import/jobs/:id/commit`, () =>
+        HttpResponse.json({ error: 'import job is not pending', code: 'IMPORT_JOB_NOT_PENDING' }, { status: 409 }),
+      ),
+    )
+    const { container } = renderModal()
+    await waitFor(() => expect(historyCalls).toBe(1))
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['%PDF'], 'stmt.pdf', { type: 'application/pdf' })] } })
+    fireEvent.click(screen.getByRole('button', { name: /Extract with AI/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Import 1 new' }))
+    expect(await screen.findByText(/already imported, from another tab or an earlier attempt/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Import 1 new' })).not.toBeInTheDocument()
+    await waitFor(() => expect(historyCalls).toBe(2))
+  })
+
   it('previews statement holdings and the ledger effect before commit (#375)', async () => {
     server.use(
       http.post(`${API}/accounts/:id/transactions/import/extract`, () =>

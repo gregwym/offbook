@@ -217,6 +217,15 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
       onImported(result)
       onClose()
     } catch (err) {
+      if (err instanceof ImportError && err.code === 'IMPORT_JOB_NOT_PENDING') {
+        // Another tab or a retried request already committed this preview
+        // (#649): drop the stale preview and show the import in the history.
+        setPreview(null)
+        setJobID(null)
+        setHistoryVersion((v) => v + 1)
+        setError('This statement was already imported, from another tab or an earlier attempt. It’s listed in the import history below.')
+        return
+      }
       handleImportErr(err)
     } finally {
       setBusy(false)

@@ -136,13 +136,33 @@ func (s *TransactionService) CommitJob(ctx context.Context, userID, jobID int64)
 		return nil, fmt.Errorf("staged job %d has no account", jobID)
 	}
 
+	// Claim the job before importing (#649): a double-click or client retry
+	// can commit it twice at once, and both would pass the status check above.
+	// Only the commit that flips extracted → processing runs the import; the
+	// others are refused instead of re-running it and overwriting the audit
+	// row with their own "0 imported".
+	claimed, err := s.jobRepo.TransitionStatus(ctx, userID, jobID, "extracted", "processing")
+	if err != nil {
+		return nil, fmt.Errorf("claim import job: %w", err)
+	}
+	if !claimed {
+		return nil, ErrImportJobNotPending
+	}
+	job.Status = "processing"
+	// A failed commit hands the job back so the user can retry the preview.
+	release := func() {
+		_, _ = s.jobRepo.TransitionStatus(context.WithoutCancel(ctx), userID, jobID, "processing", "extracted")
+	}
+
 	var ext ingestion.Extraction
 	if err := json.Unmarshal(job.Extraction, &ext); err != nil {
+		release()
 		return nil, fmt.Errorf("rehydrate staged extraction: %w", err)
 	}
 
 	res, err := s.importStatement(ctx, userID, *job.AccountID, &ext, true, &jobID)
 	if err != nil {
+		release()
 		return nil, err
 	}
 
