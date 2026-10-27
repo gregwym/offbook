@@ -76,16 +76,13 @@ test.describe('first run', () => {
     await expect(page.getByRole('heading', { name: 'Add your first account' })).toHaveCount(0)
     await expect(page.getByLabel(/^[A-Z][a-z]+ \d{4} totals$/)).toContainText('Spending56.60')
 
-    // #524: allocation names the class in plain language and the donut is
-    // fully drawn on first paint (no entry animation leaving it blank).
+    // #524: allocation names the class in plain language. #629: a single
+    // class is one line, not a 100% donut.
     const allocation = page.locator('section', { has: page.getByRole('heading', { name: /asset allocation/i }) })
     await allocation.scrollIntoViewIfNeeded()
-    await expect(allocation.getByRole('listitem').filter({ hasText: 'Cash' })).toContainText('100.0%')
+    await expect(allocation).toContainText(/Cash · [\d,.]+ USD · 100%/)
     await expect(allocation).not.toContainText(/fiat/i)
-    const sector = allocation.locator('.recharts-pie-sector path').first()
-    await expect(sector).toBeVisible()
-    const box = await sector.boundingBox()
-    expect(box!.width, 'donut drawn at full size immediately').toBeGreaterThan(150)
+    await expect(allocation.locator('.recharts-pie')).toHaveCount(0)
     await expectNoOverflow(page)
   })
 })
