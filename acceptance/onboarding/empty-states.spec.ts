@@ -48,8 +48,14 @@ test.describe('empty states', () => {
     await expect(page.getByText('No rules yet.')).toHaveCount(0)
     await expect(page.getByText('WHOLEFDS').first()).toBeVisible()
     await expect(page.getByRole('button', { name: 'Preview changes' })).toBeVisible()
-    // #630: the header button stays on one line beside the long subtitle.
+    // #630: the header button stays on one line, and on desktop the three
+    // actions share one row instead of stacking into a column.
     await expectOneLine(page.getByRole('button', { name: 'New rule' }))
+    if (!testInfo.project.name.includes('mobile')) {
+      const preview = await page.getByRole('button', { name: 'Preview changes' }).boundingBox()
+      const newRule = await page.getByRole('button', { name: 'New rule' }).boundingBox()
+      expect(Math.abs(preview!.y - newRule!.y), 'header actions share one row').toBeLessThan(4)
+    }
     await expectHealthy(page)
     await shot('rules-created')
 

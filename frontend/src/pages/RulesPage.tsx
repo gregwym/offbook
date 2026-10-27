@@ -132,7 +132,9 @@ export function RulesPage() {
 
   return (
     <div>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {/* Three actions don't fit beside the long subtitle without stacking
+          into a column (#630), so they sit in a row under it at every width. */}
+      <div className="flex flex-col gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Rules</h1>
           <p className="mt-1 text-sm text-gray-500">
