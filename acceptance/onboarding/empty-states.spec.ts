@@ -4,7 +4,7 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 // Cold-start empty states (#625, Goal #423 gate 1): a brand-new user visits
 // every personal page before adding anything. Each page explains itself with
 // no error banner and no horizontal overflow, and Budgets / Savings goals
-// offer their first create action in place — which works end to end.
+// offer their first create action in place, as do Rules (#627) — which works end to end.
 // Throwaway user; desktop and narrow mobile.
 
 test.describe('empty states', () => {
@@ -29,10 +29,26 @@ test.describe('empty states', () => {
     await expectHealthy(page)
     await shot('transactions')
 
+    // Rules: no bulk actions before a rule exists; create the first in place (#627).
     await page.goto('/rules')
-    await expect(page.getByText(/No rules yet/)).toBeVisible()
+    await expect(page.getByText('No rules yet.')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Preview changes' })).toHaveCount(0)
+    const firstRule = page.getByRole('button', { name: 'Create your first rule' })
+    await expectInViewport(page, firstRule)
     await expectHealthy(page)
-    await shot('rules')
+    await shot('rules-empty')
+    await firstRule.click()
+    const ruleDialog = page.getByRole('dialog', { name: 'New rule' })
+    await expect(ruleDialog).toBeVisible()
+    await ruleDialog.getByLabel('Pattern', { exact: true }).fill('WHOLEFDS')
+    await ruleDialog.getByLabel('Category', { exact: true }).selectOption({ label: 'Groceries' })
+    await ruleDialog.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(ruleDialog).toBeHidden()
+    await expect(page.getByText('No rules yet.')).toHaveCount(0)
+    await expect(page.getByText('WHOLEFDS').first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Preview changes' })).toBeVisible()
+    await expectHealthy(page)
+    await shot('rules-created')
 
     // Budgets: create the first one from the empty state itself.
     await page.goto('/budgets')
