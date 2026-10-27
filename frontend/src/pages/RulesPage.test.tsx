@@ -588,3 +588,18 @@ describe('RulesPage smoke', () => {
     expect(patches[0]).toMatchObject({ account_id: fx.account1.id, clear_amount_min: true, clear_amount_max: true })
   })
 })
+
+describe('RulesPage empty state (#627)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('hides bulk actions and offers to create the first rule', async () => {
+    server.use(http.get(`${API}/categorization-rules`, () => HttpResponse.json({ data: [], total: 0 })))
+    renderPage(<RulesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Create your first rule' }))
+    expect(screen.queryByRole('button', { name: 'Preview changes' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /re-apply to all transactions/i })).toBeNull()
+    expect(await screen.findByRole('dialog', { name: 'New rule' })).toBeTruthy()
+  })
+})

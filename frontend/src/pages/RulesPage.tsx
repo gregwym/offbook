@@ -140,23 +140,28 @@ export function RulesPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => runApply(true)}
-            disabled={applying || rules.length === 0}
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            Preview changes
-          </button>
-          <button
-            type="button"
-            onClick={() => runApply(false)}
-            disabled={applying || rules.length === 0}
-            className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            <RefreshCw size={16} className={applying ? 'animate-spin' : ''} />
-            {applying ? 'Applying…' : 'Re-apply to all transactions'}
-          </button>
+          {/* Bulk actions only mean something once a rule exists (#627). */}
+          {rules.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => runApply(true)}
+                disabled={applying || rules.length === 0}
+                className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Preview changes
+              </button>
+              <button
+                type="button"
+                onClick={() => runApply(false)}
+                disabled={applying || rules.length === 0}
+                className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                <RefreshCw size={16} className={applying ? 'animate-spin' : ''} />
+                {applying ? 'Applying…' : 'Re-apply to all transactions'}
+              </button>
+            </>
+          )}
           <button
             type="button"
             onClick={() => setAdding(true)}
@@ -274,7 +279,20 @@ export function RulesPage() {
               <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>
             )}
             {!loading && rules.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-400">No rules yet — create one to start auto-categorizing.</td></tr>
+              <tr><td colSpan={6} className="px-4 py-8 text-center">
+                <div className="text-gray-700">No rules yet.</div>
+                <div className="mt-1 text-sm text-gray-500">
+                  A rule categorizes matching transactions for you on every import. You can also make one from any
+                  transaction’s “Create rule” action.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAdding(true)}
+                  className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                >
+                  <Plus size={16} /> Create your first rule
+                </button>
+              </td></tr>
             )}
             {rules.map((r, i) => (
               <tr key={r.id} className="hover:bg-gray-50">
