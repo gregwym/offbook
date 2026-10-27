@@ -136,46 +136,56 @@ func (s *TransactionService) CommitJob(ctx context.Context, userID, jobID int64)
 		return nil, fmt.Errorf("staged job %d has no account", jobID)
 	}
 
-	// Claim the job before importing (#649): a double-click or client retry
-	// can commit it twice at once, and both would pass the status check above.
-	// Only the commit that flips extracted → processing runs the import; the
-	// others are refused instead of re-running it and overwriting the audit
-	// row with their own "0 imported".
-	claimed, err := s.jobRepo.TransitionStatus(ctx, userID, jobID, "extracted", "processing")
-	if err != nil {
-		return nil, fmt.Errorf("claim import job: %w", err)
-	}
-	if !claimed {
-		return nil, ErrImportJobNotPending
-	}
-	job.Status = "processing"
-	// A failed commit hands the job back so the user can retry the preview.
-	release := func() {
-		_, _ = s.jobRepo.TransitionStatus(context.WithoutCancel(ctx), userID, jobID, "processing", "extracted")
-	}
+	// The claim, every ledger/position/observation write and the job's
+	// "completed" mark share one DB transaction (#651): a commit that fails at
+	// any step — or a process that dies mid-commit — leaves no rows behind and
+	// the job still "extracted", so the same preview can be committed again.
+	//
+	// Claiming first (#649) makes a concurrent commit of the same job block on
+	// the row lock and then see it no longer "extracted", so it is refused
+	// instead of re-running the import and overwriting the audit row.
+	var res *ImportResult
+	claimed := false
+	err = s.inTx(ctx, func(ts *TransactionService) error {
+		ok, err := ts.jobRepo.TransitionStatus(ctx, userID, jobID, "extracted", "processing")
+		if err != nil {
+			return fmt.Errorf("claim import job: %w", err)
+		}
+		if !ok {
+			return ErrImportJobNotPending
+		}
+		claimed = true
+		job.Status = "processing"
 
-	var ext ingestion.Extraction
-	if err := json.Unmarshal(job.Extraction, &ext); err != nil {
-		release()
-		return nil, fmt.Errorf("rehydrate staged extraction: %w", err)
-	}
+		var ext ingestion.Extraction
+		if err := json.Unmarshal(job.Extraction, &ext); err != nil {
+			return fmt.Errorf("rehydrate staged extraction: %w", err)
+		}
+		r, err := ts.importStatement(ctx, userID, *job.AccountID, &ext, true, &jobID)
+		if err != nil {
+			return err
+		}
+		// Carry statement-total reconciliation onto the commit result and the
+		// audit row; ImportStatement alone doesn't compute it.
+		reconcile(r, &ext)
 
-	res, err := s.importStatement(ctx, userID, *job.AccountID, &ext, true, &jobID)
+		now := time.Now()
+		job.Status = "completed"
+		applyResultToJob(job, r)
+		job.CompletedAt = &now
+		if err := ts.jobRepo.Update(ctx, job); err != nil {
+			return fmt.Errorf("finalize import job: %w", err)
+		}
+		res = r
+		return nil
+	})
 	if err != nil {
-		release()
+		if claimed && s.db == nil {
+			// No transaction to roll the claim back (unit wiring): hand the
+			// job back explicitly so the preview can be retried.
+			_, _ = s.jobRepo.TransitionStatus(context.WithoutCancel(ctx), userID, jobID, "processing", "extracted")
+		}
 		return nil, err
-	}
-
-	// Carry statement-total reconciliation onto the commit result and the audit
-	// row; ImportStatement alone doesn't compute it.
-	reconcile(res, &ext)
-
-	now := time.Now()
-	job.Status = "completed"
-	applyResultToJob(job, res)
-	job.CompletedAt = &now
-	if err := s.jobRepo.Update(ctx, job); err != nil {
-		return nil, fmt.Errorf("finalize import job: %w", err)
 	}
 	res.JobID = &jobID
 	return res, nil

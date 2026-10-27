@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -11,6 +12,8 @@ import (
 	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/ingestion"
+	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 // fakeExtractor is an in-memory ingestion.Extractor: it returns a canned
@@ -132,7 +135,7 @@ func TestCommitJob_ForeignUserCannotCommit(t *testing.T) {
 // the import; the others are refused as not pending, and the job's audit row
 // keeps the winner's counts instead of a loser's "0 imported".
 func TestCommitJob_ConcurrentCommitsRunOnce(t *testing.T) {
-	svc, userID, accountID, g := newImportSvc(t)
+	svc, userID, accountID, g := newAtomicImportSvc(t)
 	ctx := context.Background()
 	fx := &fakeExtractor{ext: &ingestion.Extraction{Source: "pdf", Rows: []ingestion.ParsedRow{
 		ingestion.NewRow(1, "2026-05-15", "-4.50", "Coffee", 0.9),
@@ -221,6 +224,157 @@ func TestCommitJob_FailedCommitCanRetry(t *testing.T) {
 	if got := liveTxnCount(t, g, accountID); got != 0 {
 		t.Errorf("live rows = %d, want 0", got)
 	}
+}
+
+// newAtomicImportSvc is newImportSvc with the production wiring: the DB handle
+// that makes a commit one transaction (#651) and statement reconciliation.
+func newAtomicImportSvc(t *testing.T) (*service.TransactionService, int64, int64, *gorm.DB) {
+	t.Helper()
+	svc, userID, accountID, g := newImportSvc(t)
+	svc.WithStatementPositions(g, repository.NewAssetRepository(g))
+	// Runs before newImportSvc's cleanups (LIFO): rows reference the job and
+	// the position references the account, so clear them in FK order here.
+	t.Cleanup(func() {
+		g.Unscoped().Where("account_id = ?", accountID).Delete(&model.Transaction{})
+		g.Where("account_id = ?", accountID).Delete(&model.Position{})
+		g.Where("account_id = ?", accountID).Delete(&model.IngestionJob{})
+	})
+	return svc, userID, accountID, g
+}
+
+// rejectedPosition is a statement holding the assets table refuses (its kind
+// fails the CHECK constraint), so the commit fails only AFTER its rows were
+// inserted and the cash position refreshed — the torn-write window of #651.
+func rejectedPosition() ingestion.ParsedPosition {
+	return ingestion.ParsedPosition{
+		Line: 9, Symbol: "QABAD651", AssetKind: "not-a-kind",
+		Quantity: decimal.NewFromInt(1), AsOf: time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC), Confidence: 1,
+	}
+}
+
+func importRows() []ingestion.ParsedRow {
+	return []ingestion.ParsedRow{
+		ingestion.NewRow(1, "2026-05-15", "-4.50", "Coffee", 0.9),
+		ingestion.NewRow(2, "2026-05-16", "2000.00", "Paycheck", 0.9),
+		ingestion.NewRow(3, "2026-05-17", "-61.25", "Groceries", 0.9),
+	}
+}
+
+func positionCount(t *testing.T, g *gorm.DB, accountID int64) int64 {
+	t.Helper()
+	var n int64
+	if err := g.Model(&model.Position{}).Where("account_id = ? AND quantity <> 0", accountID).Count(&n).Error; err != nil {
+		t.Fatalf("count positions: %v", err)
+	}
+	return n
+}
+
+// TestCommitJob_FailureAfterInsertRollsBack guards #651: a staged commit that
+// fails after its rows were written must leave nothing behind — no rows, no
+// position — and the job still "extracted", so a clean retry imports once.
+func TestCommitJob_FailureAfterInsertRollsBack(t *testing.T) {
+	svc, userID, accountID, g := newAtomicImportSvc(t)
+	ctx := context.Background()
+	fx := &fakeExtractor{ext: &ingestion.Extraction{
+		Source:    "pdf",
+		Rows:      importRows(),
+		Positions: []ingestion.ParsedPosition{rejectedPosition()},
+	}}
+	preview, err := svc.ExtractAndStage(ctx, userID, accountID, pdfDoc(), fx, nil)
+	if err != nil {
+		t.Fatalf("ExtractAndStage: %v", err)
+	}
+	jobID := *preview.JobID
+
+	if _, err := svc.CommitJob(ctx, userID, jobID); err == nil {
+		t.Fatal("commit with a rejected position succeeded")
+	}
+	if got := liveTxnCount(t, g, accountID); got != 0 {
+		t.Errorf("live rows after failed commit = %d, want 0 (torn import)", got)
+	}
+	if got := positionCount(t, g, accountID); got != 0 {
+		t.Errorf("non-zero positions after failed commit = %d, want 0", got)
+	}
+	jobs := repository.NewIngestionJobRepository(g)
+	job, err := jobs.GetForUser(ctx, userID, jobID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	if job.Status != "extracted" {
+		t.Errorf("job status after failed commit = %q, want extracted (retryable)", job.Status)
+	}
+
+	// The fault clears (the staged statement no longer carries the bad
+	// holding); the same job then commits exactly once.
+	if err := g.Model(&model.IngestionJob{}).Where("id = ?", jobID).
+		Update("extraction", mustJSON(t, ingestion.Extraction{Source: "pdf", Rows: importRows()})).Error; err != nil {
+		t.Fatalf("restage job: %v", err)
+	}
+	res, err := svc.CommitJob(ctx, userID, jobID)
+	if err != nil {
+		t.Fatalf("retry CommitJob: %v", err)
+	}
+	if res.InsertedCount != 3 {
+		t.Errorf("retry inserted = %d, want 3", res.InsertedCount)
+	}
+	if got := liveTxnCount(t, g, accountID); got != 3 {
+		t.Errorf("live rows after retry = %d, want 3", got)
+	}
+	job, err = jobs.GetForUser(ctx, userID, jobID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	if job.Status != "completed" || job.RowsImported == nil || *job.RowsImported != 3 {
+		t.Errorf("job after retry = %q rows_imported=%v, want completed/3", job.Status, derefInt(job.RowsImported))
+	}
+}
+
+// TestImportDocument_FailureAfterInsertLeavesNothing: the direct (deterministic)
+// commit path is all-or-nothing too (#651) — a failure after the rows insert
+// leaves no rows and no orphan "processing"/"failed" job, and a re-upload then
+// imports every row instead of reporting them all as duplicates.
+func TestImportDocument_FailureAfterInsertLeavesNothing(t *testing.T) {
+	svc, userID, accountID, g := newAtomicImportSvc(t)
+	ctx := context.Background()
+	doc := ingestion.Document{Filename: "may.csv", MIME: "text/csv", Data: []byte("may")}
+
+	bad := &ingestion.Extraction{Source: "csv", Rows: importRows(), Positions: []ingestion.ParsedPosition{rejectedPosition()}}
+	if _, err := svc.ImportDocument(ctx, userID, accountID, doc, bad, true); err == nil {
+		t.Fatal("import with a rejected position succeeded")
+	}
+	if got := liveTxnCount(t, g, accountID); got != 0 {
+		t.Errorf("live rows after failed import = %d, want 0 (torn import)", got)
+	}
+	if got := positionCount(t, g, accountID); got != 0 {
+		t.Errorf("non-zero positions after failed import = %d, want 0", got)
+	}
+	var jobs int64
+	if err := g.Model(&model.IngestionJob{}).Where("account_id = ?", accountID).Count(&jobs).Error; err != nil {
+		t.Fatalf("count jobs: %v", err)
+	}
+	if jobs != 0 {
+		t.Errorf("import jobs after failed import = %d, want 0 (orphan audit row)", jobs)
+	}
+
+	res, err := svc.ImportDocument(ctx, userID, accountID, doc, &ingestion.Extraction{Source: "csv", Rows: importRows()}, true)
+	if err != nil {
+		t.Fatalf("retry ImportDocument: %v", err)
+	}
+	if res.InsertedCount != 3 || res.DuplicateCount != 0 {
+		t.Errorf("retry inserted=%d duplicates=%d, want 3/0", res.InsertedCount, res.DuplicateCount)
+	}
+	if got := liveTxnCount(t, g, accountID); got != 3 {
+		t.Errorf("live rows after retry = %d, want 3", got)
+	}
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
 }
 
 func derefInt(p *int) any {

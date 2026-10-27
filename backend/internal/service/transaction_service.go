@@ -209,6 +209,33 @@ func (s *TransactionService) refreshPosition(ctx context.Context, userID, accoun
 	})
 }
 
+// inTx runs fn against a copy of the service whose repositories (and db) are
+// bound to one DB transaction, so a multi-step write such as an import commit
+// lands all-or-nothing (#651). Nested s.db.Transaction calls inside fn become
+// savepoints. Without db wiring (unit tests) fn runs on s itself, unwrapped.
+func (s *TransactionService) inTx(ctx context.Context, fn func(ts *TransactionService) error) error {
+	if s.db == nil {
+		return fn(s)
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		ts := *s
+		ts.db = tx
+		ts.repo = repository.NewTransactionRepository(tx)
+		ts.accountRepo = repository.NewAccountRepository(tx)
+		ts.categoryRepo = repository.NewCategoryRepository(tx)
+		if s.ruleRepo != nil {
+			ts.ruleRepo = repository.NewCategorizationRuleRepository(tx)
+		}
+		if s.jobRepo != nil {
+			ts.jobRepo = repository.NewIngestionJobRepository(tx)
+		}
+		if s.assetRepo != nil {
+			ts.assetRepo = repository.NewAssetRepository(tx)
+		}
+		return fn(&ts)
+	})
+}
+
 func (s *TransactionService) List(ctx context.Context, userID int64, f repository.TransactionFilter) ([]model.Transaction, int64, error) {
 	return s.repo.List(ctx, userID, f)
 }
