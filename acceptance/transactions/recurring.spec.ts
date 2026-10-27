@@ -37,10 +37,10 @@ test.describe('recurring charges', () => {
     await expect(page.getByText('Import transactions', { exact: true })).toBeHidden()
 
     // The API is the exact record: current-run figures and status.
-    type Item = { merchant: string, cadence: string, occurrences: number, last_amount: string, status: string }
+    type Item = { merchant: string, cadence: string, occurrences: number, last_amount: string, monthly_equivalent: string, status: string }
     const items = (await apiGet(cookie, '/dashboard/recurring')).data as Item[]
     const find = (re: RegExp) => items.find((i) => re.test(i.merchant))
-    expect(find(/streamflix/i)).toMatchObject({ cadence: 'monthly', occurrences: 3, last_amount: '15.49', status: 'active' })
+    expect(find(/streamflix/i)).toMatchObject({ cadence: 'monthly', occurrences: 3, last_amount: '15.49', monthly_equivalent: '15.49', status: 'active' })
     expect(find(/tunebox/i)).toMatchObject({ cadence: 'monthly', occurrences: 3, last_amount: '10.99', status: 'active' })
     expect(find(/ironworks/i)).toMatchObject({ cadence: 'monthly', status: 'lapsed' })
     expect(find(/grocer/i)).toBeUndefined()
@@ -48,11 +48,12 @@ test.describe('recurring charges', () => {
     await page.goto('/insights')
     const heading = page.getByRole('heading', { name: 'Recurring charges' })
     await heading.scrollIntoViewIfNeeded()
-    await expect(page.getByTestId('recurring-total')).toContainText('/mo across 2 charges')
+    // Monthly charges cost exactly their amount: 15.49 + 10.99.
+    await expect(page.getByTestId('recurring-total')).toContainText(/26\.48.*\/mo across 2 charges/)
 
     const active = page.getByRole('list', { name: 'Active recurring charges' })
     await expect(active.getByRole('listitem')).toHaveCount(2)
-    await expect(active.getByRole('listitem').filter({ hasText: /streamflix/i })).toContainText('15.49')
+    await expect(active.getByRole('listitem').filter({ hasText: /streamflix/i })).toContainText(/15\.49.*15\.49/)
     await expect(active.getByRole('listitem').filter({ hasText: /tunebox/i })).toContainText('10.99')
     await expect(active).not.toContainText(/ironworks/i)
 

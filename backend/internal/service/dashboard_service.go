@@ -617,7 +617,6 @@ const (
 	// this many cadences past its last charge (#653): one expected charge
 	// missed by at least half a cycle.
 	recurringLapsedCycles = 1.5
-	daysPerMonth          = 365.2425 / 12
 )
 
 // RecurringItem.Status values (#653).
@@ -626,16 +625,20 @@ const (
 	RecurringStatusLapsed = "lapsed"
 )
 
+// perYear is the cadence's nominal charges per year, so the monthly cost
+// is exact decimal arithmetic (amount × perYear / 12): a monthly 15.49
+// costs 15.49/mo, not a day-count approximation of it (#653).
 type recurringCadenceWindow struct {
 	name    string
 	minDays float64
 	maxDays float64
+	perYear int64
 }
 
 var recurringCadenceWindows = []recurringCadenceWindow{
-	{name: "weekly", minDays: 6, maxDays: 8},
-	{name: "monthly", minDays: 27, maxDays: 33},
-	{name: "annual", minDays: 350, maxDays: 380},
+	{name: "weekly", minDays: 6, maxDays: 8, perYear: 52},
+	{name: "monthly", minDays: 27, maxDays: 33, perYear: 12},
+	{name: "annual", minDays: 350, maxDays: 380, perYear: 1},
 }
 
 // RecurringItem is one detected recurring charge (#368): same normalized
@@ -748,10 +751,6 @@ func detectRecurringGroup(group []repository.RecurringTxnRow, horizon *time.Time
 
 	last := run[len(run)-1]
 	avgGap := last.Date.Sub(run[0].Date).Hours() / 24 / float64(len(run)-1)
-	// avgGap/daysPerMonth are day-count ratios, not monetary values — the
-	// only float→decimal conversion is this scalar multiplier, never a raw
-	// dollar amount (money stays in decimal throughout).
-	monthlyRatio := decimal.NewFromFloat(daysPerMonth).Div(decimal.NewFromFloat(avgGap))
 	nextExpected := last.Date.AddDate(0, 0, int(math.Round(avgGap)))
 
 	status := RecurringStatusActive
@@ -766,7 +765,7 @@ func detectRecurringGroup(group []repository.RecurringTxnRow, horizon *time.Time
 		LastAmount:        last.Amount.Abs().String(),
 		LastDate:          last.Date.Format("2006-01-02"),
 		NextExpectedDate:  nextExpected.Format("2006-01-02"),
-		MonthlyEquivalent: avgAbs.Mul(monthlyRatio).String(),
+		MonthlyEquivalent: avgAbs.Mul(decimal.NewFromInt(window.perYear)).Div(decimal.NewFromInt(12)).String(),
 		Status:            status,
 	}, true
 }

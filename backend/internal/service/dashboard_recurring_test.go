@@ -288,8 +288,7 @@ func TestDashboard_Recurring_CurrentRun(t *testing.T) {
 		amounts         []float64
 		wantOccurrences int
 		wantLastAmount  string
-		minMonthly      int64
-		maxMonthly      int64
+		wantMonthly     string
 	}{
 		{
 			name:            "price increase keeps the new price",
@@ -297,8 +296,7 @@ func TestDashboard_Recurring_CurrentRun(t *testing.T) {
 			amounts:         []float64{-9.99, -9.99, -9.99, -15.49, -15.49, -15.49},
 			wantOccurrences: 3,
 			wantLastAmount:  "15.49",
-			minMonthly:      15,
-			maxMonthly:      16,
+			wantMonthly:     "15.49",
 		},
 		{
 			name: "a skipped month long ago doesn't disqualify",
@@ -307,8 +305,7 @@ func TestDashboard_Recurring_CurrentRun(t *testing.T) {
 			amounts:         []float64{-12, -12, -12, -12, -12},
 			wantOccurrences: 4,
 			wantLastAmount:  "12",
-			minMonthly:      11,
-			maxMonthly:      13,
+			wantMonthly:     "12",
 		},
 	}
 	for _, tc := range cases {
@@ -331,9 +328,9 @@ func TestDashboard_Recurring_CurrentRun(t *testing.T) {
 			if item.LastAmount != tc.wantLastAmount {
 				t.Errorf("last_amount = %s, want %s", item.LastAmount, tc.wantLastAmount)
 			}
-			me, _ := decimal.NewFromString(item.MonthlyEquivalent)
-			if me.LessThan(decimal.NewFromInt(tc.minMonthly)) || me.GreaterThan(decimal.NewFromInt(tc.maxMonthly)) {
-				t.Errorf("monthly_equivalent = %s, want between %d and %d", item.MonthlyEquivalent, tc.minMonthly, tc.maxMonthly)
+			// A monthly charge costs exactly its amount per month.
+			if item.MonthlyEquivalent != tc.wantMonthly {
+				t.Errorf("monthly_equivalent = %s, want %s", item.MonthlyEquivalent, tc.wantMonthly)
 			}
 			if item.Status != service.RecurringStatusActive {
 				t.Errorf("status = %s, want active", item.Status)

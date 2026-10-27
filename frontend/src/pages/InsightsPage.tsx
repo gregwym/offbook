@@ -808,8 +808,11 @@ function RecurringList({ items }: { items: InsightsData['recurring'] }) {
                   <div className="min-w-0">
                     <div className="truncate font-medium text-gray-700">{r.merchant}</div>
                     <div className="text-xs text-gray-500">
-                      {cadenceLabel(r.cadence)} · last <AmountDisplay amount={r.last_amount} /> on{' '}
-                      <DateDisplay value={r.last_date} /> · next ~<DateDisplay value={r.next_expected_date} />
+                      {cadenceLabel(r.cadence)} ·{' '}
+                      <span className="whitespace-nowrap">
+                        last <AmountDisplay amount={r.last_amount} /> on <DateDisplay value={r.last_date} />
+                      </span>{' '}
+                      · <span className="whitespace-nowrap">next ~<DateDisplay value={r.next_expected_date} /></span>
                     </div>
                   </div>
                   <div className="shrink-0 text-right text-gray-700">
