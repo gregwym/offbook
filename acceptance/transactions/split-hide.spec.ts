@@ -25,6 +25,15 @@ test.describe('split and hide journey', () => {
       api(cookie, '/transactions', { account_id: acct, amount, description, transaction_date: today, source: 'csv', category_id })
     await tx('QASPLIT Superstore', '-100.00', groceries.id)
     await tx('QASPLIT One-off gadget', '-40.00', gas.id)
+    // A confirmed transfer to savings: both legs are already out of spending.
+    const savings = (await api(cookie, '/accounts', {
+      name: 'Split Savings', institution_slug: 'manual', account_type: 'savings', currency: 'USD',
+    })).data.id
+    const out = (await tx('QASPLIT Move to savings', '-25.00')).data.id
+    const into = (await api(cookie, '/transactions', {
+      account_id: savings, amount: '25.00', description: 'QASPLIT From checking', transaction_date: today, source: 'csv',
+    })).data.id
+    await api(cookie, '/transfers/confirm', { transaction_id_a: out, transaction_id_b: into })
 
     await signIn(page, user.email, user.password)
     await page.goto('/transactions')
@@ -71,6 +80,28 @@ test.describe('split and hide journey', () => {
     await expect.poll(async () => (await byCategory(cookie, now)).gas).toBe(70)
     await expect(page.locator('span:visible', { hasText: /^hidden$/ })).toHaveCount(0)
     await expectNoOverflow(page)
+
+    // #643: a transfer leg never counts in spending, so it offers no "Hide
+    // from spending" (an ordinary row does).
+    await page.getByRole('button', { name: 'More actions for QASPLIT Move to savings' }).locator('visible=true').click()
+    const menu = page.getByRole('menu')
+    await expect(menu.getByRole('menuitem', { name: 'Delete QASPLIT Move to savings', exact: true })).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: /^(Un)?hide /i })).toHaveCount(0)
+    await testInfo.attach(`${testInfo.project.name}-transfer-leg-menu`, { body: await page.screenshot(), contentType: 'image/png' })
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'More actions for QASPLIT One-off gadget' }).locator('visible=true').click()
+    await expect(page.getByRole('menu').getByRole('menuitem', { name: 'Hide QASPLIT One-off gadget', exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+    // Bulk Hide skips the transfer leg: selecting only it offers no Hide.
+    await page.getByRole('checkbox', { name: 'Select QASPLIT Move to savings' }).locator('visible=true').check()
+    const bar = page.getByRole('region', { name: 'Bulk actions' })
+    await expect(bar).toBeVisible()
+    await expect(bar.getByRole('button', { name: /^hide$/i })).toHaveCount(0)
+    await testInfo.attach(`${testInfo.project.name}-transfer-leg-bulk`, { body: await page.screenshot(), contentType: 'image/png' })
+    // Spending is unchanged by the transfer: still only groceries + gas.
+    spend = await byCategory(cookie, now)
+    expect(spend.groceries).toBe(70)
+    expect(spend.gas).toBe(70)
   })
 })
 

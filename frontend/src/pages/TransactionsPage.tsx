@@ -440,7 +440,13 @@ export function TransactionsPage() {
   const selectedIDs = visibleIDs.filter((id) => selected.has(id))
   const allSelected = visibleIDs.length > 0 && selectedIDs.length === visibleIDs.length
   const selectedRows = transactions.filter((t) => selected.has(t.id) && visibleIDs.includes(t.id))
-  const anySelectedShown = selectedRows.some((t) => t.hidden_at == null)
+  const categoryByID = useMemo(() => mapByID(categories), [categories])
+  // Transfer legs never count in spending, so "Hide" would change nothing
+  // there (#643): bulk Hide leaves them out of the request and the count.
+  const hideableSelectedIDs = selectedRows
+    .filter((t) => t.hidden_at == null && !excludedAsTransfer(t, t.category_id ? categoryByID.get(t.category_id) : undefined))
+    .map((t) => t.id)
+  const anySelectedShown = hideableSelectedIDs.length > 0
   const anySelectedHidden = selectedRows.some((t) => t.hidden_at != null)
   const toggleSelected = (id: number) =>
     setSelected((prev) => {
@@ -451,7 +457,6 @@ export function TransactionsPage() {
     })
   const accountByID = useMemo(() => mapByID(accounts), [accounts])
   const assetByID = useMemo(() => mapByID(assets), [assets])
-  const categoryByID = useMemo(() => mapByID(categories), [categories])
   const transactionByID = useMemo(() => mapByID(transactions), [transactions])
   // partnerSkip: ids that render inside a paired-trade row (so we don't
   // also render them as a stand-alone row). Pairing is detected when two
@@ -731,7 +736,7 @@ export function TransactionsPage() {
             <button
               type="button"
               disabled={reviewBusy}
-              onClick={() => void bulkEditRows(selectedIDs, { hidden: true }, (n) => `${plural(n)} hidden from spending and budgets.`)}
+              onClick={() => void bulkEditRows(hideableSelectedIDs, { hidden: true }, (n) => `${plural(n)} hidden from spending and budgets.`)}
               className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-indigo-300 bg-white px-3 py-1.5 text-sm font-medium text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
             >
               <EyeOff size={16} /> Hide
@@ -1157,7 +1162,10 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
   const rawDescription = txSecondaryDescription(tx)
   const splitCount = tx.splits?.length ?? 0
   const tags = tx.tags ?? []
-  const hideable = onToggleHidden != null && tx.kind === 'flow'
+  // A row already out of spending as a transfer gets no "Hide from
+  // spending" (#643); one hidden before it paired can still be unhidden.
+  const hideable = onToggleHidden != null && tx.kind === 'flow' &&
+    (tx.hidden_at != null || !excludedAsTransfer(tx, currentCategory))
   const hidden = hideable && tx.hidden_at != null
   const splittable = onSplit != null && tx.kind === 'flow' && !tx.is_transfer
   const stale = splitCount > 0 && tx.splits_need_attention === true
@@ -1642,6 +1650,12 @@ function Field({ label, className = 'block', children }: { label: string; classN
       {children}
     </label>
   )
+}
+
+// excludedAsTransfer: a paired transfer leg, or an unsplit Transfer-category
+// row (#461), is already left out of spending, income and budgets.
+function excludedAsTransfer(tx: Transaction, category: Category | undefined): boolean {
+  return tx.is_transfer || ((tx.splits?.length ?? 0) === 0 && category?.slug === 'transfer')
 }
 
 function mapByID<T extends { id: number }>(items: T[]): Map<number, T> {
