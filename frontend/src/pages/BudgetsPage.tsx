@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ChevronRight, Pencil, Plus, Target, Trash2 } from 'lucide-react'
 import { MonthStepper } from '../components/MonthStepper'
-import { monthLabel } from '../lib/month'
+import { monthLabel, rangeLabel } from '../lib/month'
 import { Link } from 'react-router-dom'
 import { AmountDisplay } from '../components/AmountDisplay'
 import {
@@ -19,7 +19,7 @@ import type { Category } from '../types/category'
 import { BUDGET_PERIODS, type BudgetMonthSummary, type BudgetPeriod } from '../types/budget'
 import { ModalShell } from '../components/ModalShell'
 import { NEW_CATEGORY, NewCategoryDialog, NewCategoryOption } from '../components/NewCategoryDialog'
-import { dayBefore, spendingHref } from '../lib/spendingLink'
+import { spendingHref } from '../lib/spendingLink'
 
 export function BudgetsPage() {
   const {
@@ -373,11 +373,12 @@ function BudgetCard({ row, category, includes, canMutate, drillHref, onEdit, onD
   const over = row.pct != null && row.pct >= 1
   const warning = row.pct != null && row.pct >= 0.8 && !over
   const barClass = over ? 'bg-red-500' : warning ? 'bg-amber-500' : 'bg-indigo-500'
+  const name = category?.name ?? `#${row.category_id}`
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h2 className="truncate text-base font-semibold text-gray-900">{category?.name ?? `#${row.category_id}`}</h2>
+          <h2 className="truncate text-base font-semibold text-gray-900">{name}</h2>
           <p className="mt-0.5 text-xs text-gray-500">
             {row.period}{row.rollover ? ' · rollover' : ''}{!row.is_active ? ' · paused' : ''}
           </p>
@@ -387,8 +388,9 @@ function BudgetCard({ row, category, includes, canMutate, drillHref, onEdit, onD
         </div>
         {canMutate && (
           <div className="flex shrink-0 items-center gap-1 text-gray-400">
-            <button type="button" onClick={onEdit} aria-label="Edit" className="rounded p-1 hover:bg-gray-100 hover:text-gray-700"><Pencil size={14} /></button>
-            <button type="button" onClick={onDelete} aria-label="Delete" className="rounded p-1 hover:bg-gray-100 hover:text-red-700"><Trash2 size={14} /></button>
+            {/* 40px touch targets on phones, 32px on desktop; names say which budget (#630). */}
+            <button type="button" onClick={onEdit} aria-label={`Edit ${name} budget`} className="inline-flex h-10 w-10 items-center justify-center rounded hover:bg-gray-100 hover:text-gray-700 sm:h-8 sm:w-8"><Pencil size={16} /></button>
+            <button type="button" onClick={onDelete} aria-label={`Delete ${name} budget`} className="inline-flex h-10 w-10 items-center justify-center rounded hover:bg-gray-100 hover:text-red-700 sm:h-8 sm:w-8"><Trash2 size={16} /></button>
           </div>
         )}
       </div>
@@ -421,8 +423,8 @@ function BudgetCard({ row, category, includes, canMutate, drillHref, onEdit, onD
       {row.period_start && row.period_end && (
         <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
           <span className="text-gray-400">
-            {/* period_end is exclusive; show the last day the period covers. */}
-            {row.period_start.slice(0, 10)} → {dayBefore(row.period_end.slice(0, 10))}
+            {/* period_end is exclusive; rangeLabel shows the last day covered. */}
+            {rangeLabel(row.period_start, row.period_end)}
           </span>
           {drillHref && (
             <Link to={drillHref} className="font-medium text-indigo-600 hover:text-indigo-800">

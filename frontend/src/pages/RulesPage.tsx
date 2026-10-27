@@ -147,7 +147,7 @@ export function RulesPage() {
                 type="button"
                 onClick={() => runApply(true)}
                 disabled={applying || rules.length === 0}
-                className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
               >
                 Preview changes
               </button>
@@ -155,7 +155,7 @@ export function RulesPage() {
                 type="button"
                 onClick={() => runApply(false)}
                 disabled={applying || rules.length === 0}
-                className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
               >
                 <RefreshCw size={16} className={applying ? 'animate-spin' : ''} />
                 {applying ? 'Applying…' : 'Re-apply to all transactions'}
@@ -165,7 +165,7 @@ export function RulesPage() {
           <button
             type="button"
             onClick={() => setAdding(true)}
-            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+            className="inline-flex shrink-0 whitespace-nowrap items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
           >
             <Plus size={16} /> New rule
           </button>
