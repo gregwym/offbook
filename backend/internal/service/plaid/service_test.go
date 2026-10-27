@@ -229,6 +229,25 @@ func TestService_NotConfigured(t *testing.T) {
 	}
 }
 
+// TestService_NotConfigured_StillListsItems: an instance without Plaid
+// credentials keeps the DB-only reads (#641) — the reconnect banner and
+// Settings list linked banks — while every Plaid call still refuses.
+func TestService_NotConfigured_StillListsItems(t *testing.T) {
+	svc := plaidsvc.NewService(nil, nil, &fakeRepo{}, nil, nil, nil, nil, nil, nil, nil, nil)
+	if svc.Configured() {
+		t.Fatal("expected !Configured without a client")
+	}
+	if _, err := svc.ListItems(context.Background(), 1); err != nil {
+		t.Errorf("list items: %v", err)
+	}
+	if _, err := svc.CreateUpdateLinkToken(context.Background(), 1, "item-x"); err != plaidsvc.ErrNotConfigured {
+		t.Errorf("update link token: %v", err)
+	}
+	if _, err := svc.SyncTransactions(context.Background(), 1, "item-x"); err != plaidsvc.ErrNotConfigured {
+		t.Errorf("sync: %v", err)
+	}
+}
+
 // TestService_CreateUpdateLinkToken_HappyPath proves the #364 reconnect
 // flow: an update-mode link_token request is scoped to the caller's own
 // item (decrypts *that* item's access_token) and forwards it to Plaid's

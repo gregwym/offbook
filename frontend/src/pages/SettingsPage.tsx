@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from
 import { Link, useLocation } from 'react-router-dom'
 import { usePlaidLink } from 'react-plaid-link'
 import { clearPendingLink, savePendingLink } from '../lib/plaidOAuth'
+import { LINKED_INSTITUTIONS_ID } from '../lib/plaidReconnect'
 import { AlertTriangle, Bot, Check, Info, Landmark, Pencil, Plug, Plus, RefreshCw, Tag, Trash2, X } from 'lucide-react'
 import { TimeAgo } from '../components/TimeAgo'
 import {
@@ -870,7 +871,9 @@ function LinkedInstitutionsSection() {
   // to one item at a time here.
   const [reconnectItemID, setReconnectItemID] = useState<string | null>(null)
   const [reconnectToken, setReconnectToken] = useState<string | null>(null)
-  const [reconnectError, setReconnectError] = useState<string | null>(null)
+  // Keyed by item: a failed attempt clears reconnectItemID, so the message
+  // must remember which row it belongs to or it never renders (#641).
+  const [reconnectError, setReconnectError] = useState<{ itemID: string; message: string } | null>(null)
 
   const refresh = useCallback(() => {
     return listItems()
@@ -887,6 +890,16 @@ function LinkedInstitutionsSection() {
     // itself is sync-pure, satisfying react-hooks/set-state-in-effect.
     void refresh()
   }, [refresh])
+
+  // The reconnect banner and Accounts pill land here (#641). The page-level
+  // hash scroll runs before the sections above finish loading and push this
+  // one down, so scroll again once the items are in.
+  const { hash } = useLocation()
+  useEffect(() => {
+    if (!loading && hash === `#${LINKED_INSTITUTIONS_ID}`) {
+      document.getElementById(LINKED_INSTITUTIONS_ID)?.scrollIntoView?.({ block: 'start' })
+    }
+  }, [loading, hash])
 
   // Re-sync mirrors the initial connect flow (sync-accounts → sync-transactions)
   // so a user can pull fresh data on demand, not only at link time (#311).
@@ -970,13 +983,13 @@ function LinkedInstitutionsSection() {
       })
       setReconnectToken(t.link_token)
     } catch (e) {
-      setReconnectError(errMsg(e))
+      setReconnectError({ itemID: item.plaid_item_id, message: errMsg(e) })
       setReconnectItemID(null)
     }
   }
 
   return (
-    <section className="rounded-lg border border-gray-200 bg-white">
+    <section id={LINKED_INSTITUTIONS_ID} className="scroll-mt-16 rounded-lg border border-gray-200 bg-white md:scroll-mt-4">
       <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3">
         <div className="flex items-center gap-2">
           <Plug size={16} className="text-gray-500" />
@@ -1032,7 +1045,10 @@ function LinkedInstitutionsSection() {
                   </div>
                   <div className="mt-0.5 text-xs text-gray-500">
                     {statusSummary(it)}
-                    {it.last_sync_error ? ` · ${it.last_sync_error}` : ''}
+                    {/* A reauth row's error is the raw Plaid code
+                        (ITEM_LOGIN_REQUIRED: …) — the summary already says
+                        what to do, so only other statuses show it (#641). */}
+                    {it.last_sync_error && !needsReconnect ? ` · ${it.last_sync_error}` : ''}
                   </div>
                 </div>
                 {needsReconnect ? (
@@ -1069,9 +1085,9 @@ function LinkedInstitutionsSection() {
                   {disconnecting === it.plaid_item_id ? 'Disconnecting…' : 'Disconnect'}
                 </button>
               </div>
-              {needsReconnect && reconnectItemID === it.plaid_item_id && reconnectError && (
-                <div className="mx-5 mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                  {reconnectError}
+              {needsReconnect && reconnectError?.itemID === it.plaid_item_id && (
+                <div role="alert" className="mx-5 mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  Couldn’t start the reconnect: {reconnectError.message}
                 </div>
               )}
             </div>
@@ -1247,7 +1263,9 @@ function statusSummary(it: PlaidItem): ReactNode {
     case 'error':
       return 'Last sync failed'
     case 'reauth_required':
-      return 'Your bank needs you to reconnect'
+      return it.last_synced_at ? (
+        <>Your bank needs you to sign in again · last synced <TimeAgo when={it.last_synced_at} /></>
+      ) : 'Your bank needs you to sign in again'
     case 'never':
       return 'Not yet synced'
     default:
@@ -1257,7 +1275,10 @@ function statusSummary(it: PlaidItem): ReactNode {
 
 function errMsg(err: unknown): string {
   if (err && typeof err === 'object' && 'response' in err) {
-    const r = (err as { response?: { data?: { error?: string } } }).response
+    const r = (err as { response?: { data?: { error?: string; code?: string } } }).response
+    if (r?.data?.code === 'PLAID_NOT_CONFIGURED') {
+      return 'Plaid is not configured on this instance. Ask the admin to set PLAID_CLIENT_ID and PLAID_SECRET.'
+    }
     if (r?.data?.error) return r.data.error
   }
   if (err instanceof Error) return err.message

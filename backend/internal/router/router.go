@@ -234,7 +234,11 @@ func New(cfg config.Config, gormDB *gorm.DB) *gin.Engine {
 
 // newPlaidService returns a configured *plaidsvc.Service when the instance
 // has PLAID_CLIENT_ID + PLAID_TOKEN_KEY, otherwise an unconfigured service
-// whose methods return ErrNotConfigured. Panics on a configured-but-broken
+// whose Plaid-calling methods return ErrNotConfigured. The unconfigured one
+// still gets the item and sync-error repos so the DB-only reads (list linked
+// institutions, their sync errors, disconnect) keep working: an instance
+// whose Plaid credentials were removed still shows which banks need a
+// reconnect instead of a 503 (#641). Panics on a configured-but-broken
 // secret key — config.Load() already validated key length, so this should
 // be unreachable in practice.
 func newPlaidService(
@@ -249,7 +253,7 @@ func newPlaidService(
 	piiSvc *service.PIIService,
 ) *plaidsvc.Service {
 	if !cfg.PlaidConfigured() {
-		return plaidsvc.NewService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		return plaidsvc.NewService(nil, nil, itemRepo, nil, nil, syncErrRepo, nil, nil, nil, nil, nil)
 	}
 	client, err := plaidsvc.NewSDKClient(plaidsvc.Config{
 		ClientID:    cfg.PlaidClientID,
