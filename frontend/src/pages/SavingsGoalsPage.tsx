@@ -70,14 +70,14 @@ export function SavingsGoalsPage() {
           <p className="mt-1 text-sm text-gray-500">
             {isHousehold
               ? 'Household-wide savings targets. Contributions add to a single total.'
-              : 'Track progress toward named targets. Contributions are atomic, so logging from multiple devices is safe.'}
+              : 'Track progress toward the things you’re saving for. Log a contribution whenever you set money aside.'}
           </p>
         </div>
         {canMutate && (
           <button
             type="button"
             onClick={() => setAdding(true)}
-            className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+            className="inline-flex shrink-0 items-center whitespace-nowrap gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
           >
             <Plus size={16} /> {isHousehold ? 'New shared goal' : 'New goal'}
           </button>
@@ -111,7 +111,18 @@ export function SavingsGoalsPage() {
               ? canMutate
                 ? 'No shared goals yet — create one to start tracking household savings.'
                 : 'No shared goals yet. Ask an owner or contributor to create one.'
-              : 'No goals yet — create one to start tracking.'}
+              : 'No goals yet — name something you’re saving for and log contributions as you go.'}
+            {canMutate && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setAdding(true)}
+                  className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                >
+                  <Plus size={16} /> {isHousehold ? 'Create the first shared goal' : 'Create your first goal'}
+                </button>
+              </div>
+            )}
           </div>
         )}
         {rows.map((g) => (

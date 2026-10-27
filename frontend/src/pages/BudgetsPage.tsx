@@ -192,7 +192,18 @@ export function BudgetsPage() {
               ? canMutate
                 ? 'No shared budgets yet — create one to start tracking household spending.'
                 : 'No shared budgets yet. Ask an owner or contributor to create one.'
-              : 'No budgets yet — create one to start tracking spend.'}
+              : 'No budgets yet — set a monthly limit for a category to see how your spending tracks against it.'}
+            {canMutate && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setAdding(true)}
+                  className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                >
+                  <Plus size={16} /> {isHousehold ? 'Create the first shared budget' : 'Create your first budget'}
+                </button>
+              </div>
+            )}
           </div>
         )}
         {monthCards.map(renderCard)}

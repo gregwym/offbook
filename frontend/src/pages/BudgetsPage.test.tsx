@@ -16,6 +16,13 @@ describe('BudgetsPage smoke', () => {
     await expectHealthySmoke()
   })
 
+  it('offers a create button in the empty state that opens the budget form (#625)', async () => {
+    server.use(http.get('*/budgets', () => HttpResponse.json({ data: [], total: 0 })))
+    renderPage(<BudgetsPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Create your first budget' }))
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+  })
+
   it('shows the rolled-over balance on a rollover budget', async () => {
     server.use(
       http.get('*/budgets', () =>
