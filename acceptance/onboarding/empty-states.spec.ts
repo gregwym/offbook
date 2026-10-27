@@ -33,6 +33,7 @@ test.describe('empty states', () => {
     await page.goto('/rules')
     await expect(page.getByText('No rules yet.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Preview changes' })).toHaveCount(0)
+    await expectOneLine(page.getByRole('button', { name: 'New rule' }))
     const firstRule = page.getByRole('button', { name: 'Create your first rule' })
     await expectInViewport(page, firstRule)
     await expectHealthy(page)
@@ -47,6 +48,14 @@ test.describe('empty states', () => {
     await expect(page.getByText('No rules yet.')).toHaveCount(0)
     await expect(page.getByText('WHOLEFDS').first()).toBeVisible()
     await expect(page.getByRole('button', { name: 'Preview changes' })).toBeVisible()
+    // #630: the header button stays on one line, and on desktop the three
+    // actions share one row instead of stacking into a column.
+    await expectOneLine(page.getByRole('button', { name: 'New rule' }))
+    if (!testInfo.project.name.includes('mobile')) {
+      const preview = await page.getByRole('button', { name: 'Preview changes' }).boundingBox()
+      const newRule = await page.getByRole('button', { name: 'New rule' }).boundingBox()
+      expect(Math.abs(preview!.y - newRule!.y), 'header actions share one row').toBeLessThan(4)
+    }
     await expectHealthy(page)
     await shot('rules-created')
 
@@ -66,6 +75,15 @@ test.describe('empty states', () => {
     await expect(budgetDialog).toBeHidden()
     await expect(page.getByText(/No budgets yet/)).toHaveCount(0)
     await expect(page.getByRole('heading', { name: 'Groceries', exact: true })).toBeVisible()
+    // #630: card actions name their budget and are thumb-sized on phones.
+    const minTarget = testInfo.project.name.includes('mobile') ? 40 : 32
+    for (const action of ['Edit', 'Delete']) {
+      const btn = page.getByRole('button', { name: `${action} Groceries budget`, exact: true })
+      const box = await btn.boundingBox()
+      expect(box, `${action} is rendered`).not.toBeNull()
+      expect(box!.width, `${action} hit area width`).toBeGreaterThanOrEqual(minTarget)
+      expect(box!.height, `${action} hit area height`).toBeGreaterThanOrEqual(minTarget)
+    }
     await expectHealthy(page)
     await shot('budgets-created')
 

@@ -242,3 +242,33 @@ describe('BudgetsPage smoke', () => {
     expect(await screen.findByRole('region', { name: 'July 2026 totals' })).toBeTruthy()
   })
 })
+
+// #630: card actions name their budget, and the period reads in words.
+describe('BudgetsPage budget card', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('names edit and delete after the budget and opens the editor', async () => {
+    renderPage(<BudgetsPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit Groceries budget' }))
+    expect(await screen.findByRole('dialog', { name: 'Edit budget' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Delete Groceries budget' })).toBeTruthy()
+  })
+
+  it('shows a weekly period as an inclusive human range', async () => {
+    server.use(
+      http.get('*/budgets', () =>
+        HttpResponse.json({ data: [{ ...fx.budget1, period: 'weekly' }], total: 1 }),
+      ),
+      http.get('*/budgets/:id/spend', () =>
+        HttpResponse.json({
+          data: { ...fx.budgetSpend1, period: 'weekly', period_start: '2026-10-26T00:00:00Z', period_end: '2026-11-02T00:00:00Z' },
+        }),
+      ),
+    )
+    renderPage(<BudgetsPage />)
+    expect(await screen.findByText('Oct 26 – Nov 1, 2026')).toBeTruthy()
+    expect(screen.queryByText(/2026-10-26/)).toBeNull()
+  })
+})

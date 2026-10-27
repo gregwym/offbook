@@ -70,8 +70,12 @@ test.describe('budget history', () => {
     await expect(g).toContainText('of 200.00')
     await expect(g).toContainText('65%')
     await expect(g).toContainText('70.00 USD remaining')
-    // The period reads as the month's first and last day.
-    await expect(g).toContainText(`${ymd(-1, 1)} → ${ymd(0, 0)}`)
+    // The period reads as the month's first and last day, in words (#630).
+    const day = (iso: string, year: boolean) =>
+      new Date(`${iso}T00:00:00Z`).toLocaleString('en-US', { month: 'short', day: 'numeric', ...(year ? { year: 'numeric' } : {}), timeZone: 'UTC' })
+    const first = ymd(-1, 1)
+    const last = ymd(0, 0)
+    await expect(g).toContainText(`${day(first, first.slice(0, 4) !== last.slice(0, 4))} – ${day(last, true)}`)
     // The weekly budget doesn't line up with a calendar month.
     await expect(page.getByRole('heading', { name: gas.name, exact: true })).toHaveCount(0)
     await expect(page.getByText(/1 weekly, annual or paused budget is only shown for the current period/)).toBeVisible()
