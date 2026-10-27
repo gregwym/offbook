@@ -45,7 +45,7 @@ import { FALLBACK_PIE_COLORS } from '../components/chartColors'
 import { assetKindLabel } from '../types/asset'
 import { PartialBadge } from '../components/PartialBadge'
 import { SetPriceModal } from '../components/SetPriceModal'
-import { TREND_RANGES, useScopedInsights, type InsightsData } from '../hooks/useScopedInsights'
+import { DEFAULT_TREND_MONTHS, TREND_RANGES, useScopedInsights, type InsightsData } from '../hooks/useScopedInsights'
 import { useScopeStore } from '../store/scopeStore'
 import { SCOPE_HOUSEHOLD } from '../types/scope'
 
@@ -74,7 +74,9 @@ export function InsightsPage() {
     )
   }
 
-  const freshSignup = result.state === 'ready' && isFreshSignup(result.data)
+  // Price tools only when there is something to price (#629): a cash-only
+  // book in its own currency has none, and a fresh signup (#520) has nothing.
+  const showPriceTools = result.state === 'ready' && hasPriceableAssets(result.data)
 
   return (
     <div className="space-y-6">
@@ -87,9 +89,7 @@ export function InsightsPage() {
               : 'Net worth · allocation · spending · budgets · goals — at a glance.'}
           </p>
         </div>
-        {/* A brand-new user has no assets to price (#520): keep the first
-            run to the single "add your first account" call to action. */}
-        {!freshSignup && (
+        {showPriceTools && (
           <div className="flex shrink-0 flex-wrap items-start gap-2">
             <button
               type="button"
@@ -208,6 +208,20 @@ function RefreshPricesButton({ onRefreshed }: { onRefreshed: () => void }) {
   )
 }
 
+// hasPriceableAssets is true when the scope holds something a price or an
+// exchange rate values: a non-cash asset class, an account in another
+// currency than the headline, or a headline already flagged partial.
+// Household scope has no headline currency, so more than one account
+// currency stands in for "foreign" there.
+function hasPriceableAssets(data: InsightsData): boolean {
+  if (isFreshSignup(data)) return false
+  if (!data.net_worth_complete) return true
+  if (data.allocation.some((r) => r.kind !== 'fiat')) return true
+  const currencies = new Set(data.accounts.map((a) => a.currency.toUpperCase()))
+  const base = data.net_worth_currency?.toUpperCase()
+  return base ? [...currencies].some((c) => c !== base) : currencies.size > 1
+}
+
 function isFreshSignup(data: InsightsData): boolean {
   return data.scope === 'personal' && data.accounts.length === 0
 }
@@ -309,23 +323,27 @@ function NetWorthBand({
                 Couldn’t load that range — still showing the previous one.
               </span>
             )}
-            <div role="group" aria-label="Net worth date range" className="inline-flex rounded-md border border-gray-200 p-0.5">
-              {TREND_RANGES.map((r) => (
-                <button
-                  key={r.months}
-                  type="button"
-                  aria-pressed={trendMonths === r.months}
-                  onClick={() => onTrendMonths(r.months)}
-                  className={`min-h-8 min-w-9 rounded px-2 text-xs font-medium ${
-                    trendMonths === r.months
-                      ? 'bg-indigo-600 text-white'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  {r.label}
-                </button>
-              ))}
-            </div>
+            {/* A range can't change a single month-end (#629); keep it once
+                the user has picked one, so they can always switch back. */}
+            {(trend.length > 1 || trendMonths !== DEFAULT_TREND_MONTHS) && (
+              <div role="group" aria-label="Net worth date range" className="inline-flex rounded-md border border-gray-200 p-0.5">
+                {TREND_RANGES.map((r) => (
+                  <button
+                    key={r.months}
+                    type="button"
+                    aria-pressed={trendMonths === r.months}
+                    onClick={() => onTrendMonths(r.months)}
+                    className={`min-h-8 min-w-9 rounded px-2 text-xs font-medium ${
+                      trendMonths === r.months
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           {trend.length === 0 ? (
             <div className="flex h-full items-center justify-center py-6 text-sm text-gray-400">
@@ -452,6 +470,36 @@ function AllocationBand({ data, onSetPrice }: { data: InsightsData; onSetPrice: 
   const rows = data.allocation
   const total = rows.reduce((acc, r) => acc + num(r.value), 0)
   const hasPartial = rows.some((r) => !r.complete)
+  // One asset class is a 100% donut that says nothing (#629): collapse the
+  // card to a single line so the spending band moves up.
+  if (rows.length === 1) {
+    const only = rows[0]
+    return (
+      <section className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-gray-200 bg-white px-5 py-3">
+        <div className="flex items-center gap-2">
+          <PieChartIcon size={16} className="text-gray-500" />
+          <h2 className="text-sm font-medium uppercase tracking-wider text-gray-500">
+            Asset allocation
+          </h2>
+        </div>
+        <p className="text-sm text-gray-700">
+          {assetKindLabel(only.kind)} · <AmountDisplay amount={only.value} /> · 100%
+          {!only.complete && (
+            <>
+              <PartialBadge title="Some positions of this kind have no recent price — this value understates the true total." />
+              <button
+                type="button"
+                onClick={() => onSetPrice()}
+                className="ml-1.5 text-[11px] font-medium text-indigo-600 hover:text-indigo-800"
+              >
+                Set price
+              </button>
+            </>
+          )}
+        </p>
+      </section>
+    )
+  }
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-5">
       <div className="flex items-center gap-2">

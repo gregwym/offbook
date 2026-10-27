@@ -229,7 +229,7 @@ export const netWorthTrend: NetWorthPoint[] = [
 ]
 
 export const allocation: AssetClassAllocation[] = [
-  { kind: 'cash', value: '10000.000000000000000000', complete: true },
+  { kind: 'fiat', value: '10000.000000000000000000', complete: true },
 ]
 
 export const categoryTrend: CategoryTrendItem[] = [
