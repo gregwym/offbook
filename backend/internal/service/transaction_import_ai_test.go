@@ -2,9 +2,13 @@ package service_test
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/gregwym/offbook/backend/internal/model"
+	"github.com/gregwym/offbook/backend/internal/repository"
 	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/ingestion"
 )
@@ -121,4 +125,107 @@ func TestCommitJob_ForeignUserCannotCommit(t *testing.T) {
 	if _, err := svc.CommitJob(ctx, int64(-1), *preview.JobID); err != service.ErrImportJobNotFound {
 		t.Errorf("cross-user commit err = %v, want ErrImportJobNotFound", err)
 	}
+}
+
+// TestCommitJob_ConcurrentCommitsRunOnce guards #649: a double-click or client
+// retry can commit one staged job twice at once. Exactly one commit must run
+// the import; the others are refused as not pending, and the job's audit row
+// keeps the winner's counts instead of a loser's "0 imported".
+func TestCommitJob_ConcurrentCommitsRunOnce(t *testing.T) {
+	svc, userID, accountID, g := newImportSvc(t)
+	ctx := context.Background()
+	fx := &fakeExtractor{ext: &ingestion.Extraction{Source: "pdf", Rows: []ingestion.ParsedRow{
+		ingestion.NewRow(1, "2026-05-15", "-4.50", "Coffee", 0.9),
+		ingestion.NewRow(2, "2026-05-16", "2000.00", "Paycheck", 0.9),
+		ingestion.NewRow(3, "2026-05-17", "-61.25", "Groceries", 0.9),
+	}}}
+	preview, err := svc.ExtractAndStage(ctx, userID, accountID, pdfDoc(), fx, nil)
+	if err != nil {
+		t.Fatalf("ExtractAndStage: %v", err)
+	}
+	jobID := *preview.JobID
+
+	const n = 8
+	errs := make(chan error, n)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := svc.CommitJob(ctx, userID, jobID)
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	var ok, refused int
+	for err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, service.ErrImportJobNotPending):
+			refused++
+		default:
+			t.Fatalf("CommitJob: %v", err)
+		}
+	}
+	if ok != 1 || refused != n-1 {
+		t.Errorf("commits ok=%d refused=%d, want 1/%d", ok, refused, n-1)
+	}
+	if got := liveTxnCount(t, g, accountID); got != 3 {
+		t.Errorf("live rows = %d, want 3", got)
+	}
+	job, err := repository.NewIngestionJobRepository(g).GetForUser(ctx, userID, jobID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	if job.Status != "completed" {
+		t.Errorf("job status = %q, want completed", job.Status)
+	}
+	if job.RowsImported == nil || *job.RowsImported != 3 {
+		t.Errorf("job rows_imported = %v, want 3 (a losing commit overwrote it)", derefInt(job.RowsImported))
+	}
+}
+
+// TestCommitJob_FailedCommitCanRetry: a commit that fails after claiming the
+// job hands it back as pending, so the user can retry from the same preview.
+func TestCommitJob_FailedCommitCanRetry(t *testing.T) {
+	svc, userID, accountID, g := newImportSvc(t)
+	ctx := context.Background()
+	fx := &fakeExtractor{ext: &ingestion.Extraction{Source: "pdf", Rows: []ingestion.ParsedRow{
+		ingestion.NewRow(1, "2026-05-15", "-4.50", "Coffee", 0.9),
+	}}}
+	preview, err := svc.ExtractAndStage(ctx, userID, accountID, pdfDoc(), fx, nil)
+	if err != nil {
+		t.Fatalf("ExtractAndStage: %v", err)
+	}
+	// Corrupt the staged blob so the commit fails after its claim.
+	if err := g.Model(&model.IngestionJob{}).Where("id = ?", *preview.JobID).
+		Update("extraction", []byte(`"not an extraction"`)).Error; err != nil {
+		t.Fatalf("corrupt job: %v", err)
+	}
+	if _, err := svc.CommitJob(ctx, userID, *preview.JobID); err == nil {
+		t.Fatal("commit of a corrupt job succeeded")
+	}
+	job, err := repository.NewIngestionJobRepository(g).GetForUser(ctx, userID, *preview.JobID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+	if job.Status != "extracted" {
+		t.Errorf("job status after failed commit = %q, want extracted (retryable)", job.Status)
+	}
+	if got := liveTxnCount(t, g, accountID); got != 0 {
+		t.Errorf("live rows = %d, want 0", got)
+	}
+}
+
+func derefInt(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
 }
