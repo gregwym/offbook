@@ -6,33 +6,40 @@ import { HASH_ANCHOR_SETTLE_MS, useHashAnchor } from './useHashAnchor'
 // the target must be scrolled back into view (#647).
 describe('useHashAnchor', () => {
   let resize: (() => void) | null
+  let observed: Element | null
+  let page: HTMLElement
   let target: HTMLElement
   let scroll: ReturnType<typeof vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>>
 
   beforeEach(() => {
     vi.useFakeTimers()
     resize = null
+    observed = null
     vi.stubGlobal(
       'ResizeObserver',
       class {
         constructor(cb: () => void) {
           resize = cb
         }
-        observe() {}
+        observe(el: Element) {
+          observed = el
+        }
         disconnect() {
           resize = null
         }
       },
     )
+    page = document.createElement('div')
     target = document.createElement('section')
     target.id = 'linked-institutions'
     scroll = vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>()
     target.scrollIntoView = scroll
-    document.body.appendChild(target)
+    page.appendChild(target)
+    document.body.appendChild(page)
   })
 
   afterEach(() => {
-    target.remove()
+    page.remove()
     vi.unstubAllGlobals()
     vi.useRealTimers()
   })
@@ -40,6 +47,8 @@ describe('useHashAnchor', () => {
   it('scrolls on landing and again when the page grows above it', () => {
     renderHook(() => useHashAnchor('#linked-institutions'))
     expect(scroll).toHaveBeenCalledTimes(1)
+    // The page content, not <body>: AppShell scrolls inside <main>.
+    expect(observed).toBe(page)
     resize?.()
     expect(scroll).toHaveBeenCalledTimes(2)
     expect(scroll).toHaveBeenLastCalledWith({ block: 'start' })
