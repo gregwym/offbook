@@ -523,11 +523,13 @@ function SignCheck({
 }
 
 function PreviewSummary({ result, currency }: { result: ImportResult; currency?: string }) {
-  // Unreadable rows first, then low-confidence ones, so the user sees what is
-  // skipped and what to review (ADR-0019 §4). Every skipped row stays listed
-  // whatever its line, or the user can't find it to fix the file (#639).
+  // Unreadable rows first, then low-confidence ones, then new before
+  // duplicates, so the user sees what is skipped, what to review and what a
+  // re-import adds (ADR-0019 §4). Every skipped row stays listed whatever its
+  // line, or the user can't find it to fix the file (#639).
   const rows = useMemo(() => {
-    const rank = (r: ImportResult['rows'][number]) => (r.status === 'error' ? 2 : r.needs_review ? 1 : 0)
+    const rank = (r: ImportResult['rows'][number]) =>
+      r.status === 'error' ? 3 : r.needs_review ? 2 : r.status === 'new' ? 1 : 0
     return [...result.rows].sort((a, b) => rank(b) - rank(a))
   }, [result.rows])
   const errorRows = rows.filter((r) => r.status === 'error').length

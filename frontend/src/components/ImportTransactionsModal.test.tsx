@@ -394,6 +394,29 @@ describe('ImportTransactionsModal unreadable rows and files (#639)', () => {
     expect(screen.getByRole('button', { name: 'Import 19 new' })).toBeEnabled()
   })
 
+  it('lists new rows ahead of duplicates so a re-import shows what it adds', async () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      line: i + 2, date: '2026-09-01', description: `Row ${i + 2}`, amount: '-1.00',
+      status: i === 16 ? 'new' : 'duplicate', confidence: 1, needs_review: false,
+    }))
+    server.use(
+      http.post(`${API}/accounts/:id/transactions/import`, () =>
+        HttpResponse.json({
+          data: {
+            committed: false, source: 'csv', mapping: { date: 'Date', amount: 'Amount', description: 'Description' },
+            headers: ['Date', 'Description', 'Amount'],
+            total_rows: 20, new_count: 1, duplicate_count: 19, error_count: 0, review_count: 0, inserted_count: 0, rows,
+          },
+        }),
+      ),
+    )
+    const { container } = renderModal()
+    pick(container)
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    await screen.findByText('1 new')
+    expect(container.querySelectorAll('tbody tr')[0]).toHaveTextContent('Row 18')
+  })
+
   it.each([
     ['IMPORT_EMPTY', 'file is empty', 'This file has no transactions in it.'],
     ['IMPORT_PARSE_ERROR', 'read header: bare " in non-quoted field', 'couldn’t be read as a CSV'],

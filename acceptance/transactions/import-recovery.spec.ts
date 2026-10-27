@@ -42,7 +42,7 @@ test.describe('import recovery', () => {
     await expect(page.getByText('19 new', { exact: true })).toBeVisible()
     await expect(page.getByText('1 skipped', { exact: true })).toBeVisible()
     await expect(page.getByText(/1 row can’t be read and will be skipped/)).toBeVisible()
-    const badRow = page.locator('tbody tr').filter({ hasText: 'unparseable date "13/45/2026"' })
+    const badRow = page.getByRole('dialog').locator('tbody tr').filter({ hasText: 'unparseable date "13/45/2026"' })
     await expect(badRow).toBeVisible()
     await expect(badRow.getByText('line 18').first()).toBeAttached()
     await expectNoOverflow(page)
@@ -57,6 +57,8 @@ test.describe('import recovery', () => {
     await expect(page.getByText('1 new', { exact: true })).toBeVisible()
     await expect(page.getByText('19 duplicate', { exact: true })).toBeVisible()
     await expect(page.getByText(/can’t be read/)).toHaveCount(0)
+    // The repaired row leads the preview, ahead of the duplicates.
+    await expect(page.getByRole('dialog').locator('tbody tr').first()).toContainText('Recov Broken Date')
     await testInfo.attach('import-fixed-file', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
     await page.getByRole('button', { name: 'Import 1 new' }).click()
     await expect(page.getByText('Import transactions', { exact: true })).toBeHidden()
