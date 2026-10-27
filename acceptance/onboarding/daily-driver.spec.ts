@@ -122,6 +122,14 @@ test.describe('daily driver journey', () => {
     await expect(categoryRow(spending, 'Groceries')).toContainText('113.55')
     await expect(categoryRow(spending, 'Shopping')).toContainText('40.15')
     await expect(categoryRow(spending, 'Gas')).toContainText('45.10')
+    // #629: a cash-only book has nothing to price, a single month-end can't
+    // be re-ranged, and one asset class is a line, not a donut — so the
+    // month's spending sits near the top, even on a phone.
+    await expect(page.getByRole('button', { name: 'Refresh prices' })).toHaveCount(0)
+    await expect(page.getByRole('group', { name: 'Net worth date range' })).toHaveCount(0)
+    await expect(page.locator('section', { hasText: 'Asset allocation' }).first()).toContainText('Cash · 4,301.20 USD · 100%')
+    const heading = await page.getByRole('heading', { name: /Spending by category/ }).boundingBox()
+    expect(heading?.y ?? Infinity).toBeLessThan(900)
     await expectNoClipping(page, 'insights populated')
     await shot('insights')
 

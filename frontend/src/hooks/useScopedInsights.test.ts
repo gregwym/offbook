@@ -97,7 +97,7 @@ describe('useScopedInsights (personal scope)', () => {
     expect(data.net_worth_trend).toEqual([
       { date: fx.netWorthTrend[0].date, value: fx.netWorthTrend[0].total, complete: true },
     ])
-    expect(data.allocation).toEqual([{ kind: 'cash', value: fx.allocation[0].value, complete: true }])
+    expect(data.allocation).toEqual([{ kind: 'fiat', value: fx.allocation[0].value, complete: true }])
     expect(data.budgets).toEqual([
       {
         id: fx.budget1.id,

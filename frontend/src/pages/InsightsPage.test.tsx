@@ -28,7 +28,7 @@ describe('InsightsPage net-worth card and period footer', () => {
 
   it('shows no income/spending line on the personal net-worth card', async () => {
     renderPage(<InsightsPage />)
-    const band = (await screen.findByRole('group', { name: 'Net worth date range' })).closest('section') as HTMLElement
+    const band = (await screen.findByText('Net worth', { selector: 'div' })).closest('section') as HTMLElement
     expect(within(band).queryByText(/income/i)).toBeNull()
     expect(within(band).queryByText(/spending/i)).toBeNull()
   })
@@ -36,7 +36,7 @@ describe('InsightsPage net-worth card and period footer', () => {
   it('shows no income/spending line on the household net-worth card', async () => {
     setHouseholdScope(1)
     renderPage(<InsightsPage />)
-    const band = (await screen.findByRole('group', { name: 'Net worth date range' })).closest('section') as HTMLElement
+    const band = (await screen.findByText('Net worth', { selector: 'div' })).closest('section') as HTMLElement
     expect(within(band).queryByText(/income/i)).toBeNull()
     expect(within(band).queryByText(/spending/i)).toBeNull()
   })
@@ -89,9 +89,44 @@ describe('InsightsPage first run', () => {
   })
 })
 
+const twoPoints = [
+  { date: '2026-09-30', total: '2500.00', complete: true },
+  { date: '2026-10-31', total: '2600.10', complete: true },
+]
+
 describe('InsightsPage net-worth range selector', () => {
   beforeEach(() => {
     resetStores()
+  })
+
+  // #629: one month-end can't be re-ranged, so the selector waits for two.
+  it('hides the range selector while there is only one month-end', async () => {
+    server.use(
+      http.get('*/dashboard/net-worth', () =>
+        HttpResponse.json({ data: [{ date: '2026-10-31', total: '2600.10', complete: true }], total: 1 }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    expect(await screen.findByText(/History starts October 2026/)).toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Net worth date range' })).toBeNull()
+  })
+
+  it('keeps the selector after picking a range that returns one point, so the user can switch back', async () => {
+    let calls = 0
+    server.use(
+      http.get('*/dashboard/net-worth', () => {
+        calls += 1
+        return HttpResponse.json(
+          calls === 1 ? { data: twoPoints, total: 2 } : { data: [twoPoints[1]], total: 1 },
+        )
+      }),
+    )
+    renderPage(<InsightsPage />)
+    await screen.findByRole('group', { name: 'Net worth date range' })
+    fireEvent.click(screen.getByRole('button', { name: '3M' }))
+    expect(await screen.findByText(/History starts October 2026/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '3M' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: '1Y' })).toBeInTheDocument()
   })
 
   it('refetches only the trend with the chosen months and marks it pressed', async () => {
@@ -99,7 +134,7 @@ describe('InsightsPage net-worth range selector', () => {
     server.use(
       http.get('*/dashboard/net-worth', ({ request }) => {
         requested.push(new URL(request.url).searchParams.get('months') ?? '')
-        return HttpResponse.json({ data: [], total: 0 })
+        return HttpResponse.json({ data: twoPoints, total: 2 })
       }),
     )
     renderPage(<InsightsPage />)
@@ -113,6 +148,7 @@ describe('InsightsPage net-worth range selector', () => {
   })
 
   it('keeps the previous series and shows an error when the range fetch fails', async () => {
+    server.use(http.get('*/dashboard/net-worth', () => HttpResponse.json({ data: twoPoints, total: 2 })))
     renderPage(<InsightsPage />)
     await screen.findByRole('group', { name: 'Net worth date range' })
     server.use(
@@ -644,5 +680,83 @@ describe('InsightsPage budget rows', () => {
     expect(rows[0]).toHaveTextContent('Pet food')
     expect(rows[0]).not.toHaveTextContent('Category #42')
     expect(rows[1]).toHaveTextContent('Category #43')
+  })
+})
+
+// #629: a cash-only book in its own currency has nothing to price, so the
+// header price tools and the 100% donut give way to the spending band.
+describe('InsightsPage cash-only hierarchy', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  const priceButtons = () => [
+    screen.queryByRole('button', { name: 'Refresh prices' }),
+    screen.queryByRole('button', { name: 'Set price' }),
+  ]
+
+  it('hides the header price tools for a cash-only book', async () => {
+    renderPage(<InsightsPage />)
+    await screen.findByRole('heading', { name: /asset allocation/i })
+    expect(priceButtons()).toEqual([null, null])
+  })
+
+  it('shows the price tools when the book holds a brokerage asset', async () => {
+    server.use(
+      http.get('*/dashboard/allocation', () =>
+        HttpResponse.json({
+          data: [
+            { kind: 'fiat', value: '600', complete: true },
+            { kind: 'equity', value: '400', complete: true },
+          ],
+          total: 2,
+        }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    expect(await screen.findByRole('button', { name: 'Refresh prices' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Set price' })).toBeInTheDocument()
+  })
+
+  it('shows the price tools for an account in a currency other than the headline', async () => {
+    server.use(
+      http.get('*/dashboard/summary', () =>
+        HttpResponse.json({ data: { ...fx.dashboardSummary, net_worth_currency: 'USD' } }),
+      ),
+      http.get('/api/v1/accounts', () =>
+        HttpResponse.json({ data: [{ ...fx.account1, currency: 'EUR' }], total: 1 }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    expect(await screen.findByRole('button', { name: 'Refresh prices' })).toBeInTheDocument()
+  })
+
+  it('shows the price tools when the headline is partial', async () => {
+    server.use(
+      http.get('*/dashboard/summary', () =>
+        HttpResponse.json({ data: { ...fx.dashboardSummary, net_worth_complete: false } }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    expect(await screen.findByRole('button', { name: 'Refresh prices' })).toBeInTheDocument()
+  })
+
+  it('hides the price tools for a cash-only household', async () => {
+    setHouseholdScope(1)
+    server.use(
+      http.get('*/h/insights/allocation', () =>
+        HttpResponse.json({ data: [{ kind: 'fiat', value: '765.60', complete: true }], total: 1 }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    await screen.findByRole('heading', { name: /asset allocation/i })
+    expect(priceButtons()).toEqual([null, null])
+  })
+
+  it('collapses a single asset class to one line instead of a donut', async () => {
+    const { container } = renderPage(<InsightsPage />)
+    const band = (await screen.findByRole('heading', { name: /asset allocation/i })).closest('section') as HTMLElement
+    expect(band).toHaveTextContent('Cash · 10,000.00 USD · 100%')
+    expect(container.querySelector('.recharts-pie')).toBeNull()
   })
 })

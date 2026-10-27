@@ -193,6 +193,9 @@ export const TREND_RANGES = [
   { months: 36, label: '3Y' },
 ] as const
 
+// The range the page opens on (1Y).
+export const DEFAULT_TREND_MONTHS = 12
+
 type TrendControls = {
   trendMonths: number
   trendLoading: boolean
@@ -205,12 +208,12 @@ export function useScopedInsights(): Result & { reload: () => void } & TrendCont
   const [result, setResult] = useState<Result>({ state: 'loading' })
   const [nonce, setNonce] = useState(0)
   const reload = useCallback(() => setNonce((n) => n + 1), [])
-  const [trendMonths, setTrendMonthsState] = useState(12)
+  const [trendMonths, setTrendMonthsState] = useState(DEFAULT_TREND_MONTHS)
   const [trendLoading, setTrendLoading] = useState(false)
   const [trendError, setTrendError] = useState(false)
   // Read by the full loaders so a reload keeps the user's chosen range;
   // changing the range refetches only the trend, not the whole page.
-  const monthsRef = useRef(12)
+  const monthsRef = useRef(DEFAULT_TREND_MONTHS)
   const trendSeq = useRef(0)
 
   const setTrendMonths = useCallback(
