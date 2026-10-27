@@ -172,6 +172,36 @@ describe('TransactionsPage review inbox (#424)', () => {
     expect(reviewBodies[1]).toEqual({ ids: [1, 2, 3], reviewed: false })
   })
 
+  // #633: inbox zero is only claimed once the server has saved it, so a
+  // reload (or leaving the page) right after the click can't lose the write.
+  it('says saving, not all caught up, until the review is saved', async () => {
+    const { rows } = installReviewApi()
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => { release = r })
+    server.use(
+      http.post(`${API}/transactions/review`, async ({ request }) => {
+        const body = (await request.json()) as { ids: number[]; reviewed: boolean }
+        await gate
+        for (const t of rows) {
+          if (body.ids.includes(t.id)) t.reviewed_at = body.reviewed ? '2026-07-02T00:00:00Z' : (null as unknown as string)
+        }
+        return HttpResponse.json({ data: { updated: body.ids.length } })
+      }),
+    )
+    renderPage(<TransactionsPage />, '/transactions?review=1')
+    await screen.findByText('3 to review')
+    fireEvent.click(screen.getByLabelText(/select all transactions on this page/i))
+    fireEvent.click(screen.getByRole('button', { name: /^mark reviewed$/i }))
+
+    expect(await screen.findByText(/saving your review/i)).toBeInTheDocument()
+    expect(screen.queryByText(/you.re all caught up/i)).not.toBeInTheDocument()
+
+    release()
+    expect(await screen.findByText(/you.re all caught up/i)).toBeInTheDocument()
+    expect(screen.queryByText(/saving your review/i)).not.toBeInTheDocument()
+    expect(rows.filter((t) => t.reviewed_at == null)).toHaveLength(0)
+  })
+
   it('restores the Needs review inbox from the URL after a reload', async () => {
     installReviewApi()
     renderPage(<TransactionsPage />, '/transactions?review=1')
