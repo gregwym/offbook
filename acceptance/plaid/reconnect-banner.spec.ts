@@ -36,6 +36,8 @@ test.describe('reconnect a bank that needs re-auth', () => {
 
     await signIn(page, user.email, user.password)
     await page.goto('/insights')
+    await expect(page.getByRole('heading', { name: 'Insights', level: 1 })).toBeVisible()
+    await expect(page.getByText('Loading…')).toHaveCount(0)
     const banner = page.getByRole('status').filter({ hasText: 'needs you to sign in again' })
     await expect(banner).toContainText(`${BANK} needs you to sign in again`)
     await expect(banner).toContainText('Last synced')
@@ -64,6 +66,10 @@ test.describe('reconnect a bank that needs re-auth', () => {
     const reconnect = page.getByRole('button', { name: `Reconnect ${BANK}` })
     await expectInViewport(page, reconnect)
     await expect(page.getByText(/Your bank needs you to sign in again · last synced/)).toBeVisible()
+    // The row wraps its actions below on narrow screens rather than
+    // squeezing the bank name to an ellipsis.
+    const name = page.getByText(BANK, { exact: true })
+    expect(await name.evaluate((el) => el.scrollWidth <= el.clientWidth), 'bank name not truncated').toBe(true)
     await expect(page.getByText(/ITEM_LOGIN_REQUIRED/)).toHaveCount(0)
     await expectNoClipping(page, 'settings linked institutions')
     await testInfo.attach('reconnect-settings', { body: await page.screenshot(), contentType: 'image/png' })
