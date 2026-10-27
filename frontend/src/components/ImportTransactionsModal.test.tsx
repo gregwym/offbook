@@ -92,16 +92,49 @@ describe('ImportTransactionsModal import history (#376)', () => {
     server.use(
       http.get(`${API}/accounts/:id/imports`, () => HttpResponse.json({ total: 1, data: [entry] })),
       http.post(`${API}/accounts/:id/imports/3/undo`, () =>
-        HttpResponse.json({ error: 'this import cannot be undone', code: 'IMPORT_NOT_UNDOABLE' }, { status: 409 }),
+        HttpResponse.json({ error: 'database is unavailable', code: 'INTERNAL' }, { status: 500 }),
       ),
     )
     renderModal()
     fireEvent.click(await screen.findByRole('button', { name: 'Undo import' }))
     fireEvent.click(screen.getByRole('button', { name: 'Yes, undo import' }))
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent(/newer import into this account has to be undone first/)
-    expect(alert).not.toHaveTextContent(/cannot be undone/)
+    expect(alert).toHaveTextContent(/database is unavailable/)
     expect(screen.getByRole('button', { name: 'Yes, undo import' })).toBeEnabled()
+  })
+
+  it('refreshes the history when a newer import refused the undo, and names it (#637)', async () => {
+    const older = {
+      job_id: 3, source: 'csv', file_name: 'july.csv', imported_at: '2026-08-01T00:00:00Z',
+      rows_total: 4, rows_imported: 4, rows_duplicate: 0, rows_error: 0, reconciled: null, can_undo: true,
+    }
+    const newer = {
+      job_id: 4, source: 'pdf', file_name: 'august.pdf', imported_at: '2026-09-01T00:00:00Z',
+      rows_total: 1, rows_imported: 1, rows_duplicate: 0, rows_error: 0, reconciled: null, can_undo: true,
+    }
+    // The window loaded before august.pdf landed; the refetch sees it.
+    let landed = false
+    server.use(
+      http.get(`${API}/accounts/:id/imports`, () =>
+        HttpResponse.json(landed
+          ? { total: 2, data: [newer, { ...older, can_undo: false, undo_blocked_by: 4 }] }
+          : { total: 1, data: [older] }),
+      ),
+      http.post(`${API}/accounts/:id/imports/3/undo`, () => {
+        landed = true
+        return HttpResponse.json({ error: 'this import cannot be undone: newer observation', code: 'IMPORT_NOT_UNDOABLE' }, { status: 409 })
+      }),
+    )
+    renderModal()
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo import' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, undo import' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/newer import into this account has to be undone first/)
+    expect(alert).not.toHaveTextContent(/cannot be undone|close and reopen/i)
+    expect(await screen.findByText(/To undo this one, first undo/)).toHaveTextContent(/“august\.pdf”/)
+    expect(screen.queryByRole('button', { name: 'Yes, undo import' })).not.toBeInTheDocument()
+    // Only the newer import offers Undo now.
+    expect(screen.getAllByRole('button', { name: 'Undo import' })).toHaveLength(1)
   })
 
   it('names the newer import that must be undone first, then unblocks the older one (#522)', async () => {

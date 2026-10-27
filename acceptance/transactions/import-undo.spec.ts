@@ -116,6 +116,67 @@ test.describe('undo statement import', () => {
     await expect(page.getByText('Order Rent')).toHaveCount(0)
     await expect(page.getByText('Order Grocer')).toHaveCount(0)
   })
+
+  // #637: the race behind the blocked note. The window opened while the older
+  // statement was still undoable; a newer balance-setting import lands before
+  // the click. The refused undo refreshes the history in place and names the
+  // statement to undo first, with no "close and reopen".
+  test('a newer import landing while the window is open is named after the refused undo', async ({ page }, testInfo) => {
+    process.env.OFFBOOK_ROLE = process.env.OFFBOOK_ROLE ?? 'qa'
+    const user = await createThrowawayUser({ suite: `undo-race-${testInfo.project.name}` })
+    const cookie = await apiSignin(user.email, user.password)
+    const acct = await apiPost(cookie, '/accounts', {
+      name: 'Race Checking', institution_slug: 'manual', account_type: 'checking', currency: 'USD',
+    })
+    const accountID = acct.data.id as number
+    await importCSV(cookie, accountID, 'may-statement.csv', [
+      'Date,Description,Amount', '2026-05-01,Race Payroll,1000.00', '2026-05-10,Race Rent,-400.00',
+    ].join('\n'))
+
+    await signIn(page, user.email, user.password)
+    await page.goto('/accounts')
+    await page.getByRole('button', { name: 'Import transactions' }).first().click()
+    const history = page.getByRole('region', { name: 'Import history' })
+    const entry = (name: string) =>
+      history.getByRole('listitem').filter({ has: page.getByText(name, { exact: true }) })
+    const mayEntry = entry('may-statement.csv')
+    await expect(mayEntry.getByRole('button', { name: 'Undo import' })).toBeVisible()
+
+    // Elsewhere (another tab, a sync), June lands and sets the balance.
+    const june = await importCSV(cookie, accountID, 'june-statement.csv', [
+      'Date,Description,Amount', '2026-06-05,Race Grocer,-50.00',
+    ].join('\n'))
+    await withQAClient((client) => client.query(
+      `INSERT INTO account_balance_observations (user_id, account_id, asset_id, observed_quantity, as_of, source, import_job_id)
+       SELECT a.user_id, a.id, a.primary_quote_asset_id, 550, '2026-06-30T00:00:00Z', 'pdf', $2 FROM accounts a WHERE a.id = $1`,
+      [accountID, june.data.job_id],
+    ))
+
+    await mayEntry.getByRole('button', { name: 'Undo import' }).click()
+    await mayEntry.getByRole('button', { name: 'Yes, undo import' }).click()
+    const alert = mayEntry.getByRole('alert')
+    await expect(alert).toContainText('a newer import into this account has to be undone first')
+    await expect(alert).not.toContainText(/close and reopen/i)
+    await expect(mayEntry).toContainText('To undo this one, first undo “june-statement.csv”')
+    await expect(mayEntry.getByRole('button', { name: /undo import/i })).toHaveCount(0)
+    const juneEntry = entry('june-statement.csv')
+    await expect(juneEntry.getByRole('button', { name: 'Undo import' })).toBeVisible()
+    await expectInViewport(page, mayEntry.getByText('To undo this one'))
+    await expectNoOverflow(page)
+    await page.screenshot({ path: testInfo.outputPath('undo-race-refused.png'), fullPage: true })
+
+    // Follow the note: undo June, then May, without reopening the window.
+    await juneEntry.getByRole('button', { name: 'Undo import' }).click()
+    await juneEntry.getByRole('button', { name: 'Yes, undo import' }).click()
+    await expect(juneEntry).toContainText(/Undone .* 1 transaction removed/)
+    await expect(mayEntry).not.toContainText('To undo this one')
+    await mayEntry.getByRole('button', { name: 'Undo import' }).click()
+    await mayEntry.getByRole('button', { name: 'Yes, undo import' }).click()
+    await expect(mayEntry).toContainText(/Undone .* 2 transactions removed/)
+    await expect(mayEntry.getByRole('alert')).toHaveCount(0)
+    await expectNoOverflow(page)
+    await page.screenshot({ path: testInfo.outputPath('undo-race-unwound.png'), fullPage: true })
+  })
 })
 
 async function importCSV(cookie: string, accountID: number, fileName = 'undo-statement.csv', body = csv) {
