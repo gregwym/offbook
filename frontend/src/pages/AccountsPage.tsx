@@ -86,7 +86,7 @@ export function AccountsPage() {
             entry point. */}
         <Link
           to="/accounts/add"
-          className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          className="inline-flex shrink-0 items-center whitespace-nowrap gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
         >
           <Plus size={16} /> Add account
         </Link>

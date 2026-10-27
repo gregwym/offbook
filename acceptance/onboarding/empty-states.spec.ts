@@ -19,6 +19,7 @@ test.describe('empty states', () => {
     await page.goto('/accounts')
     await expect(page.getByText('No accounts yet.')).toBeVisible()
     await expectInViewport(page, page.getByRole('link', { name: /add your first account/i }).first())
+    await expectOneLine(page.getByRole('link', { name: 'Add account', exact: true }))
     await expectHealthy(page)
     await shot('accounts')
 
@@ -56,9 +57,7 @@ test.describe('empty states', () => {
     await page.goto('/savings-goals')
     await expect(page.getByText(/No goals yet/)).toBeVisible()
     await expect(page.getByText(/atomic/i)).toHaveCount(0)
-    const header = page.getByRole('button', { name: 'New goal' })
-    const hb = await header.boundingBox()
-    expect(hb!.height, 'header button stays on one line').toBeLessThan(48)
+    await expectOneLine(page.getByRole('button', { name: 'New goal' }))
     const firstGoal = page.getByRole('button', { name: 'Create your first goal' })
     await expectInViewport(page, firstGoal)
     await expectHealthy(page)
@@ -92,6 +91,14 @@ async function expectHealthy(page: Page) {
   await expect(page.locator('.border-red-200.bg-red-50')).toHaveCount(0)
   const o = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)
   expect(o, 'no horizontal overflow').toBe(false)
+}
+
+// Header actions must not wrap beside the subtitle on narrow screens: a
+// one-line text-sm button is ~36px tall, a wrapped one ~56px.
+async function expectOneLine(el: Locator) {
+  const box = await el.boundingBox()
+  expect(box, 'control is rendered').not.toBeNull()
+  expect(box!.height, 'control stays on one line').toBeLessThan(48)
 }
 
 async function expectInViewport(page: Page, el: Locator) {
