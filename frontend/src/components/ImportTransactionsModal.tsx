@@ -121,6 +121,9 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
     setHistoryVersion((v) => v + 1)
     onUndone?.()
   }
+  // A refused undo means the history is stale (a newer import landed since it
+  // loaded); refetch so the entry names the import to undo first (#637).
+  const handleUndoRefused = () => setHistoryVersion((v) => v + 1)
   const historyReady = historyState?.accountID === accountID ? historyState : null
 
   const resetDerived = () => {
@@ -375,7 +378,7 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
 
         {preview && <PreviewSummary result={preview} currency={account?.currency} />}
 
-        {accountID && <ImportHistoryList accountID={Number(accountID)} entries={historyReady?.entries ?? null} failed={historyReady?.failed ?? false} currency={account?.currency} onUndone={handleUndone} />}
+        {accountID && <ImportHistoryList accountID={Number(accountID)} entries={historyReady?.entries ?? null} failed={historyReady?.failed ?? false} currency={account?.currency} onUndone={handleUndone} onRefused={handleUndoRefused} />}
 
         {preview && (preview.review_count ?? 0) > 0 && (
           <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -722,12 +725,14 @@ function ImportHistoryList({
   failed,
   currency,
   onUndone,
+  onRefused,
 }: {
   accountID: number
   entries: ImportHistoryEntry[] | null
   failed: boolean
   currency?: string
   onUndone: (entry: ImportHistoryEntry) => void
+  onRefused: () => void
 }) {
   // Inline two-step undo: one entry at a time is "confirming"; errors stay on
   // the entry that failed so the user can retry.
@@ -742,6 +747,10 @@ function ImportHistoryList({
       setConfirming(null)
     } catch (err) {
       setUndoError({ jobID, message: undoErrMsg(err) })
+      if (isNotUndoable(err)) {
+        setConfirming(null)
+        onRefused()
+      }
     } finally {
       setUndoing(null)
     }
@@ -869,12 +878,18 @@ const inputClass = 'w-full rounded border border-gray-300 px-2 py-1 text-sm'
 
 // undoErrMsg keeps a refused undo in plain language; the server's message for
 // IMPORT_NOT_UNDOABLE chains internal reasons.
+// The history refetches on that refusal, so the entry's blocked note names the
+// newer import (#637).
 function undoErrMsg(err: unknown): string {
-  const body = (err as { response?: { data?: { code?: string } } })?.response?.data
-  if (body?.code === 'IMPORT_NOT_UNDOABLE') {
-    return 'a newer import into this account has to be undone first. Close and reopen this window to see which one.'
+  if (isNotUndoable(err)) {
+    return 'a newer import into this account has to be undone first.'
   }
   return errMsg(err)
+}
+
+function isNotUndoable(err: unknown): boolean {
+  const body = (err as { response?: { data?: { code?: string } } })?.response?.data
+  return body?.code === 'IMPORT_NOT_UNDOABLE'
 }
 
 function errMsg(err: unknown): string {
