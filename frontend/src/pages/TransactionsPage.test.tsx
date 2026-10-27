@@ -305,6 +305,36 @@ describe('TransactionsPage unpaired transfer chip (#463)', () => {
     expect(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Unhide ONE OFF' })).toBeInTheDocument()
   })
 
+  // #643: a transfer leg is already out of spending, so it offers no Hide;
+  // a leg hidden before it paired can still be unhidden.
+  it('offers no Hide on transfer legs, but keeps Unhide on a hidden one', async () => {
+    const transferCat = { ...fx.categoryGroceries, id: 9, name: 'Transfer', slug: 'transfer' }
+    const rows = [
+      { ...bankRow, id: 41, description: 'PAIRED LEG', is_transfer: true, hidden_at: null },
+      { ...bankRow, id: 42, description: 'CARD PAYMENT', category_id: 9, is_transfer: false, hidden_at: null },
+      { ...bankRow, id: 43, description: 'OLD HIDDEN LEG', is_transfer: true, hidden_at: '2026-05-05T00:00:00Z' },
+      { ...bankRow, id: 44, description: 'GROCER', category_id: 1, is_transfer: false, hidden_at: null },
+    ]
+    server.use(
+      http.get(`${API}/categories`, () => HttpResponse.json({ data: [...fx.categories, transferCat], total: 3 })),
+      http.get(`${API}/transactions`, () => HttpResponse.json({ data: rows, total: rows.length })),
+    )
+
+    renderPage(<TransactionsPage />)
+    await screen.findByText('PAIRED LEG')
+    await screen.findByText('not in spending')
+    const menuLabels = (label: string) => {
+      fireEvent.click(screen.getAllByRole('button', { name: `More actions for ${label}` })[0])
+      const names = within(screen.getByRole('menu')).getAllByRole('menuitem').map((i) => i.getAttribute('aria-label'))
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+      return names
+    }
+    expect(menuLabels('PAIRED LEG')).not.toContain('Hide PAIRED LEG')
+    expect(menuLabels('CARD PAYMENT')).not.toContain('Hide CARD PAYMENT')
+    expect(menuLabels('OLD HIDDEN LEG')).toContain('Unhide OLD HIDDEN LEG')
+    expect(menuLabels('GROCER')).toContain('Hide GROCER')
+  })
+
   // ONB-01: an empty ledger with no filters is a first-run state with a next
   // step; with filters it offers a one-click way back to the full list.
   it('distinguishes an empty ledger from filters hiding everything', async () => {
@@ -611,6 +641,26 @@ describe('TransactionsPage bulk edit (#567)', () => {
     expect(within(bar).queryByRole('button', { name: /^hide$/i })).not.toBeInTheDocument()
     fireEvent.click(within(bar).getByRole('button', { name: /unhide/i }))
     expect(await screen.findByText('1 transaction back in spending and budgets.')).toBeInTheDocument()
+  })
+
+  // #643: bulk Hide leaves transfer legs out of the request and the count,
+  // and doesn't appear when only transfers are selected.
+  it('bulk Hide skips transfer legs', async () => {
+    const { rows, bodies } = installBulkApi()
+    Object.assign(rows[0], { is_transfer: true })
+    renderPage(<TransactionsPage />)
+    await screen.findAllByText('Shop 1')
+
+    fireEvent.click(screen.getAllByRole('checkbox', { name: /select shop 1/i })[0])
+    let bar = screen.getByRole('region', { name: 'Bulk actions' })
+    expect(within(bar).queryByRole('button', { name: /^hide$/i })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText(/select all transactions on this page/i))
+    bar = screen.getByRole('region', { name: 'Bulk actions' })
+    fireEvent.click(within(bar).getByRole('button', { name: /^hide$/i }))
+    expect(await screen.findByText('2 transactions hidden from spending and budgets.')).toBeInTheDocument()
+    expect(bodies[0]).toEqual({ ids: [2, 3], hidden: true })
+    expect(rows[0].hidden_at).toBeNull()
   })
 
   it('shows the failure banner and keeps the selection when the edit fails', async () => {
