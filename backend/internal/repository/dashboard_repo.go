@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -92,6 +93,12 @@ type DashboardRepository interface {
 	// charge candidates in Go so the detection rules stay in one reviewable,
 	// unit-testable place.
 	RecurringCandidates(ctx context.Context, userID int64) ([]RecurringTxnRow, error)
+	// LatestTransactionDate returns the newest transaction_date across the
+	// user's live transactions — the book's data horizon (#653). Recurring
+	// detection measures "has this charge stopped?" against it rather than
+	// the wall clock, so a book that is simply behind on imports doesn't
+	// read as every subscription cancelled. Nil when the book is empty.
+	LatestTransactionDate(ctx context.Context, userID int64) (*time.Time, error)
 }
 
 // CategoryMonthAmount is one (category, month) bucket of the month-over-month
@@ -562,4 +569,19 @@ func (r *dashboardRepo) RecurringCandidates(ctx context.Context, userID int64) (
 		out = append(out, RecurringTxnRow{Merchant: row.Merchant, Amount: amt, Date: row.Date.UTC()})
 	}
 	return out, nil
+}
+
+func (r *dashboardRepo) LatestTransactionDate(ctx context.Context, userID int64) (*time.Time, error) {
+	var latest sql.NullTime
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT MAX(t.transaction_date)
+		FROM transactions t
+		WHERE t.deleted_at IS NULL
+		  AND t.user_id = ?
+	`, userID).Row().Scan(&latest)
+	if err != nil || !latest.Valid {
+		return nil, err
+	}
+	utc := latest.Time.UTC()
+	return &utc, nil
 }

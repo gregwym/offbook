@@ -267,6 +267,7 @@ export const recurring: RecurringItem[] = [
     last_date: '2026-07-05',
     next_expected_date: '2026-08-04',
     monthly_equivalent: '15.990000000000000000',
+    status: 'active',
   },
 ]
 

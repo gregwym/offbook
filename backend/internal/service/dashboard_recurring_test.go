@@ -269,3 +269,157 @@ func TestDashboard_Recurring_TenantIsolation(t *testing.T) {
 		t.Errorf("user A saw user B's recurring charge — tenant isolation broken")
 	}
 }
+
+func monthlyDates(year int, from, to time.Month, day int) []time.Time {
+	var out []time.Time
+	for m := from; m <= to; m++ {
+		out = append(out, time.Date(year, m, day, 0, 0, 0, 0, time.UTC))
+	}
+	return out
+}
+
+// TestDashboard_Recurring_CurrentRun (#653): detection describes the
+// merchant's current run, so older history — a different price, a skipped
+// month — neither hides today's subscription nor distorts its figures.
+func TestDashboard_Recurring_CurrentRun(t *testing.T) {
+	cases := []struct {
+		name            string
+		seed            []time.Time
+		amounts         []float64
+		wantOccurrences int
+		wantLastAmount  string
+		minMonthly      int64
+		maxMonthly      int64
+	}{
+		{
+			name:            "price increase keeps the new price",
+			seed:            monthlyDates(2026, time.January, time.June, 7),
+			amounts:         []float64{-9.99, -9.99, -9.99, -15.49, -15.49, -15.49},
+			wantOccurrences: 3,
+			wantLastAmount:  "15.49",
+			minMonthly:      15,
+			maxMonthly:      16,
+		},
+		{
+			name: "a skipped month long ago doesn't disqualify",
+			seed: append([]time.Time{time.Date(2026, 1, 7, 0, 0, 0, 0, time.UTC)},
+				monthlyDates(2026, time.March, time.June, 7)...),
+			amounts:         []float64{-12, -12, -12, -12, -12},
+			wantOccurrences: 4,
+			wantLastAmount:  "12",
+			minMonthly:      11,
+			maxMonthly:      13,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, userID, accountID, g := newDashboardSvc(t)
+			for i, d := range tc.seed {
+				seedRecurringTxn(t, g, userID, accountID, "STREAMCO", d, decimal.NewFromFloat(tc.amounts[i]))
+			}
+			items, err := svc.Recurring(context.Background(), userID)
+			if err != nil {
+				t.Fatalf("Recurring: %v", err)
+			}
+			item, ok := findRecurring(items, "STREAMCO")
+			if !ok {
+				t.Fatalf("STREAMCO not detected; items=%+v", items)
+			}
+			if item.Cadence != "monthly" || item.Occurrences != tc.wantOccurrences {
+				t.Errorf("got cadence=%s occurrences=%d, want monthly/%d", item.Cadence, item.Occurrences, tc.wantOccurrences)
+			}
+			if item.LastAmount != tc.wantLastAmount {
+				t.Errorf("last_amount = %s, want %s", item.LastAmount, tc.wantLastAmount)
+			}
+			me, _ := decimal.NewFromString(item.MonthlyEquivalent)
+			if me.LessThan(decimal.NewFromInt(tc.minMonthly)) || me.GreaterThan(decimal.NewFromInt(tc.maxMonthly)) {
+				t.Errorf("monthly_equivalent = %s, want between %d and %d", item.MonthlyEquivalent, tc.minMonthly, tc.maxMonthly)
+			}
+			if item.Status != service.RecurringStatusActive {
+				t.Errorf("status = %s, want active", item.Status)
+			}
+		})
+	}
+}
+
+// TestDashboard_Recurring_LapsedAgainstDataHorizon (#653): a charge that
+// stopped arriving is "lapsed", measured against the newest transaction in
+// the user's own book — not the wall clock, and not another user's book.
+// Active charges sort before lapsed ones.
+func TestDashboard_Recurring_LapsedAgainstDataHorizon(t *testing.T) {
+	gymDates := monthlyDates(2026, time.January, time.March, 5) // last charge Mar 5
+
+	t.Run("later activity in the book marks a stopped charge lapsed", func(t *testing.T) {
+		svc, userID, accountID, g := newDashboardSvc(t)
+		for _, d := range gymDates {
+			seedRecurringTxn(t, g, userID, accountID, "GYMCO", d, decimal.NewFromFloat(-40))
+		}
+		// A still-running subscription through October sets the horizon.
+		for _, d := range monthlyDates(2026, time.August, time.October, 3) {
+			seedRecurringTxn(t, g, userID, accountID, "MUSICCO", d, decimal.NewFromFloat(-10.99))
+		}
+		items, err := svc.Recurring(context.Background(), userID)
+		if err != nil {
+			t.Fatalf("Recurring: %v", err)
+		}
+		if len(items) != 2 {
+			t.Fatalf("want 2 items, got %+v", items)
+		}
+		if items[0].Merchant != "MUSICCO" || items[0].Status != service.RecurringStatusActive {
+			t.Errorf("items[0] = %+v, want active MUSICCO first", items[0])
+		}
+		if items[1].Merchant != "GYMCO" || items[1].Status != service.RecurringStatusLapsed {
+			t.Errorf("items[1] = %+v, want lapsed GYMCO", items[1])
+		}
+		if items[1].LastDate != "2026-03-05" {
+			t.Errorf("lapsed last_date = %s, want 2026-03-05", items[1].LastDate)
+		}
+	})
+
+	t.Run("one missed cycle is still active", func(t *testing.T) {
+		svc, userID, accountID, g := newDashboardSvc(t)
+		for _, d := range gymDates {
+			seedRecurringTxn(t, g, userID, accountID, "GYMCO", d, decimal.NewFromFloat(-40))
+		}
+		// 40 days after the last charge: under 1.5 monthly cycles.
+		seedMerchantTxn(t, g, userID, accountID, "", ptrStr("GROCER"), nil, nil, nil,
+			time.Date(2026, 4, 14, 0, 0, 0, 0, time.UTC), decimal.NewFromFloat(-55.20), false)
+		items, err := svc.Recurring(context.Background(), userID)
+		if err != nil {
+			t.Fatalf("Recurring: %v", err)
+		}
+		item, ok := findRecurring(items, "GYMCO")
+		if !ok || item.Status != service.RecurringStatusActive {
+			t.Errorf("GYMCO = %+v (found=%v), want active", item, ok)
+		}
+	})
+
+	t.Run("a book that is behind on imports doesn't lapse, whatever another user holds", func(t *testing.T) {
+		svc, userA, accountA, g := newDashboardSvc(t)
+		for _, d := range gymDates {
+			seedRecurringTxn(t, g, userA, accountA, "GYMCO", d, decimal.NewFromFloat(-40))
+		}
+		userB := seedTestUser(t, g)
+		accB := &model.Account{
+			UserID: userB, Name: "HorizonB-" + time.Now().Format("150405.000000"),
+			InstitutionSlug: "fixture", AccountType: "checking", Currency: "USD",
+		}
+		if err := g.Create(accB).Error; err != nil {
+			t.Fatalf("seed B account: %v", err)
+		}
+		t.Cleanup(func() {
+			g.Unscoped().Where("account_id = ?", accB.ID).Delete(&model.Transaction{})
+			g.Unscoped().Delete(&model.Account{}, accB.ID)
+		})
+		seedRecurringTxn(t, g, userB, accB.ID, "LATER", time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC), decimal.NewFromFloat(-5))
+
+		items, err := svc.Recurring(context.Background(), userA)
+		if err != nil {
+			t.Fatalf("Recurring: %v", err)
+		}
+		item, ok := findRecurring(items, "GYMCO")
+		if !ok || item.Status != service.RecurringStatusActive {
+			t.Errorf("GYMCO = %+v (found=%v), want active (A's book ends at its last charge)", item, ok)
+		}
+	})
+}
