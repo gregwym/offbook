@@ -305,6 +305,18 @@ If a run needs true first-boot state without personas, use:
 OFFBOOK_ROLE=qa node acceptance/fixtures/cold-start.mjs
 ```
 
+### Stability soak (#631)
+
+`acceptance/soak/stability.spec.ts` is a release-gate check, not a PR gate. `playwright.config.ts` ignores `soak/` unless `QA_SOAK=1`, so neither the required smoke nor `make qa-journeys` runs it. Run it through the `QA journeys` workflow with `suite=soak` and `restart_between=true`:
+
+1. **Seed phase** (`SOAK_PHASE=seed`). One throwaway user gets checking, savings, a credit card and a brokerage account. 200+ synthetic rows are imported through the CSV statement path. The book includes three confirmed transfers (one of them a card payment), refunds, a split, a pending row, rules, one manual category, a buy trade and a groceries budget. When Plaid Sandbox credentials are configured, it also links a Sandbox item. Then three rounds run. Each round re-imports every statement (all duplicates), imports the overlapping statements (round 1 adds only their new rows), re-syncs the Plaid item and runs "Apply rules". The figures after round 1 become the baseline, and that baseline is also checked against the fixture: row count, balances, the groceries budget actual and net worth. Rounds 2 and 3 must reproduce the baseline exactly. The baseline covers transaction counts, every account balance, the net-worth headline and completeness, month income/spending, month cash flow, spend per category, the budget actual and remaining, and the Budgets-page month total.
+2. **Restart.** The workflow restarts only the backend container, on the same database volume, and waits for `/health`. It records the container's start time before and after the restart in `reports/soak/restart.json`, and fails if the two are equal.
+3. **Verify phase** (`SOAK_PHASE=verify`). It reloads the user from `acceptance/.soak/state.json`, which holds the email and ids but no password (the password is re-derived from `QA_SECRET`). It asserts the baseline before changing anything, runs one more round and asserts the baseline again.
+
+Each phase writes `reports/soak/<phase>/soak-result.json`, uploaded in `qa-evidence`. It contains rounds with their import counts and durations, row counts, the figures and the total duration. The data is synthetic and contains no secrets. The seed phase's HTML report and screenshots are kept under `reports/seed-phase/`.
+
+What it proves: in one run on the GitHub Actions `ubuntu-latest` runner against the isolated `offbook-qa` stack, repeated imports, rules passes and a backend process restart leave the ledger and every listed figure exactly unchanged. The run takes a few minutes; read the duration from `soak-result.json`. What it does not prove: anything about a long-running process, concurrent writers, a Postgres restart or real-bank data, or any reliability percentage. If the environment has no Plaid Sandbox credentials (the workflow does not provide any today), Plaid re-sync is skipped and `soak-result.json` says so.
+
 Plaid sandbox acceptance must not drive the Plaid Link iframe. Use `acceptance/plaid/helper.mjs` to mint a public token through `/sandbox/public_token/create`, exchange it through `/api/v1/plaid/link/exchange`, then sync accounts and transactions through Offbook. The suite must assert accounts and transactions land for the signed-in QA user, and a second transaction sync inserts zero new rows. A smaller browser smoke should still assert `/connect` renders and the Plaid Link button mounts.
 
 Initial suites to build:
