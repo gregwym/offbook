@@ -113,4 +113,7 @@ export type RecurringItem = {
   last_date: string // YYYY-MM-DD
   next_expected_date: string // YYYY-MM-DD
   monthly_equivalent: string
+  // 'lapsed' once the charge stopped arriving (#653); not part of the
+  // monthly total.
+  status: 'active' | 'lapsed'
 }

@@ -604,33 +604,51 @@ func (s *DashboardService) TopMerchants(ctx context.Context, userID int64, from,
 	return out, nil
 }
 
-// Recurring-detection tuning (#368). Windows are non-overlapping day-gap
-// ranges so a candidate's average gap maps to exactly one cadence; a
-// group only matches when EVERY gap (not just the average) falls inside the
-// window, which is what rejects irregular histories.
+// Recurring-detection tuning (#368, #653). Windows are non-overlapping
+// day-gap ranges so a gap maps to exactly one cadence. Detection looks only
+// at a merchant's current run — the newest consecutive charges whose gaps
+// ALL fall in one window and whose amounts ALL sit within tolerance of the
+// run's average — so older history (a price change, a skipped month)
+// neither disqualifies nor distorts today's subscription.
 const (
 	recurringMinOccurrences     = 3
-	recurringAmountTolerancePct = 0.15 // ±15% of the group's average |amount|
-	daysPerMonth                = 365.2425 / 12
+	recurringAmountTolerancePct = 0.15 // ±15% of the run's average |amount|
+	// A charge is lapsed once the book's newest transaction is more than
+	// this many cadences past its last charge (#653): one expected charge
+	// missed by at least half a cycle.
+	recurringLapsedCycles = 1.5
 )
 
+// RecurringItem.Status values (#653).
+const (
+	RecurringStatusActive = "active"
+	RecurringStatusLapsed = "lapsed"
+)
+
+// perYear is the cadence's nominal charges per year, so the monthly cost
+// is exact decimal arithmetic (amount × perYear / 12): a monthly 15.49
+// costs 15.49/mo, not a day-count approximation of it (#653).
 type recurringCadenceWindow struct {
 	name    string
 	minDays float64
 	maxDays float64
+	perYear int64
 }
 
 var recurringCadenceWindows = []recurringCadenceWindow{
-	{name: "weekly", minDays: 6, maxDays: 8},
-	{name: "monthly", minDays: 27, maxDays: 33},
-	{name: "annual", minDays: 350, maxDays: 380},
+	{name: "weekly", minDays: 6, maxDays: 8, perYear: 52},
+	{name: "monthly", minDays: 27, maxDays: 33, perYear: 12},
+	{name: "annual", minDays: 350, maxDays: 380, perYear: 1},
 }
 
 // RecurringItem is one detected recurring charge (#368): same normalized
 // merchant, a regular cadence, and a consistent amount across at least
-// recurringMinOccurrences occurrences. A read-only lens over real flow rows
-// — never a stored entity, never invented data (M10 invariant). LastAmount
-// and MonthlyEquivalent are positive decimal strings (outflow sign flipped).
+// recurringMinOccurrences consecutive occurrences. A read-only lens over
+// real flow rows — never a stored entity, never invented data (M10
+// invariant). LastAmount and MonthlyEquivalent are positive decimal strings
+// (outflow sign flipped) describing the current run. Status is "lapsed"
+// when the charge stopped arriving (#653); a lapsed charge is not part of
+// what the user pays each month.
 type RecurringItem struct {
 	Merchant          string `json:"merchant"`
 	Cadence           string `json:"cadence"` // "weekly" | "monthly" | "annual"
@@ -639,13 +657,19 @@ type RecurringItem struct {
 	LastDate          string `json:"last_date"`          // YYYY-MM-DD
 	NextExpectedDate  string `json:"next_expected_date"` // YYYY-MM-DD
 	MonthlyEquivalent string `json:"monthly_equivalent"`
+	Status            string `json:"status"` // "active" | "lapsed"
 }
 
-// Recurring returns the deterministic recurring-charge detection (#368),
-// ordered by monthly-equivalent cost DESC. Personal scope only — household
-// needs its own aggregator design (out of scope for #368, see issue notes).
+// Recurring returns the deterministic recurring-charge detection (#368):
+// active charges first by monthly-equivalent cost DESC, then lapsed ones by
+// most recent charge. Personal scope only — household needs its own
+// aggregator design (out of scope for #368, see issue notes).
 func (s *DashboardService) Recurring(ctx context.Context, userID int64) ([]RecurringItem, error) {
 	rows, err := s.repo.RecurringCandidates(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	horizon, err := s.repo.LatestTransactionDate(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -662,7 +686,7 @@ func (s *DashboardService) Recurring(ctx context.Context, userID int64) ([]Recur
 
 	items := make([]RecurringItem, 0)
 	for _, key := range order {
-		item, ok := detectRecurringGroup(byMerchant[key])
+		item, ok := detectRecurringGroup(byMerchant[key], horizon)
 		if !ok {
 			continue
 		}
@@ -670,6 +694,13 @@ func (s *DashboardService) Recurring(ctx context.Context, userID int64) ([]Recur
 	}
 
 	sort.SliceStable(items, func(i, j int) bool {
+		ai, aj := items[i].Status == RecurringStatusActive, items[j].Status == RecurringStatusActive
+		if ai != aj {
+			return ai
+		}
+		if !ai {
+			return items[i].LastDate > items[j].LastDate
+		}
 		a, _ := decimal.NewFromString(items[i].MonthlyEquivalent)
 		b, _ := decimal.NewFromString(items[j].MonthlyEquivalent)
 		return a.GreaterThan(b)
@@ -679,63 +710,76 @@ func (s *DashboardService) Recurring(ctx context.Context, userID int64) ([]Recur
 
 // detectRecurringGroup runs the deterministic cadence + amount-tolerance
 // check over one merchant's chronological occurrences (the repo query
-// orders each merchant's rows by date ascending). Returns ok=false when the
-// group doesn't clear the bar: too few occurrences, gaps that don't all fit
-// one cadence window, or amounts that vary beyond tolerance.
-func detectRecurringGroup(group []repository.RecurringTxnRow) (RecurringItem, bool) {
-	if len(group) < recurringMinOccurrences {
+// orders each merchant's rows by date ascending). The newest gap picks the
+// cadence; the run then extends backwards while each earlier gap fits that
+// window and every amount in the run stays within tolerance of the run's
+// average. Returns ok=false when the current run is shorter than
+// recurringMinOccurrences. horizon is the book's newest transaction date
+// (nil only for an empty book) and decides active vs. lapsed.
+func detectRecurringGroup(group []repository.RecurringTxnRow, horizon *time.Time) (RecurringItem, bool) {
+	n := len(group)
+	if n < recurringMinOccurrences {
 		return RecurringItem{}, false
 	}
+	gapDays := func(i int) float64 { return group[i+1].Date.Sub(group[i].Date).Hours() / 24 }
 
-	gaps := make([]float64, 0, len(group)-1)
-	for i := 1; i < len(group); i++ {
-		gaps = append(gaps, group[i].Date.Sub(group[i-1].Date).Hours()/24)
-	}
-	avgGap := averageFloat(gaps)
-
-	window, ok := matchCadenceWindow(avgGap)
+	window, ok := matchCadenceWindow(gapDays(n - 2))
 	if !ok {
 		return RecurringItem{}, false
 	}
-	for _, g := range gaps {
-		if g < window.minDays || g > window.maxDays {
-			return RecurringItem{}, false
-		}
-	}
 
-	sumAbs := decimal.Zero
-	amounts := make([]decimal.Decimal, len(group))
-	for i, row := range group {
-		amounts[i] = row.Amount.Abs()
-		sumAbs = sumAbs.Add(amounts[i])
+	start := n - 1
+	sumAbs := group[n-1].Amount.Abs()
+	for i := n - 2; i >= 0; i-- {
+		if g := gapDays(i); g < window.minDays || g > window.maxDays {
+			break
+		}
+		candSum := sumAbs.Add(group[i].Amount.Abs())
+		if !withinTolerance(group[i:], candSum.Div(decimal.NewFromInt(int64(n-i)))) {
+			break
+		}
+		start, sumAbs = i, candSum
 	}
-	avgAbs := sumAbs.Div(decimal.NewFromInt(int64(len(group))))
+	run := group[start:]
+	if len(run) < recurringMinOccurrences {
+		return RecurringItem{}, false
+	}
+	avgAbs := sumAbs.Div(decimal.NewFromInt(int64(len(run))))
 	if avgAbs.IsZero() {
 		return RecurringItem{}, false
 	}
-	tolerance := avgAbs.Mul(decimal.NewFromFloat(recurringAmountTolerancePct))
-	for _, amt := range amounts {
-		if amt.Sub(avgAbs).Abs().GreaterThan(tolerance) {
-			return RecurringItem{}, false
-		}
-	}
 
-	last := group[len(group)-1]
-	// avgGap/daysPerMonth are day-count ratios, not monetary values — the
-	// only float→decimal conversion is this scalar multiplier, never a raw
-	// dollar amount (money stays in decimal throughout).
-	monthlyRatio := decimal.NewFromFloat(daysPerMonth).Div(decimal.NewFromFloat(avgGap))
+	last := run[len(run)-1]
+	avgGap := last.Date.Sub(run[0].Date).Hours() / 24 / float64(len(run)-1)
 	nextExpected := last.Date.AddDate(0, 0, int(math.Round(avgGap)))
+
+	status := RecurringStatusActive
+	if horizon != nil && horizon.Sub(last.Date).Hours()/24 > recurringLapsedCycles*avgGap {
+		status = RecurringStatusLapsed
+	}
 
 	return RecurringItem{
 		Merchant:          last.Merchant,
 		Cadence:           window.name,
-		Occurrences:       len(group),
+		Occurrences:       len(run),
 		LastAmount:        last.Amount.Abs().String(),
 		LastDate:          last.Date.Format("2006-01-02"),
 		NextExpectedDate:  nextExpected.Format("2006-01-02"),
-		MonthlyEquivalent: avgAbs.Mul(monthlyRatio).String(),
+		MonthlyEquivalent: avgAbs.Mul(decimal.NewFromInt(window.perYear)).Div(decimal.NewFromInt(12)).String(),
+		Status:            status,
 	}, true
+}
+
+// withinTolerance reports whether every |amount| in rows sits within
+// recurringAmountTolerancePct of avgAbs.
+func withinTolerance(rows []repository.RecurringTxnRow, avgAbs decimal.Decimal) bool {
+	tolerance := avgAbs.Mul(decimal.NewFromFloat(recurringAmountTolerancePct))
+	for _, row := range rows {
+		if row.Amount.Abs().Sub(avgAbs).Abs().GreaterThan(tolerance) {
+			return false
+		}
+	}
+	return true
 }
 
 func matchCadenceWindow(avgGap float64) (recurringCadenceWindow, bool) {
@@ -745,17 +789,6 @@ func matchCadenceWindow(avgGap float64) (recurringCadenceWindow, bool) {
 		}
 	}
 	return recurringCadenceWindow{}, false
-}
-
-func averageFloat(xs []float64) float64 {
-	if len(xs) == 0 {
-		return 0
-	}
-	sum := 0.0
-	for _, x := range xs {
-		sum += x
-	}
-	return sum / float64(len(xs))
 }
 
 // resolvePeriod returns the [from, to) window for the named period.

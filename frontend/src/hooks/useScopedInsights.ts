@@ -141,6 +141,9 @@ export type InsightsRecurringRow = {
   last_date: string
   next_expected_date: string
   monthly_equivalent: string
+  // 'lapsed' once the charge stopped arriving (#653); not part of the
+  // monthly total.
+  status: 'active' | 'lapsed'
 }
 
 export type InsightsData = {

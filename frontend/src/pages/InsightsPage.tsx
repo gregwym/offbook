@@ -9,7 +9,7 @@
 //   3) Spending by category (current month; personal can step back, #607)
 //   4) Budgets + Goals at-a-glance
 //   5) Account list summary
-import { subDecimal } from '../lib/decimal'
+import { addDecimal, subDecimal } from '../lib/decimal'
 import { spendingHref } from '../lib/spendingLink'
 import { useState } from 'react'
 import { usePastMonthSpending } from '../hooks/usePastMonthSpending'
@@ -41,6 +41,7 @@ import {
 } from 'recharts'
 import { refreshPrices } from '../api/prices'
 import { AmountDisplay } from '../components/AmountDisplay'
+import { DateDisplay } from '../components/DateDisplay'
 import { FALLBACK_PIE_COLORS } from '../components/chartColors'
 import { assetKindLabel } from '../types/asset'
 import { PartialBadge } from '../components/PartialBadge'
@@ -769,48 +770,83 @@ function MonthTotals({
 }
 
 // Deterministic recurring-charge detection (#368) — personal scope only.
-// Merchant, cadence, last amount, next-expected date, monthly-equivalent
-// cost; a read-only lens over real transactions, nothing invented.
+// A read-only lens over real transactions, nothing invented. Active charges
+// carry the monthly total; ones that stopped arriving (#653) are listed
+// apart, without a cost, so a cancelled subscription neither inflates the
+// total nor vanishes without a trace.
 function RecurringList({ items }: { items: InsightsData['recurring'] }) {
+  const active = items.filter((r) => r.status !== 'lapsed')
+  const lapsed = items.filter((r) => r.status === 'lapsed')
+  const total = active.reduce((sum, r) => addDecimal(sum, r.monthly_equivalent), '0')
   return (
     <div className="mt-5 border-t border-gray-100 pt-4">
-      <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">
-        Recurring charges
-      </h3>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">
+          Recurring charges
+        </h3>
+        {active.length > 0 && (
+          <p className="text-xs text-gray-500" data-testid="recurring-total">
+            ≈ <AmountDisplay amount={total} className="font-medium text-gray-700" />/mo across{' '}
+            {active.length} {active.length === 1 ? 'charge' : 'charges'}
+          </p>
+        )}
+      </div>
       {items.length === 0 ? (
         <div className="mt-2 py-4 text-center text-xs text-gray-400">
           No recurring charges detected yet.
         </div>
       ) : (
-        <table className="mt-2 w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs uppercase tracking-wider text-gray-400">
-              <th className="pb-1 font-medium">Merchant</th>
-              <th className="pb-1 font-medium">Cadence</th>
-              <th className="pb-1 font-medium">Last charge</th>
-              <th className="pb-1 font-medium">Next expected</th>
-              <th className="pb-1 text-right font-medium">Monthly cost</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((r) => (
-              <tr key={r.merchant} className="border-t border-gray-50">
-                <td className="py-1.5 text-gray-700">{r.merchant}</td>
-                <td className="py-1.5 capitalize text-gray-500">{r.cadence}</td>
-                <td className="py-1.5 text-gray-500">
-                  <AmountDisplay amount={r.last_amount} /> on {r.last_date}
-                </td>
-                <td className="py-1.5 text-gray-500">{r.next_expected_date}</td>
-                <td className="py-1.5 text-right text-gray-700">
-                  <AmountDisplay amount={r.monthly_equivalent} />/mo
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <>
+          {active.length === 0 ? (
+            <div className="mt-2 py-3 text-center text-xs text-gray-400">
+              No recurring charges are active right now.
+            </div>
+          ) : (
+            <ul className="mt-2 divide-y divide-gray-50 text-sm" aria-label="Active recurring charges">
+              {active.map((r) => (
+                <li key={r.merchant} className="flex items-start justify-between gap-3 py-2">
+                  <div className="min-w-0">
+                    <div className="truncate font-medium text-gray-700">{r.merchant}</div>
+                    <div className="text-xs text-gray-500">
+                      {cadenceLabel(r.cadence)} ·{' '}
+                      <span className="whitespace-nowrap">
+                        last <AmountDisplay amount={r.last_amount} /> on <DateDisplay value={r.last_date} />
+                      </span>{' '}
+                      · <span className="whitespace-nowrap">next ~<DateDisplay value={r.next_expected_date} /></span>
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right text-gray-700">
+                    <AmountDisplay amount={r.monthly_equivalent} />
+                    <span className="text-xs text-gray-400">/mo</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {lapsed.length > 0 && (
+            <div className="mt-3">
+              <h4 className="text-xs font-medium text-gray-500">No longer charging</h4>
+              <ul className="mt-1 text-xs text-gray-500" aria-label="Recurring charges that stopped">
+                {lapsed.map((r) => (
+                  <li key={r.merchant} className="flex flex-wrap justify-between gap-x-3 py-1">
+                    <span className="truncate text-gray-600">{r.merchant}</span>
+                    <span>
+                      {cadenceLabel(r.cadence)} <AmountDisplay amount={r.last_amount} />, last on{' '}
+                      <DateDisplay value={r.last_date} />
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
+}
+
+function cadenceLabel(cadence: InsightsData['recurring'][number]['cadence']): string {
+  return cadence === 'weekly' ? 'Weekly' : cadence === 'annual' ? 'Yearly' : 'Monthly'
 }
 
 // Income vs. spending trend by month (#367). Reuses the CashFlow endpoint

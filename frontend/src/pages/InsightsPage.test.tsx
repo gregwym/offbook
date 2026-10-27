@@ -760,3 +760,57 @@ describe('InsightsPage cash-only hierarchy', () => {
     expect(container.querySelector('.recharts-pie')).toBeNull()
   })
 })
+
+// #653: active charges carry the monthly total; a charge that stopped is
+// listed apart with its last date and no cost.
+describe('InsightsPage recurring charges', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('totals active charges and lists lapsed ones separately without a cost', async () => {
+    server.use(
+      http.get('*/dashboard/recurring', () =>
+        HttpResponse.json({
+          data: [
+            { ...fx.recurring[0], merchant: 'Netflix', monthly_equivalent: '15.49', last_amount: '15.49' },
+            { ...fx.recurring[0], merchant: 'Spotify', monthly_equivalent: '10.99', last_amount: '10.99' },
+            {
+              ...fx.recurring[0],
+              merchant: 'Gym Co',
+              last_amount: '40',
+              last_date: '2026-03-05',
+              monthly_equivalent: '40',
+              status: 'lapsed',
+            },
+          ],
+          total: 3,
+        }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    const total = await screen.findByTestId('recurring-total')
+    expect(total).toHaveTextContent(/26\.48.*\/mo across 2 charges/)
+
+    const active = screen.getByRole('list', { name: 'Active recurring charges' })
+    expect(within(active).getByText('Netflix')).toBeInTheDocument()
+    expect(within(active).queryByText('Gym Co')).toBeNull()
+
+    const stopped = screen.getByRole('list', { name: 'Recurring charges that stopped' })
+    expect(within(stopped).getByText('Gym Co')).toBeInTheDocument()
+    expect(within(stopped).getByText(/last on/)).toHaveTextContent(/Mar 5/)
+    expect(within(stopped).queryByText('/mo')).toBeNull()
+    expect(screen.queryByText(/2026-03-05/)).toBeNull()
+  })
+
+  it('says nothing is active when every detected charge has stopped', async () => {
+    server.use(
+      http.get('*/dashboard/recurring', () =>
+        HttpResponse.json({ data: [{ ...fx.recurring[0], status: 'lapsed' }], total: 1 }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    expect(await screen.findByText('No recurring charges are active right now.')).toBeInTheDocument()
+    expect(screen.queryByTestId('recurring-total')).toBeNull()
+  })
+})
