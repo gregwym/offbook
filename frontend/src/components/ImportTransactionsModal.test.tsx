@@ -357,3 +357,81 @@ describe('ImportTransactionsModal CSV amount signs (#542)', () => {
     expect(seen[1]).toMatchObject({ commit: 'true', date_col: 'Posted', debit_col: 'Out', credit_col: 'In', description_col: 'Payee' })
   })
 })
+
+describe('ImportTransactionsModal unreadable rows and files (#639)', () => {
+  function pick(container: HTMLElement) {
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['x'], 'statement.csv', { type: 'text/csv' })] } })
+  }
+
+  it('lists an error row past the first 12 and says it will be skipped', async () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      line: i + 2, date: '2026-09-01', description: `Row ${i + 2}`, amount: '-1.00', status: 'new', confidence: 1, needs_review: false,
+    })) as Record<string, unknown>[]
+    rows[16] = { line: 18, date: '', description: '', amount: '0', status: 'error', confidence: 0, needs_review: false, error: 'unparseable date "13/45/2026"' }
+    server.use(
+      http.post(`${API}/accounts/:id/transactions/import`, () =>
+        HttpResponse.json({
+          data: {
+            committed: false, source: 'csv', mapping: { date: 'Date', amount: 'Amount', description: 'Description' },
+            headers: ['Date', 'Description', 'Amount'],
+            total_rows: 20, new_count: 19, duplicate_count: 0, error_count: 1, review_count: 0, inserted_count: 0, rows,
+          },
+        }),
+      ),
+    )
+    const { container } = renderModal()
+    pick(container)
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+
+    expect(await screen.findByText('unparseable date "13/45/2026"')).toBeInTheDocument()
+    expect(screen.getByText('1 skipped')).toBeInTheDocument()
+    expect(screen.getByText(/1 row can’t be read and will be skipped/)).toHaveTextContent('rows already imported won’t be duplicated')
+    // The error row leads the sample, ahead of rows 2–13.
+    const bodyRows = container.querySelectorAll('tbody tr')
+    expect(bodyRows[0]).toHaveTextContent('unparseable date')
+    expect(bodyRows).toHaveLength(12)
+    expect(screen.getByRole('button', { name: 'Import 19 new' })).toBeEnabled()
+  })
+
+  it('lists new rows ahead of duplicates so a re-import shows what it adds', async () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      line: i + 2, date: '2026-09-01', description: `Row ${i + 2}`, amount: '-1.00',
+      status: i === 16 ? 'new' : 'duplicate', confidence: 1, needs_review: false,
+    }))
+    server.use(
+      http.post(`${API}/accounts/:id/transactions/import`, () =>
+        HttpResponse.json({
+          data: {
+            committed: false, source: 'csv', mapping: { date: 'Date', amount: 'Amount', description: 'Description' },
+            headers: ['Date', 'Description', 'Amount'],
+            total_rows: 20, new_count: 1, duplicate_count: 19, error_count: 0, review_count: 0, inserted_count: 0, rows,
+          },
+        }),
+      ),
+    )
+    const { container } = renderModal()
+    pick(container)
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    await screen.findByText('1 new')
+    expect(container.querySelectorAll('tbody tr')[0]).toHaveTextContent('Row 18')
+  })
+
+  it.each([
+    ['IMPORT_EMPTY', 'file is empty', 'This file has no transactions in it.'],
+    ['IMPORT_PARSE_ERROR', 'read header: bare " in non-quoted field', 'couldn’t be read as a CSV'],
+  ])('replaces the raw %s parser text with a next step', async (code, raw, friendly) => {
+    server.use(
+      http.post(`${API}/accounts/:id/transactions/import`, () => HttpResponse.json({ error: raw, code }, { status: 400 })),
+    )
+    const { container } = renderModal()
+    pick(container)
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    expect(await screen.findByText(new RegExp(friendly))).toBeInTheDocument()
+    expect(screen.queryByText(raw)).not.toBeInTheDocument()
+
+    // Choosing another file clears the error so the user can retry.
+    pick(container)
+    expect(screen.queryByText(new RegExp(friendly))).not.toBeInTheDocument()
+  })
+})

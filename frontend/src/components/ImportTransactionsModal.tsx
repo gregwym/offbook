@@ -183,7 +183,7 @@ export function ImportTransactionsModal({ accounts, initialAccountID, onClose, o
         setPreview(null)
         setError("Couldn't auto-detect columns — map them below.")
       } else {
-        setError(errMsg(err))
+        setError(csvErrMsg(err))
       }
       return false
     } finally {
@@ -523,11 +523,17 @@ function SignCheck({
 }
 
 function PreviewSummary({ result, currency }: { result: ImportResult; currency?: string }) {
-  // Surface low-confidence rows first so the user reviews them (ADR-0019 §4).
+  // Unreadable rows first, then low-confidence ones, then new before
+  // duplicates, so the user sees what is skipped, what to review and what a
+  // re-import adds (ADR-0019 §4). Every skipped row stays listed whatever its
+  // line, or the user can't find it to fix the file (#639).
   const rows = useMemo(() => {
-    return [...result.rows].sort((a, b) => Number(b.needs_review) - Number(a.needs_review))
+    const rank = (r: ImportResult['rows'][number]) =>
+      r.status === 'error' ? 3 : r.needs_review ? 2 : r.status === 'new' ? 1 : 0
+    return [...result.rows].sort((a, b) => rank(b) - rank(a))
   }, [result.rows])
-  const sample = rows.slice(0, 12)
+  const errorRows = rows.filter((r) => r.status === 'error').length
+  const sample = rows.slice(0, Math.max(12, errorRows))
   const isAI = result.source === 'pdf' || result.source === 'photo'
 
   return (
@@ -536,12 +542,20 @@ function PreviewSummary({ result, currency }: { result: ImportResult; currency?:
         <Pill className="border-emerald-300 bg-emerald-50 text-emerald-800">{result.new_count} new</Pill>
         <Pill className="border-gray-300 bg-gray-50 text-gray-600">{result.duplicate_count} duplicate</Pill>
         {result.error_count > 0 && (
-          <Pill className="border-red-300 bg-red-50 text-red-700">{result.error_count} error</Pill>
+          <Pill className="border-red-300 bg-red-50 text-red-700">{result.error_count} skipped</Pill>
         )}
         {(result.review_count ?? 0) > 0 && (
           <Pill className="border-amber-300 bg-amber-50 text-amber-800">{result.review_count} needs review</Pill>
         )}
       </div>
+
+      {result.error_count > 0 && (
+        <p role="status" className="rounded-md border border-red-200 bg-white px-3 py-2 text-sm text-red-800">
+          {result.error_count === 1 ? '1 row can’t be read and will be skipped' : `${result.error_count} rows can’t be read and will be skipped`}
+          {' '}(listed first below). To bring {result.error_count === 1 ? 'it' : 'them'} in, fix the file and import it
+          again; rows already imported won’t be duplicated.
+        </p>
+      )}
 
       {(isAI || result.reconciled != null) && <ReconcileNote result={result} currency={currency} />}
 
@@ -858,7 +872,7 @@ function StatusTag({ status }: { status: ImportResult['rows'][number]['status'] 
     duplicate: 'border-gray-300 bg-gray-50 text-gray-500',
     error: 'border-red-300 bg-red-50 text-red-700',
   }
-  return <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${styles[status]}`}>{status}</span>
+  return <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${styles[status]}`}>{status === 'error' ? 'skipped' : status}</span>
 }
 
 function Pill({ children, className }: { children: ReactNode; className: string }) {
@@ -890,6 +904,16 @@ function undoErrMsg(err: unknown): string {
 function isNotUndoable(err: unknown): boolean {
   const body = (err as { response?: { data?: { code?: string } } })?.response?.data
   return body?.code === 'IMPORT_NOT_UNDOABLE'
+}
+
+// csvErrMsg turns a whole-file CSV failure into plain language with a next
+// step; the parser's own text ("file is empty", "read header: …") is not
+// written for the user (#639).
+function csvErrMsg(err: unknown): string {
+  const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code
+  if (code === 'IMPORT_EMPTY') return 'This file has no transactions in it. Check you exported the right statement, then choose it again.'
+  if (code === 'IMPORT_PARSE_ERROR') return 'This file couldn’t be read as a CSV. Export the statement from your bank as CSV, then choose it again.'
+  return errMsg(err)
 }
 
 function errMsg(err: unknown): string {
