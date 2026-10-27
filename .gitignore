@@ -56,3 +56,4 @@ coverage/
 
 # Acceptance test output
 acceptance/reports/
+acceptance/.soak/

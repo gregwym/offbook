@@ -17,6 +17,11 @@ on:
         description: Playwright suite/spec pattern (e.g. smoke, plaid)
         required: false
         default: smoke
+      restart_between:
+        description: Soak only (#631) — run SOAK_PHASE=seed, restart the backend, then SOAK_PHASE=verify
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -74,10 +79,54 @@ jobs:
           OFFBOOK_ROLE: qa
         run: node acceptance/fixtures/bootstrap.mjs
       - name: Run suite with full evidence
+        if: ${{ !inputs.restart_between }}
         env:
           OFFBOOK_ROLE: qa
           ACCEPTANCE_EVIDENCE: "1"
           QA_SUITE: ${{ inputs.suite }}
+          QA_SOAK: ${{ contains(inputs.suite, 'soak') && '1' || '0' }}
+        run: make qa-suite QA_SUITE="$QA_SUITE"
+      # Stability soak across a process restart (#631): seed and run the
+      # rounds, restart only the backend container (same database volume),
+      # wait for /health, then re-assert the saved baseline and run one more
+      # round. The seed phase's report is moved aside so verify can't
+      # overwrite it; both land in qa-evidence.
+      - name: Soak seed phase
+        if: ${{ inputs.restart_between }}
+        env:
+          OFFBOOK_ROLE: qa
+          ACCEPTANCE_EVIDENCE: "1"
+          QA_SUITE: ${{ inputs.suite }}
+          QA_SOAK: "1"
+          SOAK_PHASE: seed
+        run: |
+          make qa-suite QA_SUITE="$QA_SUITE"
+          mkdir -p acceptance/reports/seed-phase
+          mv acceptance/reports/html acceptance/reports/artifacts acceptance/reports/seed-phase/
+      - name: Restart backend
+        if: ${{ inputs.restart_between }}
+        run: |
+          compose="docker compose -p offbook-qa -f docker-compose.yml -f docker-compose.qa.yml"
+          before=$(docker inspect -f '{{.State.StartedAt}}' "$($compose ps -q backend)")
+          $compose restart backend
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:18000/api/v1/health >/dev/null && break
+            sleep 2
+          done
+          curl -sf http://localhost:18000/api/v1/health >/dev/null
+          after=$(docker inspect -f '{{.State.StartedAt}}' "$($compose ps -q backend)")
+          test "$before" != "$after"
+          mkdir -p acceptance/reports/soak
+          printf '{"backend_started_before":"%s","backend_started_after":"%s"}\n' "$before" "$after" \
+            > acceptance/reports/soak/restart.json
+      - name: Soak verify phase
+        if: ${{ inputs.restart_between }}
+        env:
+          OFFBOOK_ROLE: qa
+          ACCEPTANCE_EVIDENCE: "1"
+          QA_SUITE: ${{ inputs.suite }}
+          QA_SOAK: "1"
+          SOAK_PHASE: verify
         run: make qa-suite QA_SUITE="$QA_SUITE"
       - name: Summarize results
         if: always()
@@ -86,6 +135,7 @@ jobs:
             echo "## QA journeys"
             echo "- tested SHA: \`${TESTED_SHA}\`"
             echo "- suite: \`${{ inputs.suite }}\` (desktop-chromium + mobile-chromium)"
+            echo "- restart between phases: \`${{ inputs.restart_between }}\`"
             echo "- job status: \`${{ job.status }}\`"
             echo "- evidence: download the \`qa-evidence\` artifact (HTML report, traces, screenshots, video)"
           } >> "$GITHUB_STEP_SUMMARY"
