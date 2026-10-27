@@ -32,7 +32,7 @@ import { NEW_CATEGORY, NewCategoryDialog, NewCategoryOption } from '../component
 export function TransactionsPage() {
   const {
     transactions, total, spendTotal, loading, error,
-    filter, page, pageSize,
+    filter, page, pageSize, reviewPending,
     fetch, setFilter, setPage, create, setCategory, update, remove, markReviewed, bulkEdit, undoBulkEdit,
   } = useTransactionsStore()
   const { accounts, fetch: fetchAccounts } = useAccountsStore()
@@ -789,7 +789,10 @@ export function TransactionsPage() {
             {loading && transactions.length === 0 && (
               <tr><td colSpan={8} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>
             )}
-            {!loading && transactions.length === 0 && needsReview && (
+            {!loading && transactions.length === 0 && needsReview && reviewPending > 0 && (
+              <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-500" aria-live="polite">Saving your review…</td></tr>
+            )}
+            {!loading && transactions.length === 0 && needsReview && reviewPending === 0 && (
               <tr>
                 <td colSpan={8} className="px-4 py-10 text-center">
                   <div className="text-base font-medium text-gray-900">You’re all caught up</div>

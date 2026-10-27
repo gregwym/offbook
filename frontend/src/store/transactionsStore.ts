@@ -29,6 +29,9 @@ type State = {
   // Pagination: 0-based page; computed offset = page * pageSize.
   page: number
   pageSize: number
+  // Review writes still in flight (#633). The inbox must not claim "all
+  // caught up" while the server has not yet saved that state.
+  reviewPending: number
 
   fetch: () => Promise<void>
   setFilter: (f: TransactionListFilter) => void
@@ -40,6 +43,8 @@ type State = {
   remove: (id: number) => Promise<void>
   // Optimistic bulk review/undo (#424). In the review inbox (filter.reviewed
   // === false) reviewed rows leave the list immediately; reverts on failure.
+  // Writes are sent one at a time in click order, so the last action is the
+  // one the server keeps (#633).
   markReviewed: (ids: number[], reviewed: boolean) => Promise<void>
   // Bulk category / hide edit and its undo (#567). Both reload the page
   // afterwards, since the edit can move rows in or out of the active filter.
@@ -55,6 +60,11 @@ const PAGE_SIZE = 50
 // the list the active filter asked for (#458).
 let fetchSeq = 0
 
+// Tail of the review-write chain (#633). Each markReviewed POST waits for the
+// previous one to settle, so an Undo and a quick re-review can't reach the
+// server out of order.
+let reviewChain: Promise<unknown> = Promise.resolve()
+
 export const useTransactionsStore = create<State>((set, get) => ({
   transactions: [],
   total: 0,
@@ -64,6 +74,7 @@ export const useTransactionsStore = create<State>((set, get) => ({
   filter: {},
   page: 0,
   pageSize: PAGE_SIZE,
+  reviewPending: 0,
 
   fetch: async () => {
     const { filter, page, pageSize } = get()
@@ -190,12 +201,16 @@ export const useTransactionsStore = create<State>((set, get) => ({
       next = next.filter((t) => !leaving.includes(t))
       total = Math.max(0, totalBefore - leaving.length)
     }
-    set({ transactions: next, total, error: null })
+    set({ transactions: next, total, error: null, reviewPending: get().reviewPending + 1 })
+    const write = reviewChain.then(() => setTransactionsReviewed(ids, reviewed))
+    reviewChain = write.catch(() => undefined)
     try {
-      await setTransactionsReviewed(ids, reviewed)
+      await write
     } catch (err) {
       set({ transactions: before, total: totalBefore, error: errMsg(err) })
       throw err
+    } finally {
+      set({ reviewPending: get().reviewPending - 1 })
     }
   },
 

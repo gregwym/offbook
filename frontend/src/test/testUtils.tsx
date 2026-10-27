@@ -48,6 +48,7 @@ export function resetStores() {
     filter: {},
     page: 0,
     pageSize: 50,
+    reviewPending: 0,
   })
   useHouseholdStore.setState({ detail: null, loading: false, error: null, lastInvite: null })
 }
