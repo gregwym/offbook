@@ -130,7 +130,9 @@ func (s *TransactionService) ImportDocument(
 	}
 	// The job exists before the rows so every row, adjustment and observation
 	// is linked to it at insert time (#483); it only becomes "completed" once
-	// the import succeeded.
+	// the import succeeded. Job, rows, positions and the completion mark share
+	// one DB transaction (#651), so a failed import leaves neither rows nor an
+	// orphan job behind.
 	job := &model.IngestionJob{
 		UserID:      userID,
 		Source:      source,
@@ -143,23 +145,35 @@ func (s *TransactionService) ImportDocument(
 		fn := doc.Filename
 		job.FileName = &fn
 	}
-	if err := s.jobRepo.Create(ctx, job); err != nil {
-		return nil, fmt.Errorf("record import job: %w", err)
-	}
-	res, err := s.importStatement(ctx, userID, accountID, ext, true, &job.ID)
+	var res *ImportResult
+	err = s.inTx(ctx, func(ts *TransactionService) error {
+		if err := ts.jobRepo.Create(ctx, job); err != nil {
+			return fmt.Errorf("record import job: %w", err)
+		}
+		r, err := ts.importStatement(ctx, userID, accountID, ext, true, &job.ID)
+		if err != nil {
+			if ts.db == nil {
+				// No transaction to roll back (unit wiring): keep the
+				// audit trail honest instead.
+				job.Status = "failed"
+				_ = ts.jobRepo.Update(ctx, job)
+			}
+			return err
+		}
+		reconcile(r, ext)
+		now := time.Now()
+		job.Status, job.CompletedAt = "completed", &now
+		applyResultToJob(job, r)
+		if err := ts.jobRepo.Update(ctx, job); err != nil {
+			return fmt.Errorf("record import job: %w", err)
+		}
+		res = r
+		return nil
+	})
 	if err != nil {
-		job.Status = "failed"
-		_ = s.jobRepo.Update(ctx, job)
 		return nil, err
 	}
-	reconcile(res, ext)
 	res.DuplicateOf = prior
-	now := time.Now()
-	job.Status, job.CompletedAt = "completed", &now
-	applyResultToJob(job, res)
-	if err := s.jobRepo.Update(ctx, job); err != nil {
-		return nil, fmt.Errorf("record import job: %w", err)
-	}
 	res.JobID = &job.ID
 	return res, nil
 }
