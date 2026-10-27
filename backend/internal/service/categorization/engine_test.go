@@ -240,6 +240,22 @@ func TestApply_HideMatches(t *testing.T) {
 			t.Errorf("trade leg hidden: HiddenAt=%v", tx.HiddenAt)
 		}
 	})
+	t.Run("paired transfer legs are never hidden", func(t *testing.T) {
+		tx := &model.Transaction{Kind: model.KindFlow, IsTransfer: true, Description: ptr("CASH SWEEP TO MMF")}
+		d, ok := categorization.Apply(tx, rules)
+		if !ok || d.RuleID != 1 {
+			t.Fatalf("Apply: ok=%v rule=%d, want rule 1", ok, d.RuleID)
+		}
+		if tx.HiddenAt != nil || d.HideChanged(tx) {
+			t.Errorf("transfer leg hidden: HiddenAt=%v", tx.HiddenAt)
+		}
+		if tx.CategoryID == nil || *tx.CategoryID != 10 {
+			t.Errorf("CategoryID = %v, want 10 (the rule still categorizes)", tx.CategoryID)
+		}
+		if !d.SameAs(tx) {
+			t.Error("SameAs after Apply = false, want true (re-apply is a no-op)")
+		}
+	})
 	t.Run("rule without hide leaves the row visible", func(t *testing.T) {
 		tx := &model.Transaction{Description: ptr("SHELL OIL")}
 		categorization.Apply(tx, rules)

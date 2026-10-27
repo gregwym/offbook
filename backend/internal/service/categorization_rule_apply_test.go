@@ -661,6 +661,62 @@ func TestCategorizationRuleService_Apply_HideMatches(t *testing.T) {
 	}
 }
 
+// TestCategorizationRuleService_Apply_HideSkipsTransferLegs (#645): a hide
+// rule never hides a paired transfer leg — transfers are never in spending —
+// so neither the draft preview nor Apply counts or hides it, while the
+// ordinary row it matches is hidden as before.
+func TestCategorizationRuleService_Apply_HideSkipsTransferLegs(t *testing.T) {
+	svc, userID, accountID, fixtureCat, g := newRuleApplySvc(t)
+	ctx := context.Background()
+
+	plain := mkTxn(t, g, userID, accountID, withDescription("CASH SWEEP FEE"))
+	leg := mkTxn(t, g, userID, accountID, withDescription("CASH SWEEP TO SAVINGS"), func(tx *model.Transaction) {
+		tx.IsTransfer = true
+	})
+
+	draft, err := svc.PreviewDraft(ctx, userID, service.DraftRuleInput{
+		Pattern: "SWEEP", MatchType: "contains", CategoryID: new(fixtureCat), Priority: 50, IsActive: true, HideMatches: true,
+	})
+	if err != nil {
+		t.Fatalf("PreviewDraft: %v", err)
+	}
+	if draft.Matched != 2 || draft.WouldHide != 1 {
+		t.Errorf("draft = %+v, want matched 2, would_hide 1", draft)
+	}
+
+	rule, err := svc.Create(ctx, userID, service.CreateRuleInput{
+		Pattern: "SWEEP", MatchType: "contains", CategoryID: new(fixtureCat), Priority: 50, HideMatches: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.CategorizationRule{}, rule.ID) })
+
+	res, err := svc.Apply(ctx, userID, "")
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if res.Hidden != 1 {
+		t.Errorf("Apply hidden = %d, want 1 (transfer leg skipped)", res.Hidden)
+	}
+	load := func(id int64) model.Transaction {
+		var got model.Transaction
+		if err := g.First(&got, id).Error; err != nil {
+			t.Fatalf("load %d: %v", id, err)
+		}
+		return got
+	}
+	if got := load(plain.ID); got.HiddenAt == nil {
+		t.Error("ordinary row visible, want hidden")
+	}
+	if got := load(leg.ID); got.HiddenAt != nil {
+		t.Error("transfer leg hidden, want visible")
+	}
+	if res, _ = svc.Apply(ctx, userID, ""); res.Updated != 0 {
+		t.Errorf("re-Apply updated = %d, want 0 (idempotent)", res.Updated)
+	}
+}
+
 // TestCategorizationRuleService_Apply_MarkReviewed (#538): a review-marking
 // rule marks every non-manual row it wins reviewed, the draft preview counts
 // them first, a re-run is a no-op, and turning the mark off never un-reviews.

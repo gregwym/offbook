@@ -90,10 +90,11 @@ func (d Decision) CategoryChanged(t *model.Transaction) bool {
 }
 
 // HideChanged reports whether applying d would hide t: the rule hides, t is
-// a flow row (ledger rows like trades or adjustments are never hidden) and
-// t isn't hidden yet. A rule never unhides.
+// a flow row (ledger rows like trades or adjustments are never hidden), t
+// isn't a paired transfer leg (transfers are never in spending, so hiding
+// one changes nothing; #645) and t isn't hidden yet. A rule never unhides.
 func (d Decision) HideChanged(t *model.Transaction) bool {
-	return d.Hide && t.HiddenAt == nil && (t.Kind == "" || t.Kind == model.KindFlow)
+	return d.Hide && t.HiddenAt == nil && !t.IsTransfer && (t.Kind == "" || t.Kind == model.KindFlow)
 }
 
 // ReviewChanged reports whether applying d would mark t reviewed: the rule
