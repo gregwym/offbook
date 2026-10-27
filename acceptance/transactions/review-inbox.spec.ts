@@ -10,9 +10,9 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 const rows = ['Review Coffee', 'Review Grocer', 'Review Fuel']
 
 test.describe('transaction review inbox', () => {
-  test('bulk review, undo, inbox zero', async ({ page }, testInfo) => {
+  for (let n = 0; n < 10; n++) test(`bulk review, undo, inbox zero #${n}`, async ({ page }, testInfo) => {
     process.env.OFFBOOK_ROLE = process.env.OFFBOOK_ROLE ?? 'qa'
-    const user = await createThrowawayUser({ suite: `review-${testInfo.project.name}` })
+    const user = await createThrowawayUser({ suite: `review-${testInfo.project.name}-${n}` })
     const cookie = await apiSignin(user.email, user.password)
     const acct = await api(cookie, '/accounts', {
       name: 'Review Checking', institution_slug: 'manual', account_type: 'checking', currency: 'USD',
