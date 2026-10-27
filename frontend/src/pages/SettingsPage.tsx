@@ -16,6 +16,7 @@ import {
   syncTransactions,
 } from '../api/plaid'
 import { getHealth } from '../api/health'
+import { useHashAnchor } from '../hooks/useHashAnchor'
 import { getUserSettings, updateUserSettings } from '../api/userSettings'
 import { getCategoryUsage } from '../api/categories'
 import { useCategoriesStore } from '../store/categoriesStore'
@@ -25,11 +26,11 @@ import type { PlaidItem, PlaidSyncError } from '../types/plaid'
 import type { AIProvider, UpdateUserSettingsInput, UserSettingsView } from '../types/userSettings'
 
 export function SettingsPage() {
-  // "Manage categories" links land on #categories (#581).
+  // "Manage categories" links land on #categories (#581); the reconnect
+  // banner and Accounts pill land on #linked-institutions (#641). The target
+  // stays pinned while the sections above it finish loading (#647).
   const { hash } = useLocation()
-  useEffect(() => {
-    if (hash) document.getElementById(hash.slice(1))?.scrollIntoView?.()
-  }, [hash])
+  useHashAnchor(hash)
   return (
     <div className="space-y-8">
       <div>
@@ -890,16 +891,6 @@ function LinkedInstitutionsSection() {
     // itself is sync-pure, satisfying react-hooks/set-state-in-effect.
     void refresh()
   }, [refresh])
-
-  // The reconnect banner and Accounts pill land here (#641). The page-level
-  // hash scroll runs before the sections above finish loading and push this
-  // one down, so scroll again once the items are in.
-  const { hash } = useLocation()
-  useEffect(() => {
-    if (!loading && hash === `#${LINKED_INSTITUTIONS_ID}`) {
-      document.getElementById(LINKED_INSTITUTIONS_ID)?.scrollIntoView?.({ block: 'start' })
-    }
-  }, [loading, hash])
 
   // Re-sync mirrors the initial connect flow (sync-accounts → sync-transactions)
   // so a user can pull fresh data on demand, not only at link time (#311).

@@ -58,12 +58,22 @@ test.describe('reconnect a bank that needs re-auth', () => {
     await expect(pill).toHaveCount(1)
     await expectNoClipping(page, 'accounts with reauth pill')
     await testInfo.attach('reconnect-accounts-pill', { body: await page.screenshot(), contentType: 'image/png' })
+    // #647: the AI section above Linked Institutions finishes loading after
+    // it and grows the page. Delay it deterministically; Reconnect must
+    // still end up on screen.
+    await page.route('**/api/v1/me/settings', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      await route.continue()
+    })
+    const settingsLoaded = page.waitForResponse('**/api/v1/me/settings')
     await pill.click()
 
     // Settings: lands on Linked Institutions, no duplicate banner, plain copy.
     await page.waitForURL(/\/settings#linked-institutions$/)
     await expect(banner).toHaveCount(0)
     const reconnect = page.getByRole('button', { name: `Reconnect ${BANK}` })
+    await settingsLoaded
+    await expect(page.getByText('Loading…')).toHaveCount(0)
     await expectInViewport(page, reconnect)
     await expect(page.getByText(/Your bank needs you to sign in again · last synced/)).toBeVisible()
     // The row wraps its actions below on narrow screens rather than
