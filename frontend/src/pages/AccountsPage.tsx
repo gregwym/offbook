@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { AlertTriangle, CheckCircle2, LineChart, Pencil, Plus, Trash2, Upload, X } from 'lucide-react'
+import { accountTransactionsHref, canUpdateBalance, isBrokerage } from '../lib/accountActions'
 import { listItems } from '../api/plaid'
 import { AccountVisibilityChip } from '../components/AccountVisibilityChip'
 import { AmountDisplay } from '../components/AmountDisplay'
@@ -65,10 +66,11 @@ export function AccountsPage() {
   }, [location.state, location.pathname, navigate])
   const createdAccount = justCreated ? accounts.find((a) => a.id === justCreated.id) ?? null : null
 
-  const confirmRemove = async (a: Account) => {
-    if (window.confirm(`Delete "${a.name}"?`)) {
-      await remove(a.id)
-    }
+  // Delete lives in the edit modal (#657), never inline beside Edit.
+  const confirmRemove = async (a: Account): Promise<boolean> => {
+    if (!window.confirm(`Delete "${a.name}"?`)) return false
+    await remove(a.id)
+    return true
   }
 
   useEffect(() => {
@@ -94,7 +96,11 @@ export function AccountsPage() {
 
   const groups = useMemo(() => groupAccounts(accounts), [accounts])
   const summary = useMemo(() => summarizeAccounts(accounts), [accounts])
-  const columns = householdId != null ? 8 : 7
+  // Columns nobody fills are dropped (#657): Last 4 when no account has one,
+  // Sync when no account is linked (manual accounts render no pill).
+  const showLastFour = accounts.some((a) => a.last_four)
+  const showSync = accounts.some((a) => a.last_sync_status !== null)
+  const columns = 5 + (showLastFour ? 1 : 0) + (showSync ? 1 : 0) + (householdId != null ? 1 : 0)
 
   return (
     <div>
@@ -175,9 +181,9 @@ export function AccountsPage() {
               <th className="px-4 py-2 text-left">Name</th>
               <th className="hidden px-4 py-2 text-left md:table-cell">Institution</th>
               <th className="hidden px-4 py-2 text-left md:table-cell">Type</th>
-              <th className="hidden px-4 py-2 text-left md:table-cell">Last 4</th>
+              {showLastFour && <th className="hidden px-4 py-2 text-left md:table-cell">Last 4</th>}
               <th className="px-4 py-2 text-right">Balance</th>
-              <th className="hidden px-4 py-2 text-left md:table-cell">Sync</th>
+              {showSync && <th className="hidden px-4 py-2 text-left md:table-cell">Sync</th>}
               {householdId != null && <th className="hidden px-4 py-2 text-left md:table-cell">Household visibility</th>}
               <th className="hidden px-4 py-2 md:table-cell"><span className="sr-only">Actions</span></th>
             </tr>
@@ -211,16 +217,22 @@ export function AccountsPage() {
                 {g.label}
                 <span className="ml-1.5 text-xs font-normal text-gray-400">{g.accounts.length}</span>
               </th>
-              <td colSpan={3} className="hidden md:table-cell" />
+              <td colSpan={showLastFour ? 3 : 2} className="hidden md:table-cell" />
               <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900" aria-label={`${g.label} total`}>
                 <Subtotals totals={g.subtotals} />
               </td>
-              <td colSpan={columns - 5} className="hidden md:table-cell" />
+              <td colSpan={columns - (showLastFour ? 5 : 4)} className="hidden md:table-cell" />
             </tr>
             {g.accounts.map((a) => (
               <tr key={a.id} className="hover:bg-gray-50">
                 <td className="px-4 py-2 align-top font-medium text-gray-900">
-                  {a.name}
+                  {/* The name opens this account's transactions (#657). */}
+                  <Link
+                    to={accountTransactionsHref(a.id)}
+                    className="-my-2 inline-flex min-h-10 items-center text-gray-900 underline decoration-gray-300 underline-offset-2 hover:text-indigo-700 hover:decoration-indigo-400 md:min-h-0"
+                  >
+                    {a.name}
+                  </Link>
                   {!a.is_active && (
                     <span className="ml-1.5 inline-flex items-center rounded border border-gray-200 bg-gray-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-gray-500">
                       Inactive
@@ -248,27 +260,24 @@ export function AccountsPage() {
                     {householdId != null && !wide && (
                       <AccountVisibilityChip accountID={a.id} householdID={householdId} />
                     )}
-                    <div className="flex flex-wrap gap-x-2.5 text-xs">
+                    <div className="flex flex-wrap gap-x-3 text-xs">
                       {isBrokerage(a) && (
-                        <button type="button" onClick={() => setTradingOn(a)} aria-label={`Record trade in ${a.name}`} className="min-h-9 text-indigo-700 underline">
+                        <button type="button" onClick={() => setTradingOn(a)} aria-label={`Record trade in ${a.name}`} className="min-h-10 text-indigo-700 underline">
                           Trade
                         </button>
                       )}
-                      <button type="button" onClick={() => setImportingInto(a)} aria-label={`Import transactions into ${a.name}`} className="min-h-9 text-indigo-700 underline">
+                      <button type="button" onClick={() => setImportingInto(a)} aria-label={`Import transactions into ${a.name}`} className="min-h-10 text-indigo-700 underline">
                         Import
                       </button>
-                      <button type="button" onClick={() => setEditing(a)} aria-label={`Edit ${a.name}`} className="min-h-9 text-indigo-700 underline">
+                      <button type="button" onClick={() => setEditing(a)} aria-label={`Edit ${a.name}`} className="min-h-10 text-indigo-700 underline">
                         Edit
-                      </button>
-                      <button type="button" onClick={() => confirmRemove(a)} aria-label={`Delete ${a.name}`} className="min-h-9 text-red-700 underline">
-                        Delete
                       </button>
                     </div>
                   </div>
                 </td>
                 <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{institutionLabel(a, plaidNames)}</td>
                 <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{accountTypeLabel(a.account_type)}</td>
-                <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{a.last_four ?? '—'}</td>
+                {showLastFour && <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{a.last_four ?? '—'}</td>}
                 <td className="px-4 py-2 text-right align-top">
                   <AmountDisplay amount={a.balance} currency={a.currency} />
                   {!a.balance_complete && (
@@ -316,21 +325,23 @@ export function AccountsPage() {
                     </button>
                   )}
                 </td>
-                <td className="hidden px-4 py-2 align-top md:table-cell">
-                  <SyncStatusPill account={a} />
-                </td>
+                {showSync && (
+                  <td className="hidden px-4 py-2 align-top md:table-cell">
+                    <SyncStatusPill account={a} />
+                  </td>
+                )}
                 {householdId != null && (
                   <td className="hidden px-4 py-2 align-top md:table-cell">
                     {wide && <AccountVisibilityChip accountID={a.id} householdID={householdId} />}
                   </td>
                 )}
-                <td className="hidden whitespace-nowrap px-4 py-2 text-right align-top md:table-cell">
+                <td className="hidden whitespace-nowrap px-2 py-0.5 text-right align-top md:table-cell">
                   {isBrokerage(a) && (
                     <button
                       type="button"
                       onClick={() => setTradingOn(a)}
-                      className="mr-2 text-gray-500 hover:text-indigo-700"
-                      aria-label="Record trade"
+                      className={iconButtonClass}
+                      aria-label={`Record trade in ${a.name}`}
                       title="Record trade"
                     >
                       <LineChart size={16} />
@@ -339,8 +350,8 @@ export function AccountsPage() {
                   <button
                     type="button"
                     onClick={() => setImportingInto(a)}
-                    className="mr-2 text-gray-500 hover:text-indigo-700"
-                    aria-label="Import transactions"
+                    className={iconButtonClass}
+                    aria-label={`Import transactions into ${a.name}`}
                     title="Import transactions (CSV, PDF, or photo)"
                   >
                     <Upload size={16} />
@@ -348,18 +359,11 @@ export function AccountsPage() {
                   <button
                     type="button"
                     onClick={() => setEditing(a)}
-                    className="mr-2 text-gray-500 hover:text-gray-900"
-                    aria-label="Edit"
+                    className={iconButtonClass}
+                    aria-label={`Edit ${a.name}`}
+                    title="Edit or delete"
                   >
                     <Pencil size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => confirmRemove(a)}
-                    className="text-gray-500 hover:text-red-700"
-                    aria-label="Delete"
-                  >
-                    <Trash2 size={16} />
                   </button>
                 </td>
               </tr>
@@ -391,6 +395,9 @@ export function AccountsPage() {
           onSubmit={async (input) => {
             await update(editing.id, input)
             setEditing(null)
+          }}
+          onDelete={async () => {
+            if (await confirmRemove(editing)) setEditing(null)
           }}
         />
       )}
@@ -464,29 +471,18 @@ function Subtotals({ totals }: { totals: CurrencyTotal[] }) {
   )
 }
 
-// isBrokerage mirrors backend service.brokerageAccountTypes — only these
-// account shapes accept trades.
-function isBrokerage(a: Account): boolean {
-  return a.account_type === 'investment' || a.account_type === 'crypto'
-}
-
-// canUpdateBalance: manual cash-style accounts only. Plaid accounts get their
-// balance from sync (the backend refuses them), and a brokerage balance is
-// positions × prices, not one number the user can type.
-function canUpdateBalance(a: Account): boolean {
-  return !a.plaid_item_id && !a.plaid_account_id && !isBrokerage(a)
-}
-
 type FormProps = {
   mode: 'create' | 'edit'
   account?: Account
   onClose: () => void
   onSubmit: (input: CreateAccountInput | UpdateAccountInput) => Promise<void>
+  // Edit mode only: the account's Delete, kept out of the row (#657).
+  onDelete?: () => Promise<void>
 }
 
 // Single form used for both create and edit. In edit mode, PII access is
 // available inline (PIIPanel fetches on-demand).
-function AccountFormModal({ mode, account, onClose, onSubmit }: FormProps) {
+function AccountFormModal({ mode, account, onClose, onSubmit, onDelete }: FormProps) {
   const [name, setName] = useState(account?.name ?? '')
   const [institution, setInstitution] = useState(account?.institution_slug ?? '')
   const [accountType, setAccountType] = useState<AccountType>(account?.account_type ?? 'checking')
@@ -564,7 +560,19 @@ function AccountFormModal({ mode, account, onClose, onSubmit }: FormProps) {
         </label>
         {mode === 'edit' && account && <PIIPanel accountID={account.id} />}
       </div>
-      <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
+      <div className="flex items-center justify-end gap-2 border-t border-gray-200 px-5 py-3">
+        {onDelete && (
+          <button
+            type="button"
+            onClick={() => {
+              void onDelete().catch((err) => setError(errMsg(err)))
+            }}
+            disabled={submitting}
+            className="mr-auto inline-flex min-h-10 items-center gap-1.5 rounded-md px-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+          >
+            <Trash2 size={14} aria-hidden="true" /> Delete account
+          </button>
+        )}
         <button type="button" onClick={onClose} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">Cancel</button>
         <button
           type="button"
@@ -580,6 +588,7 @@ function AccountFormModal({ mode, account, onClose, onSubmit }: FormProps) {
 }
 
 const inputClass = 'w-full rounded border border-gray-300 px-2 py-1 text-sm'
+const iconButtonClass = 'inline-flex h-10 w-10 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-indigo-700'
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (

@@ -181,6 +181,28 @@ test.describe('acceptance month fixture', () => {
     await expect(page.getByRole('rowgroup', { name: 'Credit cards' })).toContainText('QAM Card')
     await expect(page.getByText('manual', { exact: true })).toHaveCount(0)
 
+    // #657: an account name opens that account's transactions, with its
+    // balance and a way into reconciliation; the filter survives a reload.
+    const cardRows = rows.filter((r) => r.account === 'card').length
+    const cardList = await get(cookie, `/transactions?account_id=${acct.card}&limit=200`)
+    expect(cardList.total, 'card rows incl. transfer legs').toBe(cardRows)
+    for (const t of cardList.data) expect(t.account_id).toBe(acct.card)
+    await page.getByRole('link', { name: 'QAM Card', exact: true }).click()
+    await page.waitForURL(new RegExp(`/transactions\\?account_id=${acct.card}$`))
+    const header = page.getByRole('region', { name: 'Account QAM Card' })
+    await expect(header.getByLabel('Account balance')).toHaveText(`${fmt(per.card)} USD`)
+    await expect(page.getByText(`${cardRows} total`, { exact: true })).toBeVisible()
+    await expect(page.getByText(`${PREFIX} `).locator('visible=true').first()).toBeVisible()
+    await expectNoClipping(page, 'account-transactions')
+    await snap(page, testInfo, 'account-transactions')
+    await page.reload()
+    await expect(page.getByRole('region', { name: 'Account QAM Card' })).toBeVisible()
+    await expect(page.getByText(`${cardRows} total`, { exact: true })).toBeVisible()
+    await page.getByRole('region', { name: 'Account QAM Card' }).getByRole('link', { name: 'Reconciliation' }).click()
+    await page.waitForURL(new RegExp(`/accounts/${acct.card}/reconciliation$`))
+    await expect(page.getByText('QAM Card').locator('visible=true').first()).toBeVisible()
+    await snap(page, testInfo, 'account-reconciliation')
+
     // Every other core page at volume: nothing clipped inside a wrapper (#561).
     for (const [name, path, ready] of [
       ['accounts', '/accounts', 'QAM Checking'],

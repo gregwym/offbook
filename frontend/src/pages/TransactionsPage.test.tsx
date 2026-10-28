@@ -1,4 +1,5 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import * as fx from '../test/fixtures'
@@ -796,3 +797,65 @@ describe('TransactionsPage row name (#579)', () => {
     expect(within(third).getAllByText('ACH DEPOSIT 991')).toHaveLength(1)
   })
 })
+
+describe('TransactionsPage account filter (#657)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  function LocationProbe() {
+    const loc = useLocation()
+    return <div data-testid="location">{loc.pathname + loc.search}</div>
+  }
+
+  it('reads account_id from the URL over the stored filter and shows the account header', async () => {
+    const card = { ...fx.account1, id: 3, name: 'QAM Card', account_type: 'credit_card' as const, balance: '-12341.700000000000000000' }
+    const seen: (string | null)[] = []
+    server.use(
+      http.get(`${API}/accounts`, () => HttpResponse.json({ data: [fx.account1, card], total: 2 })),
+      http.get(`${API}/transactions`, ({ request }) => {
+        const id = new URL(request.url).searchParams.get('account_id')
+        seen.push(id)
+        const rows = id === '3' ? [{ ...fx.transaction1, account_id: 3 }] : fx.transactions
+        return HttpResponse.json({ data: rows, total: rows.length })
+      }),
+    )
+    // The store remembers another account; the URL must win.
+    useTransactionsStore.setState({ filter: { account_id: 1 } })
+    render(
+      <MemoryRouter initialEntries={['/transactions?account_id=3']}>
+        <TransactionsPage />
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+    const header = await screen.findByRole('region', { name: 'Account QAM Card' })
+    // Same value and formatting as the Accounts row.
+    expect(within(header).getByLabelText('Account balance')).toHaveTextContent('-12,341.70 USD')
+    expect(within(header).getByRole('link', { name: 'Reconciliation' })).toHaveAttribute('href', '/accounts/3/reconciliation')
+    // A credit card is a manual cash-style account: its balance can be updated.
+    expect(within(header).getByRole('button', { name: 'Update balance' })).toBeTruthy()
+    expect(screen.getByLabelText('Account')).toHaveValue('3')
+    await waitFor(() => expect(useTransactionsStore.getState().filter.account_id).toBe(3))
+    expect(seen).toContain('3')
+    await waitFor(() => expect(useTransactionsStore.getState().transactions.every((t) => t.account_id === 3)).toBe(true))
+
+    // Clearing the account drops the parameter and the header.
+    fireEvent.click(within(header).getByRole('button', { name: 'All accounts' }))
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/transactions$/))
+    expect(screen.queryByRole('region', { name: 'Account QAM Card' })).toBeNull()
+    await waitFor(() => expect(useTransactionsStore.getState().filter.account_id).toBeUndefined())
+  })
+
+  it('restores the stored account into the URL when none is given', async () => {
+    useTransactionsStore.setState({ filter: { account_id: 1 } })
+    render(
+      <MemoryRouter initialEntries={['/transactions']}>
+        <TransactionsPage />
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/transactions?account_id=1'))
+    expect(await screen.findByRole('region', { name: 'Account Checking' })).toBeTruthy()
+  })
+})
+
