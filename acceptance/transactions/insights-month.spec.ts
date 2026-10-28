@@ -74,6 +74,14 @@ test.describe('insights spending month', () => {
     await expect(totals(0)).toContainText('Spending40.00 USD')
     await expect(totals(0)).toContainText('Net-40.00 USD')
     await expect(totals(0)).toContainText('Spent more than came in')
+    // #658: the trend is readable without hover — a legend, month names (no
+    // YYYY-MM), and the selected month's net as text, equal to the tile.
+    const chart = band.getByRole('group', { name: 'Income vs. spending by month' })
+    const selectedNet = chart.getByRole('list', { name: 'Net by month' }).locator('[aria-current="date"]')
+    await expect(chart.getByRole('list', { name: 'Legend' })).toContainText('Income')
+    await expect(chart.getByRole('list', { name: 'Legend' })).toContainText('Spending')
+    await expect(band).not.toContainText(/\d{4}-\d{2}/)
+    await expect(selectedNet).toContainText('-40.00 USD')
     // 40 this month vs. last month's 130 averaged over the 5 months before (26).
     await expect(trendRow(0, groceries.name)).toContainText('40.00')
     await expect(trendRow(0, groceries.name)).toContainText('▲ 54%')
@@ -92,6 +100,10 @@ test.describe('insights spending month', () => {
     await expect(totals(-1)).toContainText('Spending540.25 USD')
     await expect(totals(-1)).toContainText('Net2,659.75 USD')
     await expect(totals(-1)).toContainText('Kept after spending')
+    // The trend window now ends at last month, which is the one emphasized.
+    await expect(selectedNet).toContainText('2,659.75 USD')
+    await expect(chart.getByRole('list', { name: 'Net by month' }).getByRole('listitem').last()).toHaveAttribute('aria-current', 'date')
+    await expect(band).not.toContainText(/\d{4}-\d{2}/)
     // #617: nothing on the page still shows this month's 40.00 spending or a
     // second income/spending pair — the month tiles are the only cash-flow figures.
     await expect(page.getByText(/(^|[^\d,.])40\.00 USD/).filter({ visible: true })).toHaveCount(0)

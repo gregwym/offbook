@@ -18,10 +18,16 @@ export type PastMonthSpending =
       // The month's income / spending / net (#609); null if the server
       // returned no row for it.
       cashFlow: InsightsData['cash_flow'][number] | null
+      // The income-vs-spending trend window ending at this month (#658).
+      cashFlowSeries: InsightsData['cash_flow']
       // The month vs. the months before it (#611).
       categoryTrend: InsightsData['category_trend']
       retry: () => void
     }
+
+// The trend shows six months, ending at the stepped-to month (#658) — the
+// same window the page's own load uses for the current month.
+const CASH_FLOW_MONTHS = 6
 
 type Loaded =
   | {
@@ -30,6 +36,7 @@ type Loaded =
       byCategory: InsightsData['by_category']
       topMerchants: InsightsData['top_merchants']
       cashFlow: InsightsData['cash_flow'][number] | null
+      cashFlowSeries: InsightsData['cash_flow']
       categoryTrend: InsightsData['category_trend']
     }
   | { key: string; ok: false }
@@ -55,13 +62,15 @@ export function usePastMonthSpending(month: string | null, scope: InsightsData['
         ? Promise.all([
             getHouseholdSpendByCategory(span),
             getHouseholdTopMerchants(10, span),
-            getHouseholdCashFlow(1, month),
+            getHouseholdCashFlow(CASH_FLOW_MONTHS, month),
             getHouseholdCategoryTrend(6, month),
           ])
-        : Promise.all([getSpendByCategory(span), getTopMerchants(10, span), getCashFlow(1, month), getCategoryTrend(6, month)])
+        : Promise.all([getSpendByCategory(span), getTopMerchants(10, span), getCashFlow(CASH_FLOW_MONTHS, month), getCategoryTrend(6, month)])
     load
       .then(([byCategory, topMerchants, cashFlow, categoryTrend]) => {
-        if (!cancelled) setLoaded({ key, ok: true, byCategory, topMerchants, cashFlow: cashFlow[0] ?? null, categoryTrend })
+        if (cancelled) return
+        const row = cashFlow.find((m) => m.month.slice(0, 7) === month) ?? null
+        setLoaded({ key, ok: true, byCategory, topMerchants, cashFlow: row, cashFlowSeries: cashFlow, categoryTrend })
       })
       .catch(() => {
         if (!cancelled) setLoaded({ key, ok: false })
@@ -79,6 +88,7 @@ export function usePastMonthSpending(month: string | null, scope: InsightsData['
     byCategory: loaded.byCategory,
     topMerchants: loaded.topMerchants,
     cashFlow: loaded.cashFlow,
+    cashFlowSeries: loaded.cashFlowSeries,
     categoryTrend: loaded.categoryTrend,
     retry,
   }
