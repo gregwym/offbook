@@ -18,13 +18,16 @@ import { useCategoriesStore } from '../store/categoriesStore'
 import { useRulesStore } from '../store/rulesStore'
 import { useTransactionsStore } from '../store/transactionsStore'
 import { useDebounce } from '../hooks/useDebounce'
-import type { Account } from '../types/account'
+import { accountTypeLabel, type Account } from '../types/account'
 import type { Asset } from '../types/asset'
 import type { Category } from '../types/category'
 import type { CreateRuleInput } from '../types/categorizationRule'
 import type { BulkEditAction, BulkEditPrior, CreateTransactionInput, TagCount, Transaction, TransactionSource } from '../types/transaction'
 import { TRANSACTION_SOURCES } from '../types/transaction'
 import { ModalShell } from '../components/ModalShell'
+import { PartialBadge } from '../components/PartialBadge'
+import { UpdateBalanceModal } from '../components/UpdateBalanceModal'
+import { canUpdateBalance } from '../lib/accountActions'
 import { RowActionsMenu, type RowAction } from '../components/RowActionsMenu'
 import { txDisplayName, txSecondaryDescription } from '../lib/txName'
 import { NEW_CATEGORY, NewCategoryDialog, NewCategoryOption } from '../components/NewCategoryDialog'
@@ -59,9 +62,35 @@ export function TransactionsPage() {
   // Local filter inputs — synced into the store via setFilter on change.
   // A spending drill-down link (#571) carries its category and dates in the
   // URL; those win over whatever filter the store remembers.
-  const [urlParams] = useSearchParams()
+  const [urlParams, setUrlParams] = useSearchParams()
   const drillIn = urlParams.get('spending') === '1'
-  const [accountID, setAccountID] = useState<string>(drillIn ? '' : String(filter.account_id ?? ''))
+  // The account filter lives in the URL (?account_id=N, #657) so an account
+  // link from Accounts, a reload or a shared link all land on that account.
+  // Without one, the store's remembered account is restored into the URL.
+  const urlAccount = urlParams.get('account_id') ?? ''
+  const accountID = /^\d+$/.test(urlAccount) ? urlAccount : ''
+  const setAccountID = useCallback(
+    (next: string) => {
+      setUrlParams(
+        (prev) => {
+          if ((prev.get('account_id') ?? '') === next) return prev
+          const out = new URLSearchParams(prev)
+          if (next) out.set('account_id', next)
+          else out.delete('account_id')
+          return out
+        },
+        { replace: true },
+      )
+    },
+    [setUrlParams],
+  )
+  useEffect(() => {
+    if (!drillIn && !urlParams.has('account_id') && filter.account_id != null) {
+      setAccountID(String(filter.account_id))
+    }
+    // Mount only: restore once, then the URL is the source of truth.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [categoryID, setCategoryID] = useState<string>(
     drillIn
       ? urlParams.get('category_id') ?? ''
@@ -90,6 +119,8 @@ export function TransactionsPage() {
   const search = useDebounce(searchInput, 300)
   const [adding, setAdding] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [balancing, setBalancing] = useState<Account | null>(null)
+  const filteredAccount = accountID ? accounts.find((a) => String(a.id) === accountID) ?? null : null
   const filtersActive = Boolean(accountID || categoryID || from || to || searchInput || tag)
   // Below md only Search is shown up front; Account/Category/From/To sit
   // behind a "Filters" toggle so the list isn't pushed below the fold (#518).
@@ -504,6 +535,14 @@ export function TransactionsPage() {
           </button>
         </div>
       </div>
+
+      {filteredAccount && (
+        <AccountHeader
+          account={filteredAccount}
+          onUpdateBalance={() => setBalancing(filteredAccount)}
+          onShowAll={() => setAccountID('')}
+        />
+      )}
 
       {error && (
         <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
@@ -953,9 +992,18 @@ export function TransactionsPage() {
       {importing && (
         <ImportTransactionsModal
           accounts={accounts}
+          initialAccountID={filteredAccount?.id}
           onClose={() => setImporting(false)}
           onImported={() => { void fetch(); refreshTransferCandidates() }}
           onUndone={() => { void fetch(); refreshTransferCandidates() }}
+        />
+      )}
+
+      {balancing && (
+        <UpdateBalanceModal
+          account={balancing}
+          onClose={() => setBalancing(null)}
+          onUpdated={() => { void fetchAccounts(); void fetch() }}
         />
       )}
 
@@ -1642,6 +1690,60 @@ function AddTransactionModal({ accounts, categories, onClose, onSubmit }: AddPro
 }
 
 const inputClass = 'w-full rounded border border-gray-300 px-2 py-1 text-sm'
+
+// AccountHeader sits over a list filtered to one account (#657): the
+// account's balance as Accounts shows it, and the way into its
+// reconciliation and (manual cash accounts) a fresh balance.
+function AccountHeader({ account, onUpdateBalance, onShowAll }: {
+  account: Account
+  onUpdateBalance: () => void
+  onShowAll: () => void
+}) {
+  return (
+    <section
+      aria-label={`Account ${account.name}`}
+      className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-gray-200 bg-white px-4 py-3"
+    >
+      <div className="min-w-0">
+        <h2 className="break-words text-base font-semibold text-gray-900">{account.name}</h2>
+        <div className="text-xs text-gray-500">{accountTypeLabel(account.account_type)}</div>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <div className="text-right">
+          <div className="text-xs font-medium uppercase tracking-wider text-gray-500">Balance</div>
+          <div aria-label="Account balance" className="text-lg font-semibold text-gray-900">
+            <AmountDisplay amount={account.balance} currency={account.currency} />
+            {!account.balance_complete && <PartialBadge />}
+          </div>
+        </div>
+        <nav aria-label={`${account.name} actions`} className="flex flex-wrap items-center gap-x-3 text-sm">
+          <Link
+            to={`/accounts/${account.id}/reconciliation`}
+            className="inline-flex min-h-10 items-center font-medium text-indigo-600 hover:text-indigo-800"
+          >
+            Reconciliation
+          </Link>
+          {canUpdateBalance(account) && (
+            <button
+              type="button"
+              onClick={onUpdateBalance}
+              className="inline-flex min-h-10 items-center font-medium text-indigo-600 hover:text-indigo-800"
+            >
+              Update balance
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onShowAll}
+            className="inline-flex min-h-10 items-center text-gray-600 hover:text-gray-900"
+          >
+            All accounts
+          </button>
+        </nav>
+      </div>
+    </section>
+  )
+}
 
 function Field({ label, className = 'block', children }: { label: string; className?: string; children: ReactNode }) {
   return (

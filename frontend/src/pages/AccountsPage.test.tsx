@@ -135,4 +135,56 @@ describe('AccountsPage smoke', () => {
     expect(screen.getByLabelText('Cash total')).toHaveTextContent('1,234.56 USD')
     expect(screen.getByLabelText('Cash total')).toHaveTextContent('5.00 EUR')
   })
+
+  // #657: the account name opens its transactions; Delete sits behind Edit,
+  // never inline; columns nobody fills are dropped.
+  it('links each account to its transactions and keeps Delete behind Edit', async () => {
+    server.use(
+      http.get('/api/v1/accounts', () =>
+        HttpResponse.json({
+          data: [
+            { ...fx.account1, id: 1, name: 'Everyday', last_four: null },
+            { ...fx.account1, id: 3, name: 'QAM Card', account_type: 'credit_card', balance: '-12341.70', last_four: null },
+          ],
+          total: 2,
+        })),
+    )
+    renderPage(<AccountsPage />)
+    const link = await screen.findByRole('link', { name: 'QAM Card' })
+    expect(link).toHaveAttribute('href', '/transactions?account_id=3')
+    expect(screen.getByRole('link', { name: 'Everyday' })).toHaveAttribute('href', '/transactions?account_id=1')
+
+    expect(screen.queryByRole('button', { name: /delete/i })).toBeNull()
+    expect(screen.queryByRole('columnheader', { name: 'Last 4' })).toBeNull()
+    expect(screen.queryByRole('columnheader', { name: 'Sync' })).toBeNull()
+    // Every row action names its account.
+    expect(screen.getAllByRole('button', { name: 'Edit QAM Card' }).length).toBeGreaterThan(0)
+
+    let deleted = false
+    server.use(http.delete('/api/v1/accounts/:id', () => { deleted = true; return new HttpResponse(null, { status: 204 }) }))
+    const confirm = window.confirm
+    window.confirm = () => true
+    try {
+      fireEvent.click(screen.getAllByRole('button', { name: 'Edit QAM Card' })[0])
+      const dialog = await screen.findByRole('dialog')
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete account' }))
+      await waitFor(() => expect(deleted).toBe(true))
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    } finally {
+      window.confirm = confirm
+    }
+  })
+
+  it('keeps Last 4 and Sync when some account has them', async () => {
+    server.use(
+      http.get('/api/v1/accounts', () =>
+        HttpResponse.json({
+          data: [{ ...fx.account1, plaid_item_id: 'item-1', last_sync_status: 'ok', last_synced_at: new Date().toISOString() }],
+          total: 1,
+        })),
+    )
+    renderPage(<AccountsPage />)
+    expect(await screen.findByRole('columnheader', { name: 'Last 4' })).toBeTruthy()
+    expect(screen.getByRole('columnheader', { name: 'Sync' })).toBeTruthy()
+  })
 })

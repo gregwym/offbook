@@ -34,7 +34,8 @@ test.describe('update manual account balance', () => {
     await expectInViewport(page, row.getByRole('button', { name: 'Update balance for Balance Checking' }))
     await expectInViewport(page, row.getByRole('button', { name: /Import transactions/ }))
     await expectInViewport(page, row.getByRole('button', { name: /^Edit/ }))
-    await expectInViewport(page, row.getByRole('button', { name: /^Delete/ }))
+    // #657: Delete sits in the edit dialog, never inline beside Edit.
+    await expect(row.getByRole('button', { name: /^Delete/ })).toHaveCount(0)
     await expect(page.getByText('Manage your accounts and PII.')).toHaveCount(0)
     await testInfo.attach('accounts-list', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
 
