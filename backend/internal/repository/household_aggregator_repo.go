@@ -96,6 +96,11 @@ type HouseholdAggregatorRepository interface {
 	// `budgets` table with household_id set; readers tolerate an empty set.
 	ListSharedBudgets(ctx context.Context, householdID int64, period string) ([]model.Budget, error)
 
+	// SharedBudgetAmountHistory returns a household budget's limit history
+	// (#580), oldest first, for shared-budget rollover (#663). Only rows of a
+	// budget owned by householdID are returned; any other id yields none.
+	SharedBudgetAmountHistory(ctx context.Context, householdID, budgetID int64) ([]model.BudgetAmount, error)
+
 	// CategoryNames maps each of the given category IDs to its name (#615).
 	// A name is a label, not PII. Unknown or soft-deleted IDs are absent;
 	// empty input → empty map, no SQL issued.
@@ -548,6 +553,18 @@ func (r *householdAggregatorRepo) ListSharedBudgets(ctx context.Context, househo
 	}
 	var out []model.Budget
 	if err := q.Order("id").Find(&out).Error; err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *householdAggregatorRepo) SharedBudgetAmountHistory(ctx context.Context, householdID, budgetID int64) ([]model.BudgetAmount, error) {
+	var out []model.BudgetAmount
+	if err := r.db.WithContext(ctx).
+		Joins("JOIN budgets b ON b.id = budget_amounts.budget_id").
+		Where("budget_amounts.budget_id = ? AND b.household_id = ?", budgetID, householdID).
+		Order("budget_amounts.effective_from ASC").
+		Find(&out).Error; err != nil {
 		return nil, err
 	}
 	return out, nil

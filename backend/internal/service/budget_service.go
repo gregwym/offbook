@@ -495,27 +495,34 @@ func (s *BudgetService) limits(ctx context.Context, b *model.Budget) (budgetLimi
 	return budgetLimits{history: h, current: b.Amount}, nil
 }
 
-// at returns the limit for the period starting at periodStart: the latest
+// at returns the limit for the period starting at periodStart; see LimitAt.
+func (l budgetLimits) at(periodStart time.Time) decimal.Decimal {
+	return LimitAt(l.history, l.current, periodStart)
+}
+
+// LimitAt returns a budget's limit for the period starting at periodStart,
+// given its limit history (#580, oldest first) and current amount: the latest
 // entry effective on or before it. The latest entry is always the budget's
 // current amount (budgets.amount is canonical during the expand stage); a
 // period before the first entry uses the first entry, the oldest limit known.
-func (l budgetLimits) at(periodStart time.Time) decimal.Decimal {
-	n := len(l.history)
+// Personal and household rollover share it (#663).
+func LimitAt(history []model.BudgetAmount, current decimal.Decimal, periodStart time.Time) decimal.Decimal {
+	n := len(history)
 	if n == 0 {
-		return l.current
+		return current
 	}
 	day := time.Date(periodStart.Year(), periodStart.Month(), periodStart.Day(), 0, 0, 0, 0, time.UTC)
 	i := n - 1
-	for i >= 0 && l.history[i].EffectiveFrom.UTC().After(day) {
+	for i >= 0 && history[i].EffectiveFrom.UTC().After(day) {
 		i--
 	}
 	if i == n-1 {
-		return l.current
+		return current
 	}
 	if i < 0 {
 		i = 0
 	}
-	return l.history[i].Amount
+	return history[i].Amount
 }
 
 func prevPeriodStart(period string, from time.Time) time.Time {
