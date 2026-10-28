@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -31,6 +32,11 @@ type BalanceObservationRepository interface {
 	// reverses the ledger rows, so the balance claim they anchored no longer
 	// holds (#483).
 	DeleteByImportJob(ctx context.Context, userID, jobID int64) error
+	// EarliestAfter returns the as_of of the earliest observation for
+	// (account, asset) on a calendar day (UTC) after `after`'s, or nil when
+	// none exists. A backdated balance must not move the balance such a
+	// later observation already pinned (#669).
+	EarliestAfter(ctx context.Context, userID, accountID, assetID int64, after time.Time) (*time.Time, error)
 }
 
 type balanceObservationRepo struct {
@@ -84,4 +90,21 @@ func (r *balanceObservationRepo) DeleteByImportJob(ctx context.Context, userID, 
 	return r.db.WithContext(ctx).
 		Where("user_id = ? AND import_job_id = ?", userID, jobID).
 		Delete(&model.AccountBalanceObservation{}).Error
+}
+
+func (r *balanceObservationRepo) EarliestAfter(ctx context.Context, userID, accountID, assetID int64, after time.Time) (*time.Time, error) {
+	var out []time.Time
+	if err := r.db.WithContext(ctx).
+		Model(&model.AccountBalanceObservation{}).
+		Where("user_id = ? AND account_id = ? AND asset_id = ? AND (as_of AT TIME ZONE 'UTC')::date > ?::date",
+			userID, accountID, assetID, after.UTC().Format("2006-01-02")).
+		Order("as_of ASC").
+		Limit(1).
+		Pluck("as_of", &out).Error; err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return &out[0], nil
 }

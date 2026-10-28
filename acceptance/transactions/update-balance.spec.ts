@@ -129,6 +129,71 @@ test.describe('update manual account balance', () => {
     await page.reload()
     await expect(row).toContainText('2,350.00')
   })
+
+  // #669: a balance for a past day is checked against the transactions up to
+  // that day; later spending still counts and today's balance is not reset.
+  test('past-dated balance keeps later transactions', async ({ page }, testInfo) => {
+    process.env.OFFBOOK_ROLE = process.env.OFFBOOK_ROLE ?? 'qa'
+    const user = await createThrowawayUser({ suite: `balance-past-${testInfo.project.name}` })
+    const cookie = await apiSignin(user.email, user.password)
+    const acct = await api(cookie, '/accounts', {
+      name: 'Past Checking', institution_slug: 'manual', account_type: 'checking', currency: 'USD',
+    })
+    const accountID = acct.data.id as number
+    const day = (offset: number) => {
+      const d = new Date()
+      d.setUTCDate(d.getUTCDate() - offset)
+      return d.toISOString().slice(0, 10)
+    }
+    const past = day(60)
+    const tx = (amount: string, description: string, date: string) =>
+      api(cookie, '/transactions', { account_id: accountID, amount, description, transaction_date: date, source: 'csv' })
+    await tx('1000.00', 'QA Deposit', past)
+    await tx('-100.00', 'QA Grocer', day(50))
+
+    await signIn(page, user.email, user.password)
+    await page.goto('/accounts')
+    const row = page.getByRole('row').filter({ hasText: 'Past Checking' })
+    await expect(row).toContainText('900.00')
+
+    const open = async () => {
+      await row.getByRole('button', { name: 'Update balance for Past Checking' }).click()
+      return page.getByRole('dialog', { name: /Update balance/ })
+    }
+    // The correct balance on that day: recorded, nothing adjusted.
+    let dialog = await open()
+    await dialog.getByLabel('Balance (USD)').fill('1000.00')
+    await dialog.getByLabel('As of').fill(past)
+    await expect(dialog.getByText('Transactions after that date stay as they are.')).toBeVisible()
+    await expectNoOverflow(page)
+    await testInfo.attach('update-balance-past-form', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+    await dialog.getByRole('button', { name: 'Save balance' }).click()
+    const status = dialog.getByRole('status')
+    await expect(status).toContainText('1,000.00')
+    await expect(status).toContainText('Balance today is')
+    await expect(status).toContainText('900.00')
+    await expect(status).toContainText('already add up to this balance')
+    await testInfo.attach('update-balance-past-saved', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+    await dialog.getByRole('button', { name: 'Done' }).click()
+    await expect(row).toContainText('900.00')
+
+    // A real discrepancy that day is recorded there (as the first reconciling
+    // row, the opening balance); the later −100 still applies.
+    dialog = await open()
+    await dialog.getByLabel('Balance (USD)').fill('1100.00')
+    await dialog.getByLabel('As of').fill(past)
+    await dialog.getByRole('button', { name: 'Save balance' }).click()
+    await expect(status).toContainText('an opening balance of')
+    await expect(status).toContainText('100.00')
+    await expect(status).toContainText('Balance today is')
+    await expect(status).toContainText('1,000.00')
+    await expectNoOverflow(page)
+    await testInfo.attach('update-balance-past-adjusted', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+    await dialog.getByRole('button', { name: 'Done' }).click()
+    await expect(row).toContainText('1,000.00')
+    await page.reload()
+    await expect(row).toContainText('1,000.00')
+  })
 })
 
 async function apiSignin(email: string, password: string) {

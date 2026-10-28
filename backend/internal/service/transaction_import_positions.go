@@ -143,7 +143,7 @@ func (s *TransactionService) previewPositions(ctx context.Context, userID int64,
 			pv.AssetStatus = AssetNew
 			if asset != nil {
 				pv.AssetStatus, assetID = AssetExisting, asset.ID
-				if fold, err = s.repo.FoldQuantity(ctx, userID, account.ID, assetID); err != nil {
+				if fold, _, err = reconcileFold(ctx, s.repo, userID, account.ID, assetID, p.AsOf); err != nil {
 					return fmt.Errorf("fold %s: %w", p.Symbol, err)
 				}
 			}
@@ -170,7 +170,7 @@ func (s *TransactionService) previewPositions(ctx context.Context, userID int64,
 			return fmt.Errorf("cash asset: %w", err)
 		}
 		reported := statementBalanceQuantity(account.AccountType, *ext.ClosingBalance)
-		fold, err := s.repo.FoldQuantity(ctx, userID, account.ID, cash.ID)
+		fold, _, err := reconcileFold(ctx, s.repo, userID, account.ID, cash.ID, *ext.ClosingBalanceAt)
 		if err != nil {
 			return err
 		}
@@ -239,8 +239,14 @@ func (s *TransactionService) commitPositions(ctx context.Context, userID int64, 
 			if rec != nil {
 				res.AdjustmentsWritten++
 			}
+			// The position is the whole ledger, not the reported value: an
+			// older statement's balance must not reset today's (#669).
+			qty, err := txRepo.FoldQuantity(ctx, userID, account.ID, t.assetID)
+			if err != nil {
+				return fmt.Errorf("fold position: %w", err)
+			}
 			if err := posRepo.Upsert(ctx, &model.Position{
-				UserID: userID, AccountID: account.ID, AssetID: t.assetID, Quantity: t.quantity,
+				UserID: userID, AccountID: account.ID, AssetID: t.assetID, Quantity: qty,
 			}); err != nil {
 				return fmt.Errorf("upsert position: %w", err)
 			}

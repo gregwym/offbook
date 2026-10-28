@@ -153,6 +153,16 @@ type TransactionRepository interface {
 	// already exists for the (account, asset) pair. The first reconciling
 	// write is an opening_balance anchor; later ones are adjustments.
 	HasReconcilingTxn(ctx context.Context, userID, accountID, assetID int64) (bool, error)
+	// FoldQuantityThrough is FoldQuantity restricted to rows dated on or
+	// before through's calendar day (UTC) — the ledger as it stood at the end
+	// of that day. A backdated balance is compared with this, not with the
+	// current fold, so later activity is not absorbed into it (#669). Takes
+	// the position lock first (see lockPosition).
+	FoldQuantityThrough(ctx context.Context, userID, accountID, assetID int64, through time.Time) (decimal.Decimal, error)
+	// EarliestReconcilingAfter returns the date of the earliest
+	// opening_balance/adjustment row dated after `after`'s calendar day
+	// (UTC), or nil when none exists.
+	EarliestReconcilingAfter(ctx context.Context, userID, accountID, assetID int64, after time.Time) (*time.Time, error)
 	// ListReconciling returns every opening_balance/adjustment row for the
 	// account (across all assets it holds), oldest first — the per-account
 	// reconciliation view's (#370) ledger-side half.
@@ -856,6 +866,41 @@ func (r *transactionRepo) FoldByUserAsOf(ctx context.Context, userID int64, asOf
 		out = append(out, model.Position{UserID: userID, AssetID: r.AssetID, Quantity: q})
 	}
 	return out, nil
+}
+
+func (r *transactionRepo) FoldQuantityThrough(ctx context.Context, userID, accountID, assetID int64, through time.Time) (decimal.Decimal, error) {
+	if err := r.lockPosition(ctx, accountID, assetID); err != nil {
+		return decimal.Zero, err
+	}
+	var s string
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(amount), 0)::text
+		FROM transactions
+		WHERE deleted_at IS NULL
+		  AND user_id = ? AND account_id = ? AND asset_id = ?
+		  AND transaction_date <= ?::date
+	`, userID, accountID, assetID, through.UTC().Format("2006-01-02")).Scan(&s).Error; err != nil {
+		return decimal.Zero, err
+	}
+	return decimal.NewFromString(s)
+}
+
+func (r *transactionRepo) EarliestReconcilingAfter(ctx context.Context, userID, accountID, assetID int64, after time.Time) (*time.Time, error) {
+	var out []time.Time
+	if err := r.db.WithContext(ctx).
+		Model(&model.Transaction{}).
+		Where("user_id = ? AND account_id = ? AND asset_id = ? AND kind IN ? AND transaction_date > ?::date",
+			userID, accountID, assetID, []string{model.KindOpeningBalance, model.KindAdjustment},
+			after.UTC().Format("2006-01-02")).
+		Order("transaction_date ASC").
+		Limit(1).
+		Pluck("transaction_date", &out).Error; err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return &out[0], nil
 }
 
 func (r *transactionRepo) HasReconcilingTxn(ctx context.Context, userID, accountID, assetID int64) (bool, error) {
