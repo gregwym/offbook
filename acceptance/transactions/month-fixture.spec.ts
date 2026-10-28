@@ -166,6 +166,21 @@ test.describe('acceptance month fixture', () => {
     await expectNoClipping(page, 'transactions')
     await snap(page, testInfo, 'transactions')
 
+    // Accounts (#655): grouped by kind with exact subtotals, and a net worth
+    // that equals the Insights headline to the cent.
+    const per = { checking: opening.checking, savings: opening.savings, card: 0, brokerage: 0 }
+    for (const r of rows) per[r.account] += r.cents
+    await page.goto('/accounts')
+    const summary = page.getByLabel('Accounts summary')
+    await expect(summary).toContainText(fmt(per.checking + per.savings + per.brokerage))
+    await expect(summary).toContainText(fmt(per.card))
+    await expect(summary).toContainText(fmt(netWorth))
+    await expect(page.getByLabel('Cash total').locator('visible=true')).toContainText(fmt(per.checking + per.savings))
+    await expect(page.getByLabel('Credit cards total').locator('visible=true')).toContainText(fmt(per.card))
+    await expect(page.getByLabel('Investments total').locator('visible=true')).toContainText(fmt(per.brokerage))
+    await expect(page.getByRole('rowgroup', { name: 'Credit cards' })).toContainText('QAM Card')
+    await expect(page.getByText('manual', { exact: true })).toHaveCount(0)
+
     // Every other core page at volume: nothing clipped inside a wrapper (#561).
     for (const [name, path, ready] of [
       ['accounts', '/accounts', 'QAM Checking'],
