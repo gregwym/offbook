@@ -11,6 +11,7 @@ import { AlertTriangle, ArrowLeft, CheckCircle2 } from 'lucide-react'
 import { getAccount } from '../api/accounts'
 import { acknowledgeAdjustment, getReconciliation } from '../api/reconciliation'
 import { AmountDisplay } from '../components/AmountDisplay'
+import { sourceLabel } from '../lib/balanceSource'
 import { TimeAgo } from '../components/TimeAgo'
 import { useMinWidth } from '../hooks/useMinWidth'
 import type { Account } from '../types/account'
@@ -140,25 +141,6 @@ const RECONCILIATION_INTRO =
   'Each time your bank, a statement or you report a balance, Offbook compares it with what your transactions add up ' +
   'to. Any difference is recorded as an adjustment so the balance matches. Adjustments don’t count as spending or ' +
   'income; a large one is flagged so you can check it.'
-
-// sourceLabel names who reported the balance, in the user's terms rather
-// than the stored source enum.
-function sourceLabel(source: string): string {
-  switch (source) {
-    case 'plaid':
-      return 'Your bank'
-    case 'csv':
-    case 'pdf':
-    case 'photo':
-      return 'Your statement'
-    case 'manual':
-      return 'You'
-    case 'system':
-      return 'Offbook'
-    default:
-      return 'Reported'
-  }
-}
 
 function recordedAsLabel(kind: string | undefined): string {
   if (kind === 'opening_balance') return 'Opening balance'

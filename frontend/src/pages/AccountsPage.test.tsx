@@ -52,6 +52,29 @@ describe('AccountsPage smoke', () => {
     expect(screen.queryByText('credit_card')).toBeNull()
   })
 
+  // #665: who reported the balance reads in the user's words, not the enum.
+  it('says who reported each balance without the source enum', async () => {
+    const at = new Date().toISOString()
+    server.use(
+      http.get('/api/v1/accounts', () =>
+        HttpResponse.json({
+          data: [
+            { ...fx.account1, id: 1, name: 'Mine', last_observed_at: at, last_observed_source: 'manual' },
+            { ...fx.account1, id: 2, name: 'Linked', last_observed_at: at, last_observed_source: 'plaid' },
+            { ...fx.account1, id: 3, name: 'Imported', last_observed_at: at, last_observed_source: 'pdf' },
+          ],
+          total: 3,
+        }),
+      ),
+    )
+    renderPage(<AccountsPage />)
+    const row = async (name: string) => (await screen.findByRole('link', { name })).closest('tr') as HTMLElement
+    expect(await row('Mine')).toHaveTextContent(/Reported .+ by you/)
+    expect(await row('Linked')).toHaveTextContent(/Reported .+ by your bank/)
+    expect(await row('Imported')).toHaveTextContent(/Reported .+ from your statement/)
+    expect(screen.queryByText(/via (manual|plaid|pdf)/)).toBeNull()
+  })
+
   // #530: a partial balance names the holding missing a price, and Set price
   // opens pre-filled with it so the user only types the price.
   it('names the unpriced holding and pre-fills Set price with it', async () => {

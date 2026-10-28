@@ -14,6 +14,7 @@ import { TimeAgo } from '../components/TimeAgo'
 import { TradeFormModal } from '../components/TradeFormModal'
 import { UpdateBalanceModal } from '../components/UpdateBalanceModal'
 import { useMinWidth } from '../hooks/useMinWidth'
+import { reportedBy } from '../lib/balanceSource'
 import { groupAccounts, institutionLabel, summarizeAccounts, type CurrencyTotal } from '../lib/accountGroups'
 import { useAccountsStore } from '../store/accountsStore'
 import { useScopeStore } from '../store/scopeStore'
@@ -318,7 +319,7 @@ export function AccountsPage() {
                   )}
                   {a.last_observed_at && (
                     <div className="mt-0.5 text-xs text-gray-400">
-                      Observed <TimeAgo when={a.last_observed_at} /> via {a.last_observed_source}
+                      Reported <TimeAgo when={a.last_observed_at} /> {reportedBy(a.last_observed_source)}
                     </div>
                   )}
                   {canUpdateBalance(a) && (
