@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { AlertTriangle, CheckCircle2, LineChart, Pencil, Plus, Trash2, Upload, X } from 'lucide-react'
+import { listItems } from '../api/plaid'
 import { AccountVisibilityChip } from '../components/AccountVisibilityChip'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
@@ -12,6 +13,7 @@ import { TimeAgo } from '../components/TimeAgo'
 import { TradeFormModal } from '../components/TradeFormModal'
 import { UpdateBalanceModal } from '../components/UpdateBalanceModal'
 import { useMinWidth } from '../hooks/useMinWidth'
+import { groupAccounts, institutionLabel, summarizeAccounts, type CurrencyTotal } from '../lib/accountGroups'
 import { useAccountsStore } from '../store/accountsStore'
 import { useScopeStore } from '../store/scopeStore'
 import {
@@ -73,6 +75,27 @@ export function AccountsPage() {
     void fetch()
   }, [fetch])
 
+  // Linked accounts name their institution through the Plaid item (#655);
+  // only fetched when some account is linked.
+  const hasLinked = accounts.some((a) => a.plaid_item_id)
+  const [plaidNames, setPlaidNames] = useState<Map<string, string>>(() => new Map())
+  useEffect(() => {
+    if (!hasLinked) return
+    listItems()
+      .then(({ items }) => {
+        const m = new Map<string, string>()
+        for (const it of items) if (it.institution_name) m.set(it.plaid_item_id, it.institution_name)
+        setPlaidNames(m)
+      })
+      .catch(() => {
+        // The label falls back to "Linked bank"; the page stays usable.
+      })
+  }, [hasLinked])
+
+  const groups = useMemo(() => groupAccounts(accounts), [accounts])
+  const summary = useMemo(() => summarizeAccounts(accounts), [accounts])
+  const columns = householdId != null ? 8 : 7
+
   return (
     <div>
       <div className="flex items-center justify-between">
@@ -126,7 +149,26 @@ export function AccountsPage() {
         </div>
       )}
 
-      <div className="mt-6 overflow-x-auto rounded-lg border border-gray-200 bg-white">
+      {summary && (
+        <dl
+          aria-label="Accounts summary"
+          className="mt-6 divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white sm:grid sm:grid-cols-3 sm:gap-3 sm:divide-y-0 sm:border-0 sm:bg-transparent"
+        >
+          <SummaryTile label="Assets" amount={summary.assets} currency={summary.currency} complete={summary.complete} />
+          <SummaryTile label="Liabilities" amount={summary.liabilities} currency={summary.currency} complete />
+          <SummaryTile label="Net worth" amount={summary.netWorth} currency={summary.currency} complete={summary.complete} strong />
+        </dl>
+      )}
+      {!summary && accounts.length > 0 && (
+        <p className="mt-6 text-sm text-gray-600">
+          Your accounts use more than one currency.{' '}
+          <Link to="/insights" className="font-medium text-indigo-600 hover:text-indigo-800">
+            See net worth in one currency on Insights
+          </Link>
+        </p>
+      )}
+
+      <div className="mt-4 overflow-x-auto rounded-lg border border-gray-200 bg-white">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wider text-gray-500">
             <tr>
@@ -135,18 +177,18 @@ export function AccountsPage() {
               <th className="hidden px-4 py-2 text-left md:table-cell">Type</th>
               <th className="hidden px-4 py-2 text-left md:table-cell">Last 4</th>
               <th className="px-4 py-2 text-right">Balance</th>
-              <th className="hidden px-4 py-2 text-center md:table-cell">Active</th>
               <th className="hidden px-4 py-2 text-left md:table-cell">Sync</th>
               {householdId != null && <th className="hidden px-4 py-2 text-left md:table-cell">Household visibility</th>}
               <th className="hidden px-4 py-2 md:table-cell"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
-            {loading && accounts.length === 0 && (
-              <tr><td colSpan={householdId != null ? 9 : 8} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>
+          {accounts.length === 0 && (
+          <tbody>
+            {loading && (
+              <tr><td colSpan={columns} className="px-4 py-6 text-center text-gray-400">Loading…</td></tr>
             )}
-            {!loading && accounts.length === 0 && (
-              <tr><td colSpan={householdId != null ? 9 : 8} className="px-4 py-8 text-center">
+            {!loading && (
+              <tr><td colSpan={columns} className="px-4 py-8 text-center">
                 <div className="text-gray-700">No accounts yet.</div>
                 <div className="mt-1 text-sm text-gray-500">
                   Connect a bank or add one manually — transactions and balances appear here once an account exists.
@@ -159,10 +201,31 @@ export function AccountsPage() {
                 </Link>
               </td></tr>
             )}
-            {accounts.map((a) => (
+          </tbody>
+          )}
+          {groups.map((g) => (
+          <Fragment key={g.key}>
+          <tbody aria-label={g.label} className="divide-y divide-gray-100 border-t border-gray-200">
+            <tr className="bg-gray-50/70">
+              <th scope="rowgroup" className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
+                {g.label}
+                <span className="ml-1.5 text-xs font-normal text-gray-400">{g.accounts.length}</span>
+              </th>
+              <td colSpan={3} className="hidden md:table-cell" />
+              <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900" aria-label={`${g.label} total`}>
+                <Subtotals totals={g.subtotals} />
+              </td>
+              <td colSpan={columns - 5} className="hidden md:table-cell" />
+            </tr>
+            {g.accounts.map((a) => (
               <tr key={a.id} className="hover:bg-gray-50">
                 <td className="px-4 py-2 align-top font-medium text-gray-900">
                   {a.name}
+                  {!a.is_active && (
+                    <span className="ml-1.5 inline-flex items-center rounded border border-gray-200 bg-gray-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-gray-500">
+                      Inactive
+                    </span>
+                  )}
                   {a.needs_attention && (
                     <Link
                       to={`/accounts/${a.id}/reconciliation`}
@@ -177,7 +240,7 @@ export function AccountsPage() {
                       actions here instead of behind a sideways scroll. */}
                   <div className="mt-1 space-y-1.5 font-normal md:hidden">
                     <div className="text-xs text-gray-500">
-                      {[accountTypeLabel(a.account_type), a.last_four ? `••${a.last_four}` : null, a.is_active ? null : 'inactive']
+                      {[accountTypeLabel(a.account_type), institutionLabel(a, plaidNames), a.last_four ? `••${a.last_four}` : null]
                         .filter(Boolean)
                         .join(' · ')}
                     </div>
@@ -185,10 +248,10 @@ export function AccountsPage() {
                     {householdId != null && !wide && (
                       <AccountVisibilityChip accountID={a.id} householdID={householdId} />
                     )}
-                    <div className="flex flex-wrap gap-x-3 text-xs">
+                    <div className="flex flex-wrap gap-x-2.5 text-xs">
                       {isBrokerage(a) && (
                         <button type="button" onClick={() => setTradingOn(a)} aria-label={`Record trade in ${a.name}`} className="min-h-9 text-indigo-700 underline">
-                          Record trade
+                          Trade
                         </button>
                       )}
                       <button type="button" onClick={() => setImportingInto(a)} aria-label={`Import transactions into ${a.name}`} className="min-h-9 text-indigo-700 underline">
@@ -203,7 +266,7 @@ export function AccountsPage() {
                     </div>
                   </div>
                 </td>
-                <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{a.institution_slug}</td>
+                <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{institutionLabel(a, plaidNames)}</td>
                 <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{accountTypeLabel(a.account_type)}</td>
                 <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{a.last_four ?? '—'}</td>
                 <td className="px-4 py-2 text-right align-top">
@@ -252,11 +315,6 @@ export function AccountsPage() {
                       Update balance
                     </button>
                   )}
-                </td>
-                <td className="hidden px-4 py-2 text-center align-top md:table-cell">
-                  <span className={a.is_active ? 'text-emerald-700' : 'text-gray-400'}>
-                    {a.is_active ? 'yes' : 'no'}
-                  </span>
                 </td>
                 <td className="hidden px-4 py-2 align-top md:table-cell">
                   <SyncStatusPill account={a} />
@@ -307,6 +365,8 @@ export function AccountsPage() {
               </tr>
             ))}
           </tbody>
+          </Fragment>
+          ))}
         </table>
       </div>
 
@@ -369,6 +429,40 @@ export function AccountsPage() {
 }
 
 type CreatedAccount = { id: number; name: string }
+
+function SummaryTile({ label, amount, currency, complete, strong }: {
+  label: string
+  amount: string
+  currency: string
+  complete: boolean
+  strong?: boolean
+}) {
+  return (
+    // Phones: one card, a row per figure (label left, amount right) so a long
+    // balance never squeezes. From sm up: three tiles.
+    <div className="flex min-w-0 items-baseline justify-between gap-3 px-4 py-2 sm:block sm:rounded-lg sm:border sm:border-gray-200 sm:bg-white sm:py-3">
+      <dt className="text-xs font-medium uppercase tracking-wider text-gray-500">{label}</dt>
+      <dd className={`${strong ? 'font-semibold text-gray-900' : 'text-gray-800'} text-sm sm:mt-0.5 sm:text-lg`}>
+        <AmountDisplay amount={amount} currency={currency} />
+        {!complete && <PartialBadge />}
+      </dd>
+    </div>
+  )
+}
+
+// Subtotals renders a group's total, one line per currency when it mixes them.
+function Subtotals({ totals }: { totals: CurrencyTotal[] }) {
+  return (
+    <>
+      {totals.map((t) => (
+        <div key={t.currency}>
+          <AmountDisplay amount={t.amount} currency={t.currency} />
+          {!t.complete && <PartialBadge />}
+        </div>
+      ))}
+    </>
+  )
+}
 
 // isBrokerage mirrors backend service.brokerageAccountTypes — only these
 // account shapes accept trades.

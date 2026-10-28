@@ -86,4 +86,53 @@ describe('AccountsPage smoke', () => {
     await waitFor(() => expect(posted?.assetID).toBe('7'))
     expect(posted!.body).toMatchObject({ price: '250' })
   })
+
+  // #655: grouped by kind with exact subtotals and a net-worth summary;
+  // institution in words; inactive called out instead of an Active column.
+  it('groups accounts with subtotals, a summary and readable labels', async () => {
+    server.use(
+      http.get('/api/v1/accounts', () =>
+        HttpResponse.json({
+          data: [
+            { ...fx.account1, id: 1, name: 'Everyday', balance: '20372.30' },
+            { ...fx.account1, id: 2, name: 'Rainy day', account_type: 'savings', balance: '2750.00', is_active: false },
+            { ...fx.account1, id: 3, name: 'Visa', account_type: 'credit_card', balance: '-12341.70', institution_slug: 'ins_3', plaid_item_id: 'item-1' },
+            { ...fx.account1, id: 4, name: 'Brokerage', account_type: 'investment', balance: '1200.00' },
+          ],
+          total: 4,
+        })),
+      http.get('/api/v1/plaid/items', () =>
+        HttpResponse.json({ data: [{ id: 1, user_id: 1, plaid_item_id: 'item-1', institution_name: 'Chase', status: 'active', last_sync_status: 'ok', created_at: '', updated_at: '' }], total: 1 })),
+    )
+    renderPage(<AccountsPage />)
+    const summary = await screen.findByLabelText('Accounts summary')
+    expect(summary).toHaveTextContent('Assets24,322.30 USD')
+    expect(summary).toHaveTextContent('Liabilities-12,341.70 USD')
+    expect(summary).toHaveTextContent('Net worth11,980.60 USD')
+    expect(screen.getByLabelText('Cash total')).toHaveTextContent('23,122.30 USD')
+    expect(screen.getByLabelText('Credit cards total')).toHaveTextContent('-12,341.70 USD')
+    expect(screen.getByLabelText('Investments total')).toHaveTextContent('1,200.00 USD')
+    expect(within(screen.getByRole('rowgroup', { name: 'Cash' })).getByText('Rainy day')).toBeTruthy()
+    expect(screen.getByText('Inactive')).toBeTruthy()
+    expect(await screen.findAllByText('Chase')).not.toHaveLength(0)
+    expect(screen.queryByText('ins_3')).toBeNull()
+    expect(screen.queryByText('manual')).toBeNull()
+    expect(screen.queryByRole('columnheader', { name: 'Active' })).toBeNull()
+  })
+
+  it('points a mixed-currency book to Insights instead of adding currencies', async () => {
+    server.use(
+      http.get('/api/v1/accounts', () =>
+        HttpResponse.json({
+          data: [{ ...fx.account1, id: 1 }, { ...fx.account1, id: 2, name: 'Euro', currency: 'EUR', balance: '5' }],
+          total: 2,
+        })),
+    )
+    renderPage(<AccountsPage />)
+    const link = await screen.findByRole('link', { name: /net worth in one currency on insights/i })
+    expect(link).toHaveAttribute('href', '/insights')
+    expect(screen.queryByLabelText('Accounts summary')).toBeNull()
+    expect(screen.getByLabelText('Cash total')).toHaveTextContent('1,234.56 USD')
+    expect(screen.getByLabelText('Cash total')).toHaveTextContent('5.00 EUR')
+  })
 })
