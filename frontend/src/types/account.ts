@@ -85,8 +85,8 @@ export function accountTypeLabel(t: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1)
 }
 
-// isLiabilityType: balances on these accounts are what the user owes, entered
-// as a negative number.
+// isLiabilityType: balances on these accounts are what the user owes, stored
+// negative. Forms take the amount owed as a positive figure (lib/liabilityEntry).
 export function isLiabilityType(t: string): boolean {
   return t === 'credit_card' || t === 'loan'
 }

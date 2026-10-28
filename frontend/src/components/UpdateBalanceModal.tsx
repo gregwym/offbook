@@ -6,7 +6,10 @@ import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { updateAccountBalance } from '../api/accounts'
 import { AmountDisplay } from './AmountDisplay'
-import type { Account, UpdateBalanceResult } from '../types/account'
+import { isLiabilityType, type Account, type UpdateBalanceResult } from '../types/account'
+import { absDecimal } from '../lib/decimal'
+import { entryFromLedger, ledgerFromEntry } from '../lib/liabilityEntry'
+import { LiabilityReading } from './LiabilityReading'
 import { ModalShell } from './ModalShell'
 
 type Props = {
@@ -19,17 +22,18 @@ type Props = {
 const DECIMAL = /^-?\d+(\.\d+)?$/
 
 export function UpdateBalanceModal({ account, onClose, onUpdated }: Props) {
-  const [balance, setBalance] = useState(trimDecimal(account.balance))
+  // #667: a liability is entered as the amount owed, as the statement shows it.
+  const [balance, setBalance] = useState(entryFromLedger(account.account_type, account.balance))
   const [asOf, setAsOf] = useState(todayISO())
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<UpdateBalanceResult | null>(null)
-  const liability = account.account_type === 'credit_card' || account.account_type === 'loan'
+  const liability = isLiabilityType(account.account_type)
 
   const submit = async () => {
     setError(null)
-    const value = balance.replace(/[,\s$]/g, '')
-    if (!DECIMAL.test(value)) {
+    const entered = balance.replace(/[,\s$]/g, '')
+    if (!DECIMAL.test(entered)) {
       setError('Enter the balance as a number, e.g. 1234.56.')
       return
     }
@@ -41,6 +45,7 @@ export function UpdateBalanceModal({ account, onClose, onUpdated }: Props) {
       setError('The date can’t be in the future.')
       return
     }
+    const value = ledgerFromEntry(account.account_type, entered)
     setSubmitting(true)
     try {
       // Leave as_of off for today so the backend stamps the observation "now".
@@ -63,8 +68,13 @@ export function UpdateBalanceModal({ account, onClose, onUpdated }: Props) {
         <>
           <div className="space-y-2 px-5 py-4 text-sm text-gray-700" role="status">
             <p>
-              Balance is now{' '}
-              <AmountDisplay amount={result.account.balance} currency={account.currency} className="font-semibold" />.
+              {!liability ? 'Balance is now ' : inCredit(result.account.balance) ? 'In credit by ' : 'You now owe '}
+              <AmountDisplay
+                amount={liability ? absDecimal(result.account.balance) : entryFromLedger(account.account_type, result.account.balance)}
+                currency={account.currency}
+                className="font-semibold"
+              />
+              .
             </p>
             {result.recorded ? (
               <p>
@@ -105,7 +115,7 @@ export function UpdateBalanceModal({ account, onClose, onUpdated }: Props) {
                 {error}
               </div>
             )}
-            <Field label={`Balance (${account.currency})`}>
+            <Field label={`${liability ? 'Amount owed' : 'Balance'} (${account.currency})`}>
               <input
                 className={inputClass}
                 value={balance}
@@ -116,12 +126,15 @@ export function UpdateBalanceModal({ account, onClose, onUpdated }: Props) {
                   if (error && DECIMAL.test(e.target.value.replace(/[,\s$]/g, ''))) setError(null)
                 }}
                 inputMode="decimal"
+                aria-describedby={liability ? 'update-balance-reading' : undefined}
                 autoFocus
               />
-              {liability && (
-                <span className="mt-1 block text-[11px] text-gray-500">Enter what you owe as a negative number, e.g. -450.00.</span>
-              )}
             </Field>
+            {liability && (
+              <div className="-mt-2">
+                <LiabilityReading id="update-balance-reading" entered={balance} currency={account.currency} />
+              </div>
+            )}
             <Field label="As of">
               <input type="date" className={inputClass} value={asOf} max={todayISO()} onChange={(e) => setAsOf(e.target.value)} />
             </Field>
@@ -156,12 +169,9 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-// trimDecimal turns the API's NUMERIC(30,18) string into an editable value
-// ("1234.560000000000000000" -> "1234.56") without going through floats.
-function trimDecimal(s: string): string {
-  if (!s.includes('.')) return s
-  const t = s.replace(/0+$/, '').replace(/\.$/, '')
-  return t === '-0' ? '0' : t
+// inCredit: a stored liability balance above zero means the lender owes the user.
+function inCredit(balance: string): boolean {
+  return !balance.trim().startsWith('-') && absDecimal(balance) !== '0'
 }
 
 function todayISO(): string {

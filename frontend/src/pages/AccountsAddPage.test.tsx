@@ -61,7 +61,7 @@ describe('AccountsAddPage smoke', () => {
   })
 
   // #520: the manual form speaks plain language and Enter submits it.
-  it('manual form uses plain labels, hints liability sign, and submits on Enter', async () => {
+  it('manual form uses plain labels, takes a card balance as the amount owed, and submits on Enter', async () => {
     let body: Record<string, unknown> | null = null
     server.use(
       http.post(`${API}/accounts`, async ({ request }) => {
@@ -75,15 +75,21 @@ describe('AccountsAddPage smoke', () => {
     expect(screen.queryByText(/slug/i)).toBeNull()
     expect(screen.getByRole('option', { name: 'Credit card' })).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'credit_card' } })
-    expect(screen.getByText(/what you owe as a negative number/i)).toBeTruthy()
+    // #667: a card's balance is entered as the statement shows it, the
+    // amount owed, and stored negative.
+    expect(screen.queryByText(/negative number/i)).toBeNull()
+    const owed = screen.getByLabelText('Amount owed (optional)')
 
     fireEvent.change(screen.getByLabelText('Account name'), { target: { value: 'Visa' } })
     fireEvent.change(screen.getByLabelText('Institution'), { target: { value: 'Chase' } })
-    fireEvent.change(screen.getByLabelText('Current balance (optional)'), { target: { value: '-1,250.50' } })
+    fireEvent.change(owed, { target: { value: '-20' } })
+    expect(screen.getByText(/In credit by/)).toHaveTextContent('20.00 USD')
+    fireEvent.change(owed, { target: { value: '1,250.50' } })
+    expect(screen.getByText(/You owe/)).toHaveTextContent('You owe 1,250.50 USD.')
     fireEvent.submit(screen.getByLabelText('Account name').closest('form')!)
 
     await waitFor(() => expect(body).not.toBeNull())
-    expect(body).toMatchObject({ name: 'Visa', institution_slug: 'Chase', account_type: 'credit_card', balance: '-1250.50' })
+    expect(body).toMatchObject({ name: 'Visa', institution_slug: 'Chase', account_type: 'credit_card', balance: '-1250.5' })
   })
 
   it('rejects a non-numeric balance with a clear message', async () => {

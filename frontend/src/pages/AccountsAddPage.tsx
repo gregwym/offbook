@@ -20,6 +20,8 @@ import {
   syncTransactions,
 } from '../api/plaid'
 import { clearPendingLink, savePendingLink } from '../lib/plaidOAuth'
+import { ledgerFromEntry } from '../lib/liabilityEntry'
+import { LiabilityReading } from '../components/LiabilityReading'
 import {
   ACCOUNT_TYPES,
   accountTypeLabel,
@@ -328,7 +330,8 @@ function ManualAccountForm({
         institution_slug: institution.trim(),
         account_type: accountType,
         currency: currency.trim().toUpperCase(),
-        balance: opening,
+        // #667: a liability's entry is the amount owed; the API stores it negative.
+        balance: ledgerFromEntry(accountType, opening),
       })
     } catch (e) {
       setError(errMsg(e))
@@ -400,7 +403,7 @@ function ManualAccountForm({
             />
           </FormField>
         </div>
-        <FormField label="Current balance (optional)">
+        <FormField label={isLiabilityType(accountType) ? 'Amount owed (optional)' : 'Current balance (optional)'}>
           <input
             className={inputClass}
             value={balance}
@@ -409,11 +412,15 @@ function ManualAccountForm({
             aria-describedby="manual-balance-hint"
           />
         </FormField>
-        <p id="manual-balance-hint" className="-mt-2 text-[11px] text-gray-500">
-          {isLiabilityType(accountType)
-            ? 'Enter what you owe as a negative number, e.g. -450.00.'
-            : 'What the bank shows today. You can update it later.'}
-        </p>
+        {isLiabilityType(accountType) ? (
+          <div className="-mt-2">
+            <LiabilityReading id="manual-balance-hint" entered={balance} currency={currency.trim().toUpperCase() || 'USD'} />
+          </div>
+        ) : (
+          <p id="manual-balance-hint" className="-mt-2 text-[11px] text-gray-500">
+            What the bank shows today. You can update it later.
+          </p>
+        )}
       </div>
 
       <div className="mt-5 flex justify-end gap-2">
