@@ -55,7 +55,8 @@ type Extraction struct {
 	// for CSV and bank statements. Re-validated like Rows.
 	Positions []ParsedPosition `json:"positions,omitempty"`
 	// ClosingBalance is the statement's reported account balance (signed
-	// account value, i.e. negative for amounts owed) with its date. Nil when
+	// account value: negative for amounts owed, positive for a liability in
+	// credit) with its date. Nil when
 	// absent. Reconciled against the account's cash asset on commit.
 	ClosingBalance   *decimal.Decimal `json:"closing_balance,omitempty"`
 	ClosingBalanceAt *time.Time       `json:"closing_balance_at,omitempty"`

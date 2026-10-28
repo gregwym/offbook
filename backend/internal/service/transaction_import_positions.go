@@ -113,16 +113,6 @@ func (s *TransactionService) effectFor(ctx context.Context, userID, accountID, a
 	return e, nil
 }
 
-// statementBalanceQuantity maps the reported closing balance to a signed
-// position quantity: a liability account's statement shows the amount owed,
-// which is stored negative (#369 convention).
-func statementBalanceQuantity(accountType string, reported decimal.Decimal) decimal.Decimal {
-	if accountType == "credit_card" || accountType == "loan" {
-		return reported.Abs().Neg()
-	}
-	return reported
-}
-
 // previewPositions fills res.Positions / res.ClosingBalance without writing.
 func (s *TransactionService) previewPositions(ctx context.Context, userID int64, account *model.Account, ext *ingestion.Extraction, newRowSum decimal.Decimal, res *ImportResult) error {
 	if s.assetRepo == nil {
@@ -169,7 +159,10 @@ func (s *TransactionService) previewPositions(ctx context.Context, userID int64,
 		if err != nil {
 			return fmt.Errorf("cash asset: %w", err)
 		}
-		reported := statementBalanceQuantity(account.AccountType, *ext.ClosingBalance)
+		// The closing balance is already the signed account value (negative
+		// when owed, positive when a card or loan is in credit) — the extractor
+		// contract — so it is the position quantity as-is (#670).
+		reported := *ext.ClosingBalance
 		fold, _, err := reconcileFold(ctx, s.repo, userID, account.ID, cash.ID, *ext.ClosingBalanceAt)
 		if err != nil {
 			return err
@@ -220,7 +213,7 @@ func (s *TransactionService) commitPositions(ctx context.Context, userID int64, 
 	if ext.ClosingBalance != nil && ext.ClosingBalanceAt != nil {
 		targets = append(targets, target{
 			account.PrimaryQuoteAssetID,
-			statementBalanceQuantity(account.AccountType, *ext.ClosingBalance),
+			*ext.ClosingBalance, // signed account value, as in previewPositions
 			*ext.ClosingBalanceAt,
 		})
 	}

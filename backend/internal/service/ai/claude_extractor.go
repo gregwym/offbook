@@ -31,7 +31,7 @@ Rules:
 - confidence: 0–1, your certainty in THAT row. Lower it when a field was ambiguous, smudged, or inferred.
 - doc_totals: any statement totals you can read (closing balance delta, total debits/credits) as signed decimal strings, for reconciliation. Empty array if none.
 - positions: brokerage statements only — one entry per holding (ticker symbol, exact share/unit quantity, optional unit price and market value). asset_kind is one of equity, fund, crypto, bond, other. Empty array for bank/credit-card statements. Do not list cash as a position.
-- closing_balance: the statement's ending account balance as a signed decimal string (negative if the statement shows an amount owed, e.g. credit card or loan). Empty string if not shown. statement_date: the statement end date YYYY-MM-DD.
+- closing_balance: the statement's ending account balance as a signed decimal string (negative if the statement shows an amount owed, e.g. a credit card or loan balance due; positive if the account is in credit, e.g. a card overpaid or refunded below zero, often marked "CR"). Empty string if not shown. statement_date: the statement end date YYYY-MM-DD.
 - Include every transaction line you can read. Do NOT invent rows to make totals match.`
 
 const extractUserPrompt = `Extract all transactions from this statement as the JSON object described. Output only the JSON.`

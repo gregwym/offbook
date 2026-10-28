@@ -127,20 +127,71 @@ func usdID(t *testing.T, g *gorm.DB, accountID int64) int64 {
 	return a.PrimaryQuoteAssetID
 }
 
-// TestImportStatement_LiabilityClosingBalanceNegative: a credit-card statement
-// "balance owed" is stored as a negative quantity (#369 convention).
-func TestImportStatement_LiabilityClosingBalanceNegative(t *testing.T) {
-	svc, userID, accountID, g := newImportSvc(t)
-	svc = svc.WithStatementPositions(g, repository.NewAssetRepository(g))
-	if err := g.Model(&model.Account{}).Where("id = ?", accountID).Update("account_type", "credit_card").Error; err != nil {
-		t.Fatal(err)
+// TestImportStatement_LiabilityClosingBalanceSigned: a credit-card closing
+// balance arrives as the signed account value (the extractor contract) and is
+// kept as-is: an amount owed stays negative, a credit stays positive (#670),
+// and preview, observation, ledger and position agree; a re-import is a no-op.
+func TestImportStatement_LiabilityClosingBalanceSigned(t *testing.T) {
+	for _, tc := range []struct{ name, closing string }{
+		{"owed", "-450.00"},
+		{"in credit", "20.00"},
+		{"zero", "0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, userID, accountID, g := newImportSvc(t)
+			svc = svc.WithStatementPositions(g, repository.NewAssetRepository(g))
+			if err := g.Model(&model.Account{}).Where("id = ?", accountID).Update("account_type", "credit_card").Error; err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { g.Unscoped().Where("account_id = ?", accountID).Delete(&model.Position{}) })
+			t.Cleanup(func() { g.Where("account_id = ?", accountID).Delete(&model.AccountBalanceObservation{}) })
+			ctx := context.Background()
+			want := decimal.RequireFromString(tc.closing)
+			bal, at, _ := ingestion.ParseClosingBalance(tc.closing, "2026-05-31")
+			ext := &ingestion.Extraction{
+				Source:           "pdf",
+				Rows:             []ingestion.ParsedRow{ingestion.NewRow(1, "2026-05-20", "-30.00", "Card purchase", 0.95)},
+				ClosingBalance:   &bal,
+				ClosingBalanceAt: &at,
+			}
+			prev, err := svc.ImportStatement(ctx, userID, accountID, ext, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prev.ClosingBalance == nil || !prev.ClosingBalance.Reported.Equal(want) ||
+				!prev.ClosingBalance.Effect.Adjustment.Equal(want.Add(decimal.NewFromInt(30))) {
+				t.Fatalf("preview = %+v, want reported %s and adjustment %s", prev.ClosingBalance, want, want.Add(decimal.NewFromInt(30)))
+			}
+			txRepo := repository.NewTransactionRepository(g)
+			cash := usdID(t, g, accountID)
+			for range 2 {
+				if _, err := svc.ImportStatement(ctx, userID, accountID, ext, true); err != nil {
+					t.Fatal(err)
+				}
+				assertFold(t, txRepo, userID, accountID, cash, want.String())
+				var pos model.Position
+				if err := g.Where("account_id = ? AND asset_id = ?", accountID, cash).First(&pos).Error; err != nil {
+					t.Fatalf("position: %v", err)
+				}
+				if !pos.Quantity.Equal(want) {
+					t.Errorf("position = %s, want %s", pos.Quantity, want)
+				}
+			}
+			var obs []model.AccountBalanceObservation
+			if err := g.Where("account_id = ?", accountID).Find(&obs).Error; err != nil {
+				t.Fatal(err)
+			}
+			for _, o := range obs {
+				if !o.ObservedQuantity.Equal(want) {
+					t.Errorf("observation = %s, want %s", o.ObservedQuantity, want)
+				}
+			}
+			var reconciling int64
+			g.Model(&model.Transaction{}).Where("account_id = ? AND kind IN ?", accountID,
+				[]string{model.KindOpeningBalance, model.KindAdjustment}).Count(&reconciling)
+			if reconciling != 1 {
+				t.Errorf("reconciling rows = %d, want 1 (re-import adds none)", reconciling)
+			}
+		})
 	}
-	t.Cleanup(func() { g.Unscoped().Where("account_id = ?", accountID).Delete(&model.Position{}) })
-	t.Cleanup(func() { g.Where("account_id = ?", accountID).Delete(&model.AccountBalanceObservation{}) })
-	bal, at, _ := ingestion.ParseClosingBalance("250.00", "2026-05-31")
-	ext := &ingestion.Extraction{Source: "pdf", ClosingBalance: &bal, ClosingBalanceAt: &at}
-	if _, err := svc.ImportStatement(context.Background(), userID, accountID, ext, true); err != nil {
-		t.Fatal(err)
-	}
-	assertFold(t, repository.NewTransactionRepository(g), userID, accountID, usdID(t, g, accountID), "-250")
 }
