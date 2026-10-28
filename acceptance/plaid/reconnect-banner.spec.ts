@@ -45,6 +45,10 @@ test.describe('reconnect a bank that needs re-auth', () => {
     await expect(page.getByText(/ITEM_LOGIN_REQUIRED/)).toHaveCount(0)
     await expectInViewport(page, banner.getByRole('link', { name: 'Reconnect' }))
     await expectNoClipping(page, 'insights with reconnect banner')
+    // #658: a book with no history shows a sentence, not an empty chart.
+    const trend = page.getByRole('group', { name: 'Income vs. spending by month' })
+    await expect(trend).toContainText('Not enough history yet.')
+    await expect(trend.getByRole('list', { name: 'Legend' })).toHaveCount(0)
     await testInfo.attach('reconnect-banner-insights', { body: await page.screenshot(), contentType: 'image/png' })
 
     // The same prompt follows the user to the daily review.

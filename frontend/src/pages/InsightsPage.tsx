@@ -14,7 +14,7 @@ import { spendingHref } from '../lib/spendingLink'
 import { useState } from 'react'
 import { usePastMonthSpending } from '../hooks/usePastMonthSpending'
 import { MonthStepper } from '../components/MonthStepper'
-import { currentMonth, monthLabel, monthWindow, rangeLabel } from '../lib/month'
+import { currentMonth, monthLabel, monthTicks, monthWindow, rangeLabel, type MonthTickLabel } from '../lib/month'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -693,7 +693,11 @@ function SpendingBand({ data }: { data: InsightsData }) {
       )}
 
       <div className="mt-5 grid grid-cols-1 gap-5 border-t border-gray-100 pt-4 lg:grid-cols-3">
-        <CashFlowTrend months={data.cash_flow} />
+        <CashFlowTrend
+          months={month ? (past.state === 'ready' ? past.cashFlowSeries : []) : data.cash_flow}
+          selected={month ?? currentMonth()}
+          empty={busy ? 'Loading…' : failed ? 'Not loaded.' : undefined}
+        />
         <CategoryTrendList
           items={trend}
           title={`${monthLabel(month ?? currentMonth())} vs. average`}
@@ -849,36 +853,126 @@ function cadenceLabel(cadence: InsightsData['recurring'][number]['cadence']): st
   return cadence === 'weekly' ? 'Weekly' : cadence === 'annual' ? 'Yearly' : 'Monthly'
 }
 
-// Income vs. spending trend by month (#367). Reuses the CashFlow endpoint
-// already backing the legacy DashboardCharts component; independently
-// fetched, so a missing series just renders an empty state.
-function CashFlowTrend({ months }: { months: InsightsData['cash_flow'] }) {
+// Income vs. spending trend by month (#367), readable without hover (#658):
+// a legend, short month names, and each month's net as text under the bars.
+// The window ends at the month the stepper is on, which is emphasized. Bar
+// heights are the only Number() use; every figure shown is the API's decimal
+// string through AmountDisplay.
+function CashFlowTrend({
+  months,
+  selected,
+  empty = 'Not enough history yet.',
+}: {
+  months: InsightsData['cash_flow']
+  // YYYY-MM the rest of the band is showing.
+  selected: string
+  empty?: string
+}) {
+  const hasHistory = months.some((m) => num(m.inflow) !== 0 || num(m.outflow) !== 0)
+  const ticks = monthTicks(months.map((m) => m.month.slice(0, 7)))
+  const data = months.map((m) => ({
+    key: m.month.slice(0, 7),
+    inflow: num(m.inflow),
+    outflow: -num(m.outflow),
+  }))
+  const dim = (key: string) => (key === selected ? 1 : 0.45)
   return (
-    <div>
-      <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">
-        Income vs. spending
-      </h3>
-      {months.length === 0 ? (
-        <div className="mt-2 py-4 text-center text-xs text-gray-400">Not enough data yet.</div>
+    <div role="group" aria-label="Income vs. spending by month">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">
+          Income vs. spending
+        </h3>
+        {hasHistory && (
+          <ul aria-label="Legend" className="flex gap-3 text-xs text-gray-600">
+            <li className="flex items-center gap-1">
+              <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500" />
+              Income
+            </li>
+            <li className="flex items-center gap-1">
+              <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-sm bg-red-500" />
+              Spending
+            </li>
+          </ul>
+        )}
+      </div>
+      {!hasHistory ? (
+        <div className="mt-2 py-4 text-center text-xs text-gray-400">{empty}</div>
       ) : (
-        <ResponsiveContainer width="100%" height={140}>
-          <BarChart
-            data={months.map((m) => ({
-              month: m.month.slice(0, 7),
-              inflow: num(m.inflow),
-              outflow: -num(m.outflow),
-            }))}
-            stackOffset="sign"
-          >
-            <XAxis dataKey="month" tick={{ fontSize: 10 }} />
-            <YAxis hide />
-            <Tooltip formatter={(v) => (typeof v === 'number' ? Math.abs(v).toFixed(2) : String(v))} />
-            <Bar isAnimationActive={false} dataKey="inflow" stackId="0" fill="#10B981" name="Inflow" />
-            <Bar isAnimationActive={false} dataKey="outflow" stackId="0" fill="#EF4444" name="Outflow" />
-          </BarChart>
-        </ResponsiveContainer>
+        <>
+          <div aria-hidden="true">
+            <ResponsiveContainer width="100%" height={140}>
+              <BarChart data={data} stackOffset="sign" margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
+                <XAxis
+                  dataKey="key"
+                  interval={0}
+                  tickLine={false}
+                  height={30}
+                  tick={(props) => (
+                    <MonthTick x={Number(props.x)} y={Number(props.y)} label={ticks[props.index]} selected={props.payload.value === selected} />
+                  )}
+                />
+                <YAxis hide />
+                <Tooltip
+                  labelFormatter={(key) => monthLabel(String(key))}
+                  formatter={(v) => (typeof v === 'number' ? Math.abs(v).toFixed(2) : String(v))}
+                />
+                <Bar isAnimationActive={false} dataKey="inflow" stackId="0" fill="#10B981" name="Income">
+                  {data.map((d) => <Cell key={d.key} fillOpacity={dim(d.key)} />)}
+                </Bar>
+                <Bar isAnimationActive={false} dataKey="outflow" stackId="0" fill="#EF4444" name="Spending">
+                  {data.map((d) => <Cell key={d.key} fillOpacity={dim(d.key)} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-gray-400">Net</div>
+          <ul aria-label="Net by month" className="mt-0.5 grid grid-cols-3 gap-x-2 gap-y-0.5 text-xs sm:grid-cols-6 lg:grid-cols-3">
+            {months.map((m, i) => {
+              const key = m.month.slice(0, 7)
+              const on = key === selected
+              return (
+                <li
+                  key={key}
+                  aria-current={on ? 'date' : undefined}
+                  className={`flex items-baseline justify-between gap-1 ${on ? 'font-semibold text-gray-900' : 'text-gray-500'}`}
+                >
+                  <span>{ticks[i].month}</span>
+                  <AmountDisplay amount={m.net} signed={on} />
+                </li>
+              )
+            })}
+          </ul>
+          <table className="sr-only">
+            <caption>Income, spending and net by month</caption>
+            <thead>
+              <tr><th scope="col">Month</th><th scope="col">Income</th><th scope="col">Spending</th><th scope="col">Net</th></tr>
+            </thead>
+            <tbody>
+              {months.map((m) => (
+                <tr key={m.month}>
+                  <th scope="row">{monthLabel(m.month.slice(0, 7))}</th>
+                  <td><AmountDisplay amount={m.inflow} /></td>
+                  <td><AmountDisplay amount={m.outflow} /></td>
+                  <td><AmountDisplay amount={m.net} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
     </div>
+  )
+}
+
+// MonthTick draws a short month name, with the year beneath it on the first
+// tick and wherever the year changes; the selected month is bold.
+function MonthTick({ x, y, label, selected }: { x: number; y: number; label?: MonthTickLabel; selected: boolean }) {
+  if (!label) return null
+  return (
+    <text x={x} y={y + 10} textAnchor="middle" fontSize={10} fill={selected ? '#111827' : '#6B7280'} fontWeight={selected ? 600 : 400}>
+      <tspan x={x}>{label.month}</tspan>
+      {label.year && <tspan x={x} dy={11}>{label.year}</tspan>}
+    </text>
   )
 }
 

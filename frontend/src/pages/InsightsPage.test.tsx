@@ -308,7 +308,8 @@ describe('InsightsPage spending band refunds', () => {
     expect(row).toHaveTextContent('130.00')
     expect(row).not.toHaveTextContent('net refund')
     expect((row.querySelector('.bg-indigo-400') as HTMLElement).style.width).toBe('100%')
-    expect(within(band).queryByText('Income')).toBeNull()
+    // The Income category is not a spending row (the chart legend's "Income" is not a row).
+    expect(within(band).queryByRole('link', { name: 'Income' })).toBeNull()
   })
 })
 
@@ -814,3 +815,78 @@ describe('InsightsPage recurring charges', () => {
     expect(screen.queryByTestId('recurring-total')).toBeNull()
   })
 })
+
+// #658: the income-vs-spending trend is readable without hover, follows the
+// month stepper, and a book with no history shows no empty chart.
+describe('InsightsPage income vs. spending trend', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  const series = (through: string) =>
+    [5, 4, 3, 2, 1, 0].map((back, i) => {
+      const m = shiftMonth(through, -back)
+      return {
+        month: `${m}-01`,
+        inflow: `${1000 + i}.000000000000000000`,
+        outflow: `${900 + i * 10}.250000000000000000`,
+        net: `${100 - i * 9}.750000000000000000`,
+      }
+    })
+
+  it('labels months, names the colours and shows each net as text, following the stepper', async () => {
+    const cur = currentMonth()
+    const prev = shiftMonth(cur, -1)
+    const asked: (string | null)[] = []
+    server.use(
+      http.get('*/dashboard/cash-flow', ({ request }) => {
+        const p = new URL(request.url).searchParams
+        asked.push(`${p.get('months')}:${p.get('month')}`)
+        const rows = series(p.get('month') ?? cur)
+        return HttpResponse.json({ data: rows, total: rows.length })
+      }),
+    )
+    renderPage(<InsightsPage />)
+    const chart = await screen.findByRole('group', { name: 'Income vs. spending by month' })
+    const legend = within(chart).getByRole('list', { name: 'Legend' })
+    expect(legend).toHaveTextContent('Income')
+    expect(legend).toHaveTextContent('Spending')
+    expect(chart.textContent).not.toMatch(/\d{4}-\d{2}/)
+    const nets = within(chart).getByRole('list', { name: 'Net by month' })
+    const shortName = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })
+    const selected = within(nets).getAllByRole('listitem').find((li) => li.getAttribute('aria-current') === 'date')!
+    // The last month's net is 100 - 5 × 9 = 55.75, shown as text.
+    expect(selected).toHaveTextContent(`${shortName(cur)}55.75 USD`)
+    // A text alternative lists every month by name.
+    expect(within(chart).getByRole('table')).toHaveTextContent(monthLabel(cur))
+
+    const nav = screen.getByRole('navigation', { name: 'Spending month' })
+    fireEvent.click(within(nav).getByRole('button', { name: 'Previous month' }))
+    await waitFor(() => expect(asked).toContain(`6:${prev}`))
+    await waitFor(() => {
+      const on = within(screen.getByRole('list', { name: 'Net by month' }))
+        .getAllByRole('listitem')
+        .find((li) => li.getAttribute('aria-current') === 'date')
+      expect(on).toHaveTextContent(shortName(prev))
+    })
+    // The window now ends at the stepped-to month.
+    const items = within(screen.getByRole('list', { name: 'Net by month' })).getAllByRole('listitem')
+    expect(items.at(-1)).toHaveAttribute('aria-current', 'date')
+  })
+
+  it('shows "Not enough history yet." instead of an empty chart for a new book', async () => {
+    const cur = currentMonth()
+    server.use(
+      http.get('*/dashboard/cash-flow', () => {
+        const rows = [5, 4, 3, 2, 1, 0].map((b) => ({ month: `${shiftMonth(cur, -b)}-01`, inflow: '0', outflow: '0', net: '0' }))
+        return HttpResponse.json({ data: rows, total: rows.length })
+      }),
+    )
+    renderPage(<InsightsPage />)
+    const chart = await screen.findByRole('group', { name: 'Income vs. spending by month' })
+    expect(within(chart).getByText('Not enough history yet.')).toBeInTheDocument()
+    expect(within(chart).queryByRole('list', { name: 'Legend' })).toBeNull()
+    expect(within(chart).queryByRole('list', { name: 'Net by month' })).toBeNull()
+  })
+})
+

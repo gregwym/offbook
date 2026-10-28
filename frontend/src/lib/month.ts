@@ -31,3 +31,16 @@ export function rangeLabel(from: string, to: string): string {
   const sameYear = start.getUTCFullYear() === end.getUTCFullYear()
   return `${day(start, !sameYear)} – ${day(end, true)}`
 }
+
+export type MonthTickLabel = { month: string; year: string | null }
+
+// monthTicks labels YYYY-MM months for a chart axis as "May", "Jun" …,
+// naming the year on the first month and wherever it changes (#658).
+export function monthTicks(months: string[]): MonthTickLabel[] {
+  return months.map((m, i) => {
+    const [y, mo] = m.split('-').map(Number)
+    const month = new Date(Date.UTC(y, mo - 1, 1)).toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })
+    const yearChanged = i === 0 || months[i - 1].slice(0, 4) !== m.slice(0, 4)
+    return { month, year: yearChanged ? String(y) : null }
+  })
+}
