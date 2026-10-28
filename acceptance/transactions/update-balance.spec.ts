@@ -177,13 +177,15 @@ test.describe('update manual account balance', () => {
     await dialog.getByRole('button', { name: 'Done' }).click()
     await expect(row).toContainText('900.00')
 
-    // A real discrepancy that day is adjusted there; the later −100 still applies.
+    // A real discrepancy that day is recorded there (as the first reconciling
+    // row, the opening balance); the later −100 still applies.
     dialog = await open()
     await dialog.getByLabel('Balance (USD)').fill('1100.00')
     await dialog.getByLabel('As of').fill(past)
     await dialog.getByRole('button', { name: 'Save balance' }).click()
-    await expect(status).toContainText('an adjustment of')
+    await expect(status).toContainText('an opening balance of')
     await expect(status).toContainText('100.00')
+    await expect(status).toContainText('Balance today is')
     await expect(status).toContainText('1,000.00')
     await expectNoOverflow(page)
     await testInfo.attach('update-balance-past-adjusted', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
