@@ -32,7 +32,9 @@ import {
   getHouseholdNetWorthTrend,
   getHouseholdTopMerchants,
 } from '../api/householdAggregator'
+import { listItems } from '../api/plaid'
 import { listGoals } from '../api/savingsGoals'
+import { institutionLabel } from '../lib/accountGroups'
 import { useScopeStore } from '../store/scopeStore'
 import type { UnpricedAsset } from '../types/account'
 import { SCOPE_HOUSEHOLD } from '../types/scope'
@@ -96,7 +98,10 @@ export type InsightsAccountRow = {
   // false when the balance includes unpriced or stale-priced positions —
   // render as partial, never as a confident total (#339).
   balance_complete: boolean
-  source: 'plaid' | 'manual'
+  // institution names where the account lives in the same words Accounts
+  // uses (institutionLabel, #659): the linked bank's name or "Manual". Null in
+  // household scope, where the aggregator doesn't say how an account is fed.
+  institution: string | null
   last_synced_at: string | null
   // needs_attention surfaces the #370 unacknowledged-adjustment flag.
   // Personal scope only — the household aggregator doesn't expose
@@ -301,7 +306,7 @@ async function loadPersonal(trendMonths = 12): Promise<InsightsData> {
 
   // Spending-depth bands (#367) — own Promise.allSettled so a failure on
   // any one degrades just that band, not the whole page (#266 pattern).
-  const [trendResult, merchantsResult, cashFlowResult, recurringResult, spendResult] = await Promise.allSettled([
+  const [trendResult, merchantsResult, cashFlowResult, recurringResult, spendResult, itemsResult] = await Promise.allSettled([
     getCategoryTrend(6),
     getTopMerchants(10),
     getCashFlow(6),
@@ -309,7 +314,14 @@ async function loadPersonal(trendMonths = 12): Promise<InsightsData> {
     // Positive spend per category (income excluded, negative = net refund);
     // summary.by_category is the signed ledger sum and is not a spending series.
     getSpendByCategory(),
+    // Linked accounts are labelled by their institution's name; only asked
+    // for when some account is linked. A failure falls back to "Linked bank".
+    accountsResp.items.some((a) => a.plaid_item_id) ? listItems() : Promise.resolve({ items: [], total: 0 }),
   ])
+  const plaidNames = new Map<string, string>()
+  if (itemsResult.status === 'fulfilled') {
+    for (const it of itemsResult.value.items) if (it.institution_name) plaidNames.set(it.plaid_item_id, it.institution_name)
+  }
 
   const categoryName = new Map<number, string>()
   for (const c of categories) categoryName.set(c.id, c.name)
@@ -366,7 +378,7 @@ async function loadPersonal(trendMonths = 12): Promise<InsightsData> {
       currency: a.currency,
       balance: a.balance,
       balance_complete: a.balance_complete,
-      source: a.plaid_account_id ? 'plaid' : 'manual',
+      institution: institutionLabel(a, plaidNames),
       last_synced_at: a.last_synced_at,
       needs_attention: a.needs_attention,
     })),
@@ -447,8 +459,8 @@ async function loadHousehold(trendMonths = 12): Promise<InsightsData> {
       balance_complete: a.complete,
       // Household-shared accounts can be either Plaid-linked or manual,
       // but the aggregator doesn't surface that distinction (would leak
-      // a per-owner plaid_item indicator). Default to "manual" badge.
-      source: 'manual',
+      // a per-owner plaid_item indicator), so no institution is shown.
+      institution: null,
       last_synced_at: null,
       owner_user_id: a.owner_user_id,
       visibility: a.visibility,

@@ -147,6 +147,13 @@ test.describe('acceptance month fixture', () => {
     for (const slug of budgeted) {
       await expect(band.getByRole('listitem').filter({ hasText: cat(slug).name }).first()).toContainText(fmt(spend[slug]))
     }
+    // #659: the accounts band names an account the way Accounts does.
+    const feeding = page.locator('section', { has: page.getByRole('heading', { name: 'Accounts feeding this' }) })
+    const checkingRow = feeding.locator('div', { hasText: 'QAM Checking' }).last()
+    await expect(checkingRow.getByText('Checking', { exact: true })).toBeVisible()
+    await expect(checkingRow.getByText('Manual', { exact: true })).toBeVisible()
+    await expect(feeding.locator('div', { hasText: 'QAM Card' }).last().getByText('Credit card', { exact: true })).toBeVisible()
+    await expect(feeding.getByText(/^(checking|savings|credit_card|investment|manual)$/)).toHaveCount(0)
     await expectNoClipping(page, 'insights')
     await snap(page, testInfo, 'insights')
 
@@ -173,7 +180,12 @@ test.describe('acceptance month fixture', () => {
     await page.goto('/accounts')
     const summary = page.getByLabel('Accounts summary')
     await expect(summary).toContainText(fmt(per.checking + per.savings + per.brokerage))
-    await expect(summary).toContainText(fmt(per.card))
+    // #659: Liabilities is what is owed, as a positive amount; net worth is
+    // still assets minus that.
+    expect(per.card, 'the card is owed').toBeLessThan(0)
+    const owed = summary.locator('div', { has: page.getByText('Liabilities', { exact: true }) })
+    await expect(owed.locator('dd')).toHaveText(`${fmt(-per.card)} USD`)
+    await expect(summary).not.toContainText(fmt(per.card))
     await expect(summary).toContainText(fmt(netWorth))
     await expect(page.getByLabel('Cash total').locator('visible=true')).toContainText(fmt(per.checking + per.savings))
     await expect(page.getByLabel('Credit cards total').locator('visible=true')).toContainText(fmt(per.card))

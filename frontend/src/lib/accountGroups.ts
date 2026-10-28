@@ -1,7 +1,7 @@
 // Accounts page grouping (#655): accounts by kind, each group with an exact
 // decimal subtotal, plus the assets / liabilities / net worth summary. Money
 // stays as decimal strings throughout (addDecimal), never Number.
-import { addDecimal } from './decimal'
+import { addDecimal, subDecimal } from './decimal'
 import { isLiabilityType, type Account, type AccountType } from '../types/account'
 
 export type AccountGroupKey = 'cash' | 'credit' | 'loans' | 'investments' | 'other'
@@ -59,7 +59,14 @@ export function totalsByCurrency(accounts: Account[]): CurrencyTotal[] {
 export type AccountsSummary = {
   currency: string
   assets: string
-  liabilities: string // what is owed, as the (negative) sum of liability balances
+  liabilities: string // the ledger sum of liability balances (negative when owed)
+  // owed is the headline figure (#659): what the user owes as a positive
+  // magnitude, so "Liabilities" never reads as a double negative. When the
+  // liability accounts net to a credit (liabilities > 0) owed is that credit
+  // amount and liabilityCredit is true, so the tile can say "credit" instead
+  // of silently flipping the sign.
+  owed: string
+  liabilityCredit: boolean
   netWorth: string
   complete: boolean
 }
@@ -74,10 +81,13 @@ export function summarizeAccounts(accounts: Account[]): AccountsSummary | null {
     if (isLiabilityType(a.account_type)) liabilities = addDecimal(liabilities, a.balance)
     else assets = addDecimal(assets, a.balance)
   }
+  const credit = !liabilities.startsWith('-') && liabilities !== '0'
   return {
     currency,
     assets,
     liabilities,
+    owed: credit ? liabilities : subDecimal('0', liabilities),
+    liabilityCredit: credit,
     netWorth: addDecimal(assets, liabilities),
     complete: accounts.every((a) => a.balance_complete),
   }

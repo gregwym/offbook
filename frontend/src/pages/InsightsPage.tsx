@@ -43,6 +43,7 @@ import { refreshPrices } from '../api/prices'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { DateDisplay } from '../components/DateDisplay'
 import { FALLBACK_PIE_COLORS } from '../components/chartColors'
+import { accountTypeLabel } from '../types/account'
 import { assetKindLabel } from '../types/asset'
 import { PartialBadge } from '../components/PartialBadge'
 import { SetPriceModal } from '../components/SetPriceModal'
@@ -1229,8 +1230,8 @@ function AccountsBand({ data }: { data: InsightsData }) {
                   </Link>
                 )}
               </span>
-              <span className="text-xs text-gray-400">{a.account_type}</span>
-              <span className="text-xs text-gray-400 capitalize">{a.source}</span>
+              <span className="text-xs text-gray-400">{accountTypeLabel(a.account_type)}</span>
+              <span className="text-xs text-gray-400">{a.institution}</span>
               <span className="text-right">
                 <AmountDisplay amount={a.balance} currency={a.currency || 'USD'} />
                 {!a.balance_complete && <PartialBadge />}

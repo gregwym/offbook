@@ -161,7 +161,14 @@ export function AccountsPage() {
           className="mt-6 divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white sm:grid sm:grid-cols-3 sm:gap-3 sm:divide-y-0 sm:border-0 sm:bg-transparent"
         >
           <SummaryTile label="Assets" amount={summary.assets} currency={summary.currency} complete={summary.complete} />
-          <SummaryTile label="Liabilities" amount={summary.liabilities} currency={summary.currency} complete />
+          {/* What is owed, as a positive amount (#659); a net credit on cards/loans says so. */}
+          <SummaryTile
+            label="Liabilities"
+            amount={summary.owed}
+            currency={summary.currency}
+            complete
+            note={summary.liabilityCredit ? 'credit' : undefined}
+          />
           <SummaryTile label="Net worth" amount={summary.netWorth} currency={summary.currency} complete={summary.complete} strong />
         </dl>
       )}
@@ -437,12 +444,13 @@ export function AccountsPage() {
 
 type CreatedAccount = { id: number; name: string }
 
-function SummaryTile({ label, amount, currency, complete, strong }: {
+function SummaryTile({ label, amount, currency, complete, strong, note }: {
   label: string
   amount: string
   currency: string
   complete: boolean
   strong?: boolean
+  note?: string
 }) {
   return (
     // Phones: one card, a row per figure (label left, amount right) so a long
@@ -451,6 +459,7 @@ function SummaryTile({ label, amount, currency, complete, strong }: {
       <dt className="text-xs font-medium uppercase tracking-wider text-gray-500">{label}</dt>
       <dd className={`${strong ? 'font-semibold text-gray-900' : 'text-gray-800'} text-sm sm:mt-0.5 sm:text-lg`}>
         <AmountDisplay amount={amount} currency={currency} />
+        {note && <span className="ml-1 text-xs font-normal text-gray-500">{note}</span>}
         {!complete && <PartialBadge />}
       </dd>
     </div>

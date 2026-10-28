@@ -226,6 +226,53 @@ describe('InsightsPage allocation labels', () => {
   })
 })
 
+// #659: "Accounts feeding this" describes an account in the same words as
+// Accounts — "Checking", the linked bank's name — never a raw enum or slug.
+describe('InsightsPage accounts band labels', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('labels account type and institution the way Accounts does', async () => {
+    server.use(
+      http.get('*/accounts', () =>
+        HttpResponse.json({
+          data: [
+            { ...fx.account1, id: 1, name: 'Everyday', account_type: 'checking' },
+            {
+              ...fx.account1,
+              id: 2,
+              name: 'Rewards Card',
+              account_type: 'credit_card',
+              balance: '-12341.70',
+              institution_slug: 'ins_3',
+              plaid_item_id: 'item-1',
+              plaid_account_id: 'acc-1',
+            },
+            { ...fx.account1, id: 3, name: 'Old Card', account_type: 'credit_card', institution_slug: 'ins_9', plaid_item_id: 'item-gone' },
+          ],
+          total: 3,
+        }),
+      ),
+      http.get('*/plaid/items', () =>
+        HttpResponse.json({
+          data: [{ id: 1, user_id: 1, plaid_item_id: 'item-1', institution_name: 'Chase', status: 'active', last_sync_status: 'ok', created_at: '', updated_at: '' }],
+          total: 1,
+        }),
+      ),
+    )
+    renderPage(<InsightsPage />)
+    const band = (await screen.findByRole('heading', { name: /accounts feeding this/i })).closest('section') as HTMLElement
+    await waitFor(() => expect(within(band).getByText('Everyday')).toBeTruthy())
+    expect(within(band).getByText('Checking')).toBeTruthy()
+    expect(within(band).getByText('Manual')).toBeTruthy()
+    expect(within(band).getAllByText('Credit card')).toHaveLength(2)
+    expect(within(band).getByText('Chase')).toBeTruthy()
+    expect(within(band).getByText('Linked bank')).toBeTruthy()
+    expect(band.textContent).not.toMatch(/checking|credit_card|ins_\d|plaid/)
+  })
+})
+
 describe('InsightsPage household asset-class drill-in', () => {
   beforeEach(() => {
     resetStores()
