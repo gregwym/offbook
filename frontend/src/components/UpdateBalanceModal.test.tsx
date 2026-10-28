@@ -46,6 +46,36 @@ describe('Update balance (#504)', () => {
     expect(screen.getByRole('link', { name: 'View reconciliation' })).toHaveAttribute('href', '/accounts/1/reconciliation')
   })
 
+  // #667: a card's balance is the amount owed as the statement shows it.
+  it('takes a credit card balance as the amount owed and stores it negative', async () => {
+    let posted: unknown = null
+    const card = { ...account1, id: 3, name: 'Visa', account_type: 'credit_card', balance: '-450.000000000000000000' }
+    server.use(
+      http.get('/api/v1/accounts', () => HttpResponse.json({ data: [card], total: 1 })),
+      http.post('/api/v1/accounts/:id/balance', async ({ request }) => {
+        posted = await request.json()
+        return HttpResponse.json({
+          data: {
+            account: { ...card, balance: '-512.300000000000000000' },
+            recorded: { id: 9, kind: 'adjustment', amount: '-62.300000000000000000' },
+          },
+        })
+      }),
+    )
+    renderPage(<AccountsPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Update balance for Visa' }))
+
+    const input = screen.getByLabelText('Amount owed (USD)')
+    expect(input).toHaveValue('450')
+    expect(screen.getByText(/You owe/)).toHaveTextContent('You owe 450.00 USD.')
+    fireEvent.change(input, { target: { value: '512.30' } })
+    expect(screen.getByText(/You owe/)).toHaveTextContent('You owe 512.30 USD.')
+    fireEvent.click(screen.getByRole('button', { name: 'Save balance' }))
+    const status = await screen.findByRole('status')
+    expect(status).toHaveTextContent('You now owe 512.30 USD.')
+    expect(posted).toEqual({ balance: '-512.3' })
+  })
+
   it('shows the server error and keeps the form open', async () => {
     server.use(
       http.post('/api/v1/accounts/:id/balance', () =>
