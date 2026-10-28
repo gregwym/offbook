@@ -488,6 +488,96 @@ func TestAggregator_BudgetPace_Rollover(t *testing.T) {
 	}
 }
 
+// TestAggregator_BudgetPace_RolloverLimitHistory (#663): a shared rollover
+// budget whose limit was raised this month folds past months at the limits
+// they had, not today's, in both BudgetPace and BudgetSummary. The history
+// read is household-scoped.
+func TestAggregator_BudgetPace_RolloverLimitHistory(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+
+	ownerID := seedUser(t, g, "rh-owner")
+	hh := seedHouseholdRow(t, g, ownerID, "RH House", 30)
+	addMember(t, g, hh.ID, ownerID, model.RoleOwner, nil)
+	acct := seedAccount(t, g, ownerID, "rh-acct")
+	setShare(t, g, acct.ID, hh.ID, model.VisibilityBalanceAndTxns)
+
+	cat := &model.Category{Name: "rh-dining", Slug: fmt.Sprintf("rh-dining-%d", time.Now().UnixNano())}
+	if err := g.Create(cat).Error; err != nil {
+		t.Fatalf("seed category: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, cat.ID) })
+
+	now := time.Now().UTC()
+	cur := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	monthStart := cur.Add(12 * time.Hour)
+	hhID := hh.ID
+	b := &model.Budget{
+		HouseholdID:   &hhID,
+		CategoryID:    cat.ID,
+		Period:        "monthly",
+		Amount:        decimal.NewFromInt(300),
+		Rollover:      true,
+		RolloverStart: decimal.NewFromInt(10),
+		IsActive:      true,
+		CreatedAt:     monthStart.AddDate(0, -2, 0),
+	}
+	if err := g.Create(b).Error; err != nil {
+		t.Fatalf("seed shared budget: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Budget{}, b.ID) })
+	// 100 from creation, raised to 300 this month — what BudgetService.Update
+	// records for a limit edit.
+	for _, h := range []struct {
+		amount string
+		from   time.Time
+	}{{"100", cur.AddDate(0, -2, 0)}, {"300", cur}} {
+		if err := g.Exec(`INSERT INTO budget_amounts (budget_id, amount, effective_from) VALUES (?, ?, ?)`,
+			b.ID, h.amount, h.from.Format("2006-01-02")).Error; err != nil {
+			t.Fatalf("seed limit history: %v", err)
+		}
+	}
+	t.Cleanup(func() { g.Exec(`DELETE FROM budget_amounts WHERE budget_id = ?`, b.ID) })
+
+	seedTxn(t, g, ownerID, acct.ID, "-30", &cat.ID, monthStart.AddDate(0, -2, 5))
+	seedTxn(t, g, ownerID, acct.ID, "-120", &cat.ID, monthStart.AddDate(0, -1, 5))
+	seedTxn(t, g, ownerID, acct.ID, "-20", &cat.ID, monthStart)
+
+	// At the old limit: 10+100-30=80, 80+100-120=60. Today's 300 for every
+	// month would give 460.
+	items, err := agg.BudgetPace(ctx, hh.ID, household.PeriodCurrentMonth)
+	if err != nil {
+		t.Fatalf("BudgetPace: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("BudgetPace items = %+v, want 1", items)
+	}
+	it := items[0]
+	if it.Budget != "300" || it.Carryover != "60" || it.Available != "360" || it.Remaining != "340" {
+		t.Errorf("pace = budget %s carry %s available %s remaining %s, want 300/60/360/340",
+			it.Budget, it.Carryover, it.Available, it.Remaining)
+	}
+
+	sum, err := agg.BudgetSummary(ctx, hh.ID)
+	if err != nil {
+		t.Fatalf("BudgetSummary: %v", err)
+	}
+	if sum.Budgeted != "300" || sum.Carryover != "60" || sum.Available != "360" {
+		t.Errorf("summary = budgeted %s carry %s available %s, want 300/60/360",
+			sum.Budgeted, sum.Carryover, sum.Available)
+	}
+
+	repo := repository.NewHouseholdAggregatorRepository(g)
+	if h, err := repo.SharedBudgetAmountHistory(ctx, hh.ID, b.ID); err != nil || len(h) != 2 {
+		t.Errorf("own history = %d rows, err %v; want 2", len(h), err)
+	}
+	otherOwner := seedUser(t, g, "rh-other")
+	other := seedHouseholdRow(t, g, otherOwner, "RH Other", 30)
+	if h, err := repo.SharedBudgetAmountHistory(ctx, other.ID, b.ID); err != nil || len(h) != 0 {
+		t.Errorf("other household's history = %d rows, err %v; want none", len(h), err)
+	}
+}
+
 // TestAggregator_NoRawTransactionRows covers scenario (d) — reflection walk
 // over every aggregator return type asserts no model.Transaction or
 // []model.Transaction shapes are reachable.

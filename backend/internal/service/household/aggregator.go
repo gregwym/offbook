@@ -11,6 +11,7 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/repository"
+	"github.com/gregwym/offbook/backend/internal/service"
 	"github.com/gregwym/offbook/backend/internal/service/valuation"
 )
 
@@ -432,7 +433,7 @@ func (a *Aggregator) BudgetPace(ctx context.Context, householdID int64, period s
 		}
 		carry := decimal.Zero
 		if b.Rollover && period == PeriodCurrentMonth {
-			carry, err = a.monthlyCarryover(ctx, txAccounts, &b, from)
+			carry, err = a.monthlyCarryover(ctx, householdID, txAccounts, &b, from)
 			if err != nil {
 				return nil, err
 			}
@@ -498,7 +499,7 @@ func (a *Aggregator) BudgetSummary(ctx context.Context, householdID int64) (*Bud
 		}
 		carry := decimal.Zero
 		if b.Rollover {
-			if carry, err = a.monthlyCarryover(ctx, txAccounts, b, from); err != nil {
+			if carry, err = a.monthlyCarryover(ctx, householdID, txAccounts, b, from); err != nil {
 				return nil, err
 			}
 		}
@@ -545,11 +546,12 @@ const maxRolloverMonths = 36
 
 // monthlyCarryover applies the personal rollover policy to a shared budget:
 // the balance starts at b.RolloverStart (default zero) in the month the
-// budget was created, each
-// completed month adds (amount - spent), and the balance never drops below
-// zero. Spend is read through the same share/visibility filter as the
+// budget was created, each completed month adds (that month's limit - spent),
+// and the balance never drops below zero. A month's limit comes from the
+// budget's limit history, so editing the limit doesn't rewrite past months
+// (#663). Spend is read through the same share/visibility filter as the
 // current month, so it reflects today's shares, not historical ones.
-func (a *Aggregator) monthlyCarryover(ctx context.Context, accountIDs []int64, b *model.Budget, currentFrom time.Time) (decimal.Decimal, error) {
+func (a *Aggregator) monthlyCarryover(ctx context.Context, householdID int64, accountIDs []int64, b *model.Budget, currentFrom time.Time) (decimal.Decimal, error) {
 	created := b.CreatedAt.UTC()
 	start := time.Date(created.Year(), created.Month(), 1, 0, 0, 0, 0, time.UTC)
 	cur := time.Date(currentFrom.Year(), currentFrom.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -566,8 +568,13 @@ func (a *Aggregator) monthlyCarryover(ctx context.Context, accountIDs []int64, b
 	if err != nil {
 		return decimal.Zero, fmt.Errorf("rollover for budget %d: %w", b.ID, err)
 	}
+	history, err := a.repo.SharedBudgetAmountHistory(ctx, householdID, b.ID)
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("limit history for budget %d: %w", b.ID, err)
+	}
 	for m := earliest; m.Before(cur); m = m.AddDate(0, 1, 0) {
-		carry = decimal.Max(decimal.Zero, carry.Add(b.Amount).Sub(spend[m]))
+		limit := service.LimitAt(history, b.Amount, m)
+		carry = decimal.Max(decimal.Zero, carry.Add(limit).Sub(spend[m]))
 	}
 	return carry, nil
 }
