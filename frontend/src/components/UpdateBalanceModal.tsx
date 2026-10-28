@@ -107,7 +107,8 @@ export function UpdateBalanceModal({ account, onClose, onUpdated }: Props) {
         <>
           <div className="space-y-3 px-5 py-4">
             <p className="text-xs text-gray-500">
-              Enter the balance your bank shows. If your transactions don’t add up to it, Offbook records
+              {liability ? 'Enter what your statement says you owe.' : 'Enter the balance your bank shows.'} If your
+              transactions don’t add up to it, Offbook records
               the difference as an adjustment you can review on the reconciliation page.
             </p>
             {error && (

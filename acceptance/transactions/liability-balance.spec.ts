@@ -53,6 +53,7 @@ test.describe('manual credit card balance', () => {
     const dialog = page.getByRole('dialog', { name: /Update balance/ })
     const input = dialog.getByLabel('Amount owed (USD)')
     await expect(input).toHaveValue('450')
+    await expect(dialog).toContainText('Enter what your statement says you owe.')
     await input.fill('512.30')
     await expect(dialog.getByText(/You owe/)).toContainText('You owe 512.30 USD.')
     await expectNoOverflow(page)
