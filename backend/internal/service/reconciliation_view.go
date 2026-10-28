@@ -104,8 +104,12 @@ func (s *ReconciliationService) Report(ctx context.Context, userID, accountID in
 	usedByDate := make(map[string]*model.Transaction, len(reconciling))
 	for i := range reconciling {
 		t := &reconciling[i]
+		// Oldest first, so a backdated correction's own row wins over the
+		// offset it wrote at a later anchor (#669).
 		if t.CausedByObservationID != nil {
-			byObservation[*t.CausedByObservationID] = t
+			if _, seen := byObservation[*t.CausedByObservationID]; !seen {
+				byObservation[*t.CausedByObservationID] = t
+			}
 		}
 		usedByDate[fmt.Sprintf("%d|%s", t.AssetID, t.TransactionDate.Format("2006-01-02"))] = t
 	}

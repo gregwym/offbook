@@ -16,6 +16,10 @@ import (
 // and records the observation (ADR-0017). The first reconciling row for an
 // (account, asset) is an opening_balance anchor; later ones are adjustments.
 //
+// A backdated report (asOf before today) is compared with the ledger as of
+// that day and never moves a balance a later anchor pinned; see
+// reconcileFold and offsetAtNextAnchor (#669).
+//
 // Returns the written transaction, or nil when the fold already equals
 // `reported` (no reconciling row needed). It is idempotent: a second call with
 // the same reported value writes nothing.
@@ -62,9 +66,9 @@ func reconcilePositionForJob(
 		return nil, fmt.Errorf("reconcile: record observation: %w", err)
 	}
 
-	fold, err := txRepo.FoldQuantity(ctx, userID, accountID, assetID)
+	fold, historical, err := reconcileFold(ctx, txRepo, userID, accountID, assetID, asOf)
 	if err != nil {
-		return nil, fmt.Errorf("reconcile: fold: %w", err)
+		return nil, err
 	}
 	delta := reported.Sub(fold)
 	if delta.IsZero() {
@@ -96,5 +100,81 @@ func reconcilePositionForJob(
 	if err := txRepo.Create(ctx, recTx); err != nil {
 		return nil, fmt.Errorf("reconcile: write %s: %w", kind, err)
 	}
+	if historical {
+		if err := offsetAtNextAnchor(ctx, txRepo, obsRepo, userID, accountID, assetID, delta, asOf, obs.ID, jobID); err != nil {
+			return nil, err
+		}
+	}
 	return recTx, nil
+}
+
+// reconcileFold returns the ledger fold a value reported asOf is compared
+// with. A current report (asOf today or later) is compared with the whole
+// ledger. A backdated one (#669) is compared with the ledger as it stood at
+// the end of asOf's day, so flows dated after it stay where they are instead
+// of being cancelled by the adjustment.
+func reconcileFold(ctx context.Context, txRepo repository.TransactionRepository, userID, accountID, assetID int64, asOf time.Time) (decimal.Decimal, bool, error) {
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	if !asOf.UTC().Before(today) {
+		fold, err := txRepo.FoldQuantity(ctx, userID, accountID, assetID)
+		if err != nil {
+			return decimal.Zero, false, fmt.Errorf("reconcile: fold: %w", err)
+		}
+		return fold, false, nil
+	}
+	fold, err := txRepo.FoldQuantityThrough(ctx, userID, accountID, assetID, asOf)
+	if err != nil {
+		return decimal.Zero, true, fmt.Errorf("reconcile: fold through %s: %w", asOf.Format("2006-01-02"), err)
+	}
+	return fold, true, nil
+}
+
+// offsetAtNextAnchor keeps a backdated correction from moving balances that a
+// later anchor already pinned. When an observation or opening_balance/
+// adjustment row exists on a later day, the balance from that day on was
+// already reconciled, so the correction's delta is reversed there: the
+// ledger then matches both the backdated report and the later one, and the
+// current balance is unchanged. With no later anchor the delta carries
+// forward, since nothing after asOf contradicts it.
+func offsetAtNextAnchor(
+	ctx context.Context,
+	txRepo repository.TransactionRepository,
+	obsRepo repository.BalanceObservationRepository,
+	userID, accountID, assetID int64,
+	delta decimal.Decimal,
+	asOf time.Time,
+	obsID int64,
+	jobID *int64,
+) error {
+	next, err := obsRepo.EarliestAfter(ctx, userID, accountID, assetID, asOf)
+	if err != nil {
+		return fmt.Errorf("reconcile: later observation: %w", err)
+	}
+	rec, err := txRepo.EarliestReconcilingAfter(ctx, userID, accountID, assetID, asOf)
+	if err != nil {
+		return fmt.Errorf("reconcile: later anchor: %w", err)
+	}
+	if rec != nil && (next == nil || rec.Before(*next)) {
+		next = rec
+	}
+	if next == nil {
+		return nil
+	}
+	desc := "Reconciliation adjustment (offsets an earlier balance correction)"
+	offset := &model.Transaction{
+		UserID:                userID,
+		AccountID:             accountID,
+		AssetID:               assetID,
+		Kind:                  model.KindAdjustment,
+		Amount:                delta.Neg(),
+		Description:           &desc,
+		TransactionDate:       next.UTC().Truncate(24 * time.Hour),
+		Source:                "system",
+		CausedByObservationID: &obsID,
+		ImportJobID:           jobID,
+	}
+	if err := txRepo.Create(ctx, offset); err != nil {
+		return fmt.Errorf("reconcile: write offset: %w", err)
+	}
+	return nil
 }

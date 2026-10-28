@@ -28,6 +28,9 @@ export function UpdateBalanceModal({ account, onClose, onUpdated }: Props) {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<UpdateBalanceResult | null>(null)
+  // A past-dated save (#669) is the balance on that day, not today's: the
+  // confirmation shows both, since later transactions still apply.
+  const [saved, setSaved] = useState<{ entered: string; asOf: string | null } | null>(null)
   const liability = isLiabilityType(account.account_type)
 
   const submit = async () => {
@@ -50,6 +53,7 @@ export function UpdateBalanceModal({ account, onClose, onUpdated }: Props) {
     try {
       // Leave as_of off for today so the backend stamps the observation "now".
       const res = await updateAccountBalance(account.id, asOf === todayISO() ? { balance: value } : { balance: value, as_of: asOf })
+      setSaved({ entered, asOf: asOf === todayISO() ? null : asOf })
       setResult(res)
       onUpdated?.(res)
     } catch (err) {
@@ -67,8 +71,26 @@ export function UpdateBalanceModal({ account, onClose, onUpdated }: Props) {
       {result ? (
         <>
           <div className="space-y-2 px-5 py-4 text-sm text-gray-700" role="status">
+            {saved?.asOf && (
+              <p>
+                Saved{' '}
+                <AmountDisplay amount={saved.entered} currency={account.currency} className="font-semibold" />
+                {liability ? ' owed' : ''} as your balance on {formatDay(saved.asOf)}. Transactions after that date
+                still count.
+              </p>
+            )}
             <p>
-              {!liability ? 'Balance is now ' : inCredit(result.account.balance) ? 'In credit by ' : 'You now owe '}
+              {saved?.asOf
+                ? !liability
+                  ? 'Balance today is '
+                  : inCredit(result.account.balance)
+                    ? 'Today you’re in credit by '
+                    : 'Today you owe '
+                : !liability
+                  ? 'Balance is now '
+                  : inCredit(result.account.balance)
+                    ? 'In credit by '
+                    : 'You now owe '}
               <AmountDisplay
                 amount={liability ? absDecimal(result.account.balance) : entryFromLedger(account.account_type, result.account.balance)}
                 currency={account.currency}
@@ -80,11 +102,15 @@ export function UpdateBalanceModal({ account, onClose, onUpdated }: Props) {
               <p>
                 Recorded{' '}
                 {result.recorded.kind === 'opening_balance' ? 'an opening balance of ' : 'an adjustment of '}
-                <AmountDisplay amount={result.recorded.amount} currency={account.currency} signed /> to match it.
+                <AmountDisplay amount={result.recorded.amount} currency={account.currency} signed />
+                {saved?.asOf ? ` on ${formatDay(saved.asOf)}` : ''} to match it.
                 Adjustments don’t count as spending or income.
               </p>
             ) : (
-              <p>Your transactions already add up to this balance, so nothing was adjusted.</p>
+              <p>
+                Your transactions{saved?.asOf ? ` up to ${formatDay(saved.asOf)}` : ''} already add up to this balance,
+                so nothing was adjusted.
+              </p>
             )}
             <Link
               to={`/accounts/${account.id}/reconciliation`}
@@ -137,8 +163,21 @@ export function UpdateBalanceModal({ account, onClose, onUpdated }: Props) {
               </div>
             )}
             <Field label="As of">
-              <input type="date" className={inputClass} value={asOf} max={todayISO()} onChange={(e) => setAsOf(e.target.value)} />
+              <input
+                type="date"
+                className={inputClass}
+                value={asOf}
+                max={todayISO()}
+                onChange={(e) => setAsOf(e.target.value)}
+                aria-describedby={asOf && asOf < todayISO() ? 'update-balance-past' : undefined}
+              />
             </Field>
+            {asOf && asOf < todayISO() && (
+              <p id="update-balance-past" className="-mt-2 text-xs text-gray-500">
+                Offbook checks this against your transactions up to {formatDay(asOf)}. Transactions after that date
+                stay as they are.
+              </p>
+            )}
           </div>
           <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
             <button type="button" onClick={onClose} disabled={submitting} className="rounded-md border border-gray-300 px-3 py-1.5 text-sm">
@@ -181,6 +220,12 @@ function todayISO(): string {
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${dd}`
+}
+
+// formatDay renders a YYYY-MM-DD date for copy, e.g. "May 31, 2026".
+function formatDay(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function errMsg(err: unknown): string {
