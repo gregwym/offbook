@@ -926,7 +926,7 @@ function CashFlowTrend({
             </ResponsiveContainer>
           </div>
           <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-gray-400">Net</div>
-          <ul aria-label="Net by month" className="mt-0.5 grid grid-cols-3 gap-x-2 gap-y-0.5 text-xs sm:grid-cols-6 lg:grid-cols-3">
+          <ul aria-label="Net by month" className="mt-0.5 grid grid-cols-2 gap-x-5 gap-y-0.5 text-xs sm:grid-cols-3 lg:grid-cols-2">
             {months.map((m, i) => {
               const key = m.month.slice(0, 7)
               const on = key === selected
@@ -942,7 +942,9 @@ function CashFlowTrend({
               )
             })}
           </ul>
-          <table className="sr-only">
+          {/* A table ignores sr-only's 1px width, so the wrapper carries it. */}
+          <div className="sr-only">
+          <table>
             <caption>Income, spending and net by month</caption>
             <thead>
               <tr><th scope="col">Month</th><th scope="col">Income</th><th scope="col">Spending</th><th scope="col">Net</th></tr>
@@ -958,6 +960,7 @@ function CashFlowTrend({
               ))}
             </tbody>
           </table>
+          </div>
         </>
       )}
     </div>
