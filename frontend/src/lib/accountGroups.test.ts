@@ -47,7 +47,37 @@ describe('summarizeAccounts', () => {
       acct({ id: 3, account_type: 'credit_card', balance: '-12341.70' }),
       acct({ id: 4, account_type: 'investment', balance: '1200.00' }),
     ])
-    expect(s).toEqual({ currency: 'USD', assets: '24322.3', liabilities: '-12341.7', netWorth: '11980.6', complete: true })
+    expect(s).toEqual({
+      currency: 'USD',
+      assets: '24322.3',
+      liabilities: '-12341.7',
+      owed: '12341.7',
+      liabilityCredit: false,
+      netWorth: '11980.6',
+      complete: true,
+    })
+  })
+
+  // #659: the headline shows what is owed as a positive magnitude, exactly.
+  it('reports owed as an exact positive magnitude', () => {
+    const s = summarizeAccounts([
+      acct({ id: 1, account_type: 'credit_card', balance: '-0.000000000000000001' }),
+      acct({ id: 2, account_type: 'loan', balance: '-99999999999.99' }),
+    ])
+    expect(s?.owed).toBe('99999999999.990000000000000001')
+    expect(s?.liabilityCredit).toBe(false)
+  })
+
+  it('flags a net credit on liability accounts instead of flipping it', () => {
+    const s = summarizeAccounts([
+      acct({ id: 1, account_type: 'checking', balance: '100' }),
+      acct({ id: 2, account_type: 'credit_card', balance: '25.50' }),
+    ])
+    expect(s).toMatchObject({ liabilities: '25.5', owed: '25.5', liabilityCredit: true, netWorth: '125.5' })
+  })
+
+  it('owes nothing when there are no liabilities', () => {
+    expect(summarizeAccounts([acct({ balance: '5' })])).toMatchObject({ owed: '0', liabilityCredit: false })
   })
 
   it('is partial when any balance is', () => {

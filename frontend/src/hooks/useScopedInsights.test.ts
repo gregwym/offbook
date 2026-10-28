@@ -131,7 +131,7 @@ describe('useScopedInsights (personal scope)', () => {
         currency: fx.account1.currency,
         balance: fx.account1.balance,
         balance_complete: true,
-        source: 'manual',
+        institution: 'Manual',
         last_synced_at: null,
         needs_attention: false,
       },
