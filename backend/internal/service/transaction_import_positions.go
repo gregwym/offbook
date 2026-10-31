@@ -220,12 +220,24 @@ func (s *TransactionService) commitPositions(ctx context.Context, userID int64, 
 	if len(targets) == 0 {
 		return nil
 	}
+	// The statement's new flows are already in the cash ledger. A backdated
+	// reconcile must not let them move a balance a later anchor pinned (#680).
+	var inserted []insertedRow
+	for _, r := range res.Rows {
+		if r.Status == ImportNew {
+			inserted = append(inserted, insertedRow{date: r.Date, amount: r.Amount})
+		}
+	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		txRepo := repository.NewTransactionRepository(tx)
 		obsRepo := repository.NewBalanceObservationRepository(tx)
 		posRepo := repository.NewPositionRepository(tx)
 		for _, t := range targets {
-			rec, err := reconcilePositionForJob(ctx, txRepo, obsRepo, userID, account.ID, t.assetID, t.quantity, t.asOf, "statement", jobID)
+			var rows []insertedRow
+			if t.assetID == account.PrimaryQuoteAssetID {
+				rows = inserted
+			}
+			rec, err := reconcilePositionForJob(ctx, txRepo, obsRepo, userID, account.ID, t.assetID, t.quantity, t.asOf, "statement", jobID, rows)
 			if err != nil {
 				return err
 			}

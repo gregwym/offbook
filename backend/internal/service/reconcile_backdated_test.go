@@ -264,8 +264,10 @@ func TestImportStatement_OlderStatementKeepsCurrentBalance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if preview.ClosingBalance == nil || !preview.ClosingBalance.Effect.Adjustment.Equal(decimal.NewFromInt(300)) {
-		t.Fatalf("preview = %+v, want adjustment 300 against the older day's ledger", preview.ClosingBalance)
+	// The newer statement's opening anchor is the balance before the first
+	// known row, so it already counts on the older day (#680): 300 − 500.
+	if preview.ClosingBalance == nil || !preview.ClosingBalance.Effect.Adjustment.Equal(decimal.NewFromInt(-200)) {
+		t.Fatalf("preview = %+v, want adjustment −200 against the older day's ledger", preview.ClosingBalance)
 	}
 	for range 2 { // re-importing the older statement has no further effect
 		if _, err := svc.ImportStatement(ctx, userID, accountID, statement("300", older), true); err != nil {
@@ -282,5 +284,192 @@ func TestImportStatement_OlderStatementKeepsCurrentBalance(t *testing.T) {
 		if !at.Equal(decimal.NewFromInt(300)) {
 			t.Errorf("balance as of older statement = %s, want 300", at)
 		}
+	}
+}
+
+// historyAt is the balance the net-worth history reader (FoldByUserAsOf, the
+// dashboard's) shows for the user's assetID on day. Callers give each case
+// its own user, so the user-wide fold is this one account's.
+func historyAt(t *testing.T, txRepo repository.TransactionRepository, userID, assetID int64, day time.Time) decimal.Decimal {
+	t.Helper()
+	positions, err := txRepo.FoldByUserAsOf(context.Background(), userID, day)
+	if err != nil {
+		t.Fatalf("fold by user as of %s: %v", day.Format("2006-01-02"), err)
+	}
+	sum := decimal.Zero
+	for _, p := range positions {
+		if p.AssetID == assetID {
+			sum = sum.Add(p.Quantity)
+		}
+	}
+	return sum
+}
+
+// TestUpdateBalance_BackdatedMatchesNetWorthHistory covers #680 case 1: a
+// backdated balance must read back as reported in net-worth history, not
+// only through the reconciliation helper. The opening anchor counts as the
+// balance before the first known row in both.
+func TestUpdateBalance_BackdatedMatchesNetWorthHistory(t *testing.T) {
+	svc, _, g := newAccountSvc(t)
+	svc.WithValuation(valuation.NewService(
+		repository.NewPositionRepository(g),
+		repository.NewPriceRepository(g),
+		repository.NewAssetRepository(g),
+		repository.NewAccountRepository(g),
+	))
+	svc.WithBalanceObservationRepo(repository.NewBalanceObservationRepository(g))
+	ctx := context.Background()
+	d := decimal.RequireFromString
+	txRepo := repository.NewTransactionRepository(g)
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	d0 := today.AddDate(0, 0, -150)
+
+	type step struct {
+		balance string
+		asOf    time.Time
+	}
+	cases := []struct {
+		name    string
+		opening string // via account creation, dated today
+		rows    []model.Transaction
+		steps   []step
+		want    map[time.Time]string // history reader by day
+		current string
+	}{
+		{
+			name:    "opening today, higher balance twenty days ago",
+			opening: "10",
+			steps:   []step{{"12", today.AddDate(0, 0, -20)}},
+			want:    map[time.Time]string{today.AddDate(0, 0, -20): "12", today.AddDate(0, 0, -1): "12", today: "10"},
+			current: "10",
+		},
+		{
+			name: "earlier report before a dated opening anchor",
+			rows: []model.Transaction{
+				{Kind: model.KindOpeningBalance, Amount: d("1000"), TransactionDate: d0},
+				{Kind: model.KindFlow, Amount: d("-100"), TransactionDate: d0.AddDate(0, 0, 10)},
+			},
+			steps:   []step{{"800", d0.AddDate(0, 0, -10)}},
+			want:    map[time.Time]string{d0.AddDate(0, 0, -10): "800", d0: "1000", d0.AddDate(0, 0, 10): "900"},
+			current: "900",
+		},
+		{
+			name: "issue #669 ledger keeps its history",
+			rows: []model.Transaction{
+				{Kind: model.KindOpeningBalance, Amount: d("1000"), TransactionDate: d0},
+				{Kind: model.KindFlow, Amount: d("-100"), TransactionDate: d0.AddDate(0, 0, 10)},
+			},
+			steps:   []step{{"1100", d0}, {"1100", d0}},
+			want:    map[time.Time]string{d0: "1100", d0.AddDate(0, 0, 10): "1000"},
+			current: "1000",
+		},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			userID := seedTestUser(t, g)
+			t.Cleanup(func() {
+				g.Where("user_id = ?", userID).Delete(&model.AccountBalanceObservation{})
+			})
+			in := validInput(tcSuffix(i))
+			in.OpeningBalance = d("0")
+			if tc.opening != "" {
+				in.OpeningBalance = d(tc.opening)
+			}
+			a, err := svc.Create(ctx, userID, in)
+			if err != nil {
+				t.Fatalf("create: %v", err)
+			}
+			for _, r := range tc.rows {
+				desc := r.Kind
+				r.UserID, r.AccountID, r.AssetID, r.Description, r.Source = userID, a.ID, a.PrimaryQuoteAssetID, &desc, "manual"
+				if err := txRepo.Create(ctx, &r); err != nil {
+					t.Fatalf("seed row: %v", err)
+				}
+			}
+			var res *service.UpdateBalanceResult
+			for _, st := range tc.steps {
+				asOf := st.asOf
+				if res, err = svc.UpdateBalance(ctx, userID, a.ID, service.UpdateBalanceInput{Balance: d(st.balance), AsOf: &asOf}); err != nil {
+					t.Fatalf("update balance: %v", err)
+				}
+				// Whatever reader is asked, the reported day reads as reported.
+				if got := historyAt(t, txRepo, userID, a.PrimaryQuoteAssetID, asOf); !got.Equal(d(st.balance)) {
+					t.Errorf("history on reported day %s = %s, want %s", asOf.Format("2006-01-02"), got, st.balance)
+				}
+				if got, err := txRepo.FoldQuantityThrough(ctx, userID, a.ID, a.PrimaryQuoteAssetID, asOf); err != nil || !got.Equal(d(st.balance)) {
+					t.Errorf("reconciliation fold on %s = %s (%v), want %s", asOf.Format("2006-01-02"), got, err, st.balance)
+				}
+			}
+			for day, want := range tc.want {
+				if got := historyAt(t, txRepo, userID, a.PrimaryQuoteAssetID, day); !got.Equal(d(want)) {
+					t.Errorf("history on %s = %s, want %s", day.Format("2006-01-02"), got, want)
+				}
+			}
+			if !res.Account.Balance.Equal(d(tc.current)) {
+				t.Errorf("current balance = %s, want %s", res.Account.Balance, tc.current)
+			}
+			assertFold(t, txRepo, userID, a.ID, a.PrimaryQuoteAssetID, tc.current)
+		})
+	}
+}
+
+// TestImportStatement_OlderStatementRowsKeepLaterBalance covers #680 case 2:
+// an older statement's new flows must not move a balance a newer statement
+// already confirmed, whether or not its own closing balance needed a
+// correction. Re-importing it changes nothing.
+func TestImportStatement_OlderStatementRowsKeepLaterBalance(t *testing.T) {
+	for _, tc := range []struct {
+		name, olderClosing string
+	}{
+		{"older balance needs a correction", "300"},
+		{"older balance already matches", "470"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, userID, accountID, g := newImportSvc(t)
+			svc = svc.WithStatementPositions(g, repository.NewAssetRepository(g))
+			t.Cleanup(func() { g.Unscoped().Where("account_id = ?", accountID).Delete(&model.Position{}) })
+			t.Cleanup(func() { g.Where("account_id = ?", accountID).Delete(&model.AccountBalanceObservation{}) })
+			ctx := context.Background()
+			txRepo := repository.NewTransactionRepository(g)
+			cash := usdID(t, g, accountID)
+			today := time.Now().UTC().Truncate(24 * time.Hour)
+			older, newer := today.AddDate(0, 0, -60), today.AddDate(0, 0, -30)
+			d := decimal.RequireFromString
+
+			statement := func(closing string, at time.Time, rows ...ingestion.ParsedRow) *ingestion.Extraction {
+				bal, when, ok := ingestion.ParseClosingBalance(closing, at.Format("2006-01-02"))
+				if !ok {
+					t.Fatalf("parse closing balance %s", closing)
+				}
+				return &ingestion.Extraction{Source: "pdf", Rows: rows, ClosingBalance: &bal, ClosingBalanceAt: &when}
+			}
+			spend := ingestion.ParsedRow{Line: 2, Date: older.AddDate(0, 0, -10), Amount: d("-30"), Description: "Hardware store", Confidence: 1}
+
+			if _, err := svc.ImportStatement(ctx, userID, accountID, statement("500", newer), true); err != nil {
+				t.Fatal(err)
+			}
+			for i := range 2 { // the second import is a re-import: every row is a duplicate
+				res, err := svc.ImportStatement(ctx, userID, accountID, statement(tc.olderClosing, older, spend), true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if wantNew := 1 - i; res.InsertedCount != wantNew {
+					t.Errorf("import %d inserted %d rows, want %d", i+1, res.InsertedCount, wantNew)
+				}
+				assertFold(t, txRepo, userID, accountID, cash, "500")
+				var pos model.Position
+				if err := g.Where("account_id = ? AND asset_id = ?", accountID, cash).First(&pos).Error; err != nil {
+					t.Fatalf("position: %v", err)
+				}
+				if !pos.Quantity.Equal(d("500")) {
+					t.Errorf("position = %s, want 500 (the newer statement's balance)", pos.Quantity)
+				}
+				for day, want := range map[time.Time]string{older: tc.olderClosing, newer: "500"} {
+					if got := historyAt(t, txRepo, userID, cash, day); !got.Equal(d(want)) {
+						t.Errorf("history on %s = %s, want %s", day.Format("2006-01-02"), got, want)
+					}
+				}
+			}
+		})
 	}
 }
