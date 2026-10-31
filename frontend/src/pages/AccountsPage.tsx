@@ -636,7 +636,7 @@ function ReportedProvenance({ account: a }: { account: Account }) {
     <div className="mt-0.5 text-xs text-gray-500">
       {reportedSubject(a.last_observed_source)} <AmountDisplay amount={line.amount} currency={a.currency} />
       {line.reading === 'owed' ? ' owed' : line.reading === 'credit' ? ' in credit' : ''}{' '}
-      {line.day ? <>for {formatReportedDay(line.day)}</> : <TimeAgo when={line.at} />}
+      {line.day ? <span className="whitespace-nowrap">for {formatReportedDay(line.day)}</span> : <TimeAgo when={line.at} />}
     </div>
   )
 }
