@@ -859,3 +859,49 @@ describe('TransactionsPage account filter (#657)', () => {
   })
 })
 
+
+// #675: on one account's list, the Needs review count is that account's,
+// and the Account column / phone suffix that would repeat its name go away.
+describe('TransactionsPage review count and account column under a filter (#675)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('counts only the filtered account and hides the Account column until the filter clears', async () => {
+    const card = { ...fx.account1, id: 3, name: 'QAM Card', account_type: 'credit_card' as const }
+    const countQueries: URLSearchParams[] = []
+    server.use(
+      http.get(`${API}/accounts`, () => HttpResponse.json({ data: [fx.account1, card], total: 2 })),
+      http.get(`${API}/transactions`, ({ request }) => {
+        const q = new URL(request.url).searchParams
+        if (q.get('reviewed') === 'false') {
+          countQueries.push(q)
+          // 207 across every account, 4 on the card.
+          return HttpResponse.json({ data: [], total: q.get('account_id') === '3' ? 4 : 207 })
+        }
+        const rows = q.get('account_id') === '3' ? [{ ...fx.transaction1, account_id: 3 }] : fx.transactions
+        return HttpResponse.json({ data: rows, total: rows.length })
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/transactions?account_id=3']}>
+        <TransactionsPage />
+      </MemoryRouter>,
+    )
+    const chip = await screen.findByRole('button', { name: /needs review/i })
+    await waitFor(() => expect(chip).toHaveTextContent('Needs review· 4'))
+    expect(countQueries.at(-1)?.get('account_id')).toBe('3')
+    expect(countQueries.at(-1)?.get('limit')).toBe('1')
+    expect(screen.queryByRole('columnheader', { name: 'Account' })).toBeNull()
+    await screen.findByRole('region', { name: 'Account QAM Card' })
+    // The phone meta line no longer repeats the account name.
+    const table = screen.getByRole('table')
+    expect(within(table).queryByText(/· QAM Card/)).toBeNull()
+
+    // Clearing the filter brings both back.
+    fireEvent.click(screen.getByRole('button', { name: 'All accounts' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /needs review/i })).toHaveTextContent('Needs review· 207'))
+    expect(countQueries.at(-1)?.get('account_id')).toBeNull()
+    expect(screen.getByRole('columnheader', { name: 'Account' })).toBeTruthy()
+  })
+})

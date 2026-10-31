@@ -214,6 +214,22 @@ test.describe('acceptance month fixture', () => {
     await expect(page.getByText(`${PREFIX} `).locator('visible=true').first()).toBeVisible()
     await expectNoClipping(page, 'account-transactions')
     await snap(page, testInfo, 'account-transactions')
+    // #675: the Needs review chip counts this account's rows only, pressing
+    // it shows exactly that many, and the Account column (all "QAM Card")
+    // is gone; the phone meta line drops the suffix too.
+    const cardUnreviewed = (await get(cookie, `/transactions?account_id=${acct.card}&reviewed=false&limit=1`)).total
+    const allUnreviewed = (await get(cookie, '/transactions?reviewed=false&limit=1')).total
+    expect(cardUnreviewed, 'some card rows await review').toBeGreaterThan(0)
+    expect(cardUnreviewed).toBeLessThan(allUnreviewed)
+    const chip = page.getByRole('button', { name: /^Needs review/ })
+    await expect(chip).toContainText(`· ${cardUnreviewed}`)
+    await expect(page.getByRole('columnheader', { name: 'Account' })).toHaveCount(0)
+    await expect(page.getByText(/· QAM Card$/).locator('visible=true')).toHaveCount(0)
+    await chip.click()
+    await expect(page.getByText(`${cardUnreviewed} to review`, { exact: true })).toBeVisible()
+    await snap(page, testInfo, 'account-needs-review')
+    await chip.click()
+    await expect(page.getByText(`${cardRows} total`, { exact: true })).toBeVisible()
     await page.reload()
     await expect(page.getByRole('region', { name: 'Account QAM Card' })).toBeVisible()
     await expect(page.getByText(`${cardRows} total`, { exact: true })).toBeVisible()
