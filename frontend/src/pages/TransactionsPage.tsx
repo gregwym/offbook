@@ -339,22 +339,38 @@ export function TransactionsPage() {
   // Only the latest request may set the count: the unfiltered first-render
   // query can resolve after the filtered one and would otherwise overwrite
   // it with the all-accounts number.
+  // The request reads the filter on screen *when it is sent* (a ref), not
+  // the one captured when an action started: a review or bulk edit that
+  // resolves after the user switched accounts must count the new account,
+  // not the old one (#688).
   const countFilter = useMemo(() => ({ ...filter, reviewed: false, limit: 1, offset: 0 }), [filter])
+  const countFilterRef = useRef(countFilter)
+  countFilterRef.current = countFilter
   const reviewCountSeq = useRef(0)
   const refreshReviewCount = useCallback(() => {
     const seq = ++reviewCountSeq.current
-    return listTransactions(countFilter)
+    return listTransactions(countFilterRef.current)
       .then((r) => { if (seq === reviewCountSeq.current) setReviewCount(r.total) })
       .catch(() => { /* swallow — the count just won't surface */ })
-  }, [countFilter])
+  }, [])
   useEffect(() => {
     void refreshReviewCount()
-  }, [recentSyncAt, refreshReviewCount])
+  }, [recentSyncAt, countFilter, refreshReviewCount])
+  // After an action settles: refresh the count, and if the filter changed
+  // while it was in flight, reload the list too. A list fetched for the new
+  // filter before the write landed still holds the row the action changed
+  // (and a failed write reverts to the old filter's rows), so without the
+  // reload it would disagree with the chip (#688).
+  const settleAction = (startedWith: typeof countFilter) => {
+    void refreshReviewCount()
+    if (countFilterRef.current !== startedWith) void fetch()
+  }
 
   // Review / undo. The store updates optimistically and reverts on failure;
   // the toast offers a one-click undo for the exact rows just changed.
   const reviewRows = async (ids: number[], reviewed: boolean, offerUndo = true) => {
     if (ids.length === 0) return
+    const startedWith = countFilterRef.current
     setReviewBusy(true)
     try {
       await markReviewed(ids, reviewed)
@@ -372,7 +388,7 @@ export function TransactionsPage() {
       setReviewToast(null) // store.error renders the failure banner
     } finally {
       setReviewBusy(false)
-      void refreshReviewCount()
+      settleAction(startedWith)
     }
   }
 
@@ -380,6 +396,7 @@ export function TransactionsPage() {
   // offers an undo that restores exactly the rows this edit changed.
   const bulkEditRows = async (ids: number[], action: BulkEditAction, done: (n: number) => string) => {
     if (ids.length === 0) return
+    const startedWith = countFilterRef.current
     setReviewBusy(true)
     try {
       const res = await bulkEdit(ids, action)
@@ -397,11 +414,12 @@ export function TransactionsPage() {
       setBulkToast(null) // store.error renders the failure banner
     } finally {
       setReviewBusy(false)
-      void refreshReviewCount()
+      settleAction(startedWith)
     }
   }
 
   const undoBulkRows = async (undo: BulkEditPrior[]) => {
+    const startedWith = countFilterRef.current
     setReviewBusy(true)
     try {
       const res = await undoBulkEdit(undo)
@@ -413,7 +431,7 @@ export function TransactionsPage() {
       setBulkToast(null)
     } finally {
       setReviewBusy(false)
-      void refreshReviewCount()
+      settleAction(startedWith)
     }
   }
 

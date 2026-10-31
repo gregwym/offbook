@@ -238,6 +238,28 @@ test.describe('acceptance month fixture', () => {
     await expect(page.getByText('QAM Card').locator('visible=true').first()).toBeVisible()
     await snap(page, testInfo, 'account-reconciliation')
 
+    // #688: a review that resolves after the filter changed refreshes the
+    // count for the filter now on screen. Hold the review write, leave the
+    // card filter, then release it: the chip counts every account (one fewer
+    // now), never the card's remaining rows.
+    await page.goto(`/transactions?account_id=${acct.card}&review=1`)
+    await expect(page.getByText(`${cardUnreviewed} to review`, { exact: true })).toBeVisible()
+    let release: () => void = () => {}
+    const held = new Promise<void>((r) => { release = r })
+    await page.route('**/api/v1/transactions/review', async (route) => { await held; await route.continue() })
+    await page.getByRole('button', { name: /^Mark .+ reviewed$/ }).locator('visible=true').first().click()
+    await page.getByRole('button', { name: 'All accounts' }).click()
+    await expect(chip).toHaveText(new RegExp(`· ${allUnreviewed}$`))
+    release()
+    await expect(chip).toHaveText(new RegExp(`· ${allUnreviewed - 1}$`))
+    await page.unroute('**/api/v1/transactions/review')
+    await page.waitForTimeout(300)
+    await expect(chip).toHaveText(new RegExp(`· ${allUnreviewed - 1}$`))
+    expect((await get(cookie, '/transactions?reviewed=false&limit=1')).total).toBe(allUnreviewed - 1)
+    // The inbox list agrees with the chip: it reloads once the write lands.
+    await expect(page.getByText(`${allUnreviewed - 1} to review`, { exact: true })).toBeVisible()
+    await snap(page, testInfo, 'review-count-after-filter-change')
+
     // Every other core page at volume: nothing clipped inside a wrapper (#561).
     for (const [name, path, ready] of [
       ['accounts', '/accounts', 'QAM Checking'],
