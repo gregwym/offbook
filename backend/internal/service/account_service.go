@@ -400,6 +400,10 @@ func (s *AccountService) fillObservations(ctx context.Context, userID int64, res
 			source := o.Source
 			r.LastObservedAt = &asOf
 			r.LastObservedSource = &source
+			if r.Account != nil && o.AssetID == r.PrimaryQuoteAssetID {
+				q := o.ObservedQuantity
+				r.LastObservedBalance = &q
+			}
 		}
 	}
 	return nil

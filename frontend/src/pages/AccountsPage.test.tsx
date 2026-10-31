@@ -75,6 +75,32 @@ describe('AccountsPage smoke', () => {
     expect(screen.queryByText(/via (manual|plaid|pdf)/)).toBeNull()
   })
 
+  // #673: a past-dated or since-moved report says what was reported, not a
+  // date stamped on today's balance.
+  it('says what was reported for a past day instead of dating today’s balance', async () => {
+    const now = new Date().toISOString()
+    server.use(
+      http.get('/api/v1/accounts', () =>
+        HttpResponse.json({
+          data: [
+            { ...fx.account1, id: 1, name: 'Today', balance: '900', last_observed_at: now, last_observed_source: 'manual', last_observed_balance: '900.000000000000000000' },
+            { ...fx.account1, id: 2, name: 'Matched', balance: '900', last_observed_at: '2026-08-30T00:00:00Z', last_observed_source: 'manual', last_observed_balance: '1000' },
+            { ...fx.account1, id: 3, name: 'Mismatch', balance: '1000', last_observed_at: '2026-08-30T00:00:00Z', last_observed_source: 'manual', last_observed_balance: '1100' },
+            { ...fx.account1, id: 4, name: 'Moved', balance: '850', last_observed_at: now, last_observed_source: 'pdf', last_observed_balance: '900' },
+          ],
+          total: 4,
+        }),
+      ),
+    )
+    renderPage(<AccountsPage />)
+    const row = async (name: string) => (await screen.findByRole('link', { name })).closest('tr') as HTMLElement
+    expect(await row('Today')).toHaveTextContent('Reported just now by you')
+    expect(await row('Matched')).toHaveTextContent(/You reported 1,000\.00 USD for Aug 30/)
+    expect(await row('Mismatch')).toHaveTextContent(/You reported 1,100\.00 USD for Aug 30/)
+    expect(await row('Mismatch')).not.toHaveTextContent(/Reported Aug 30/)
+    expect(await row('Moved')).toHaveTextContent(/Your statement showed 900\.00 USD just now/)
+  })
+
   // #530: a partial balance names the holding missing a price, and Set price
   // opens pre-filled with it so the user only types the price.
   it('names the unpriced holding and pre-fills Set price with it', async () => {

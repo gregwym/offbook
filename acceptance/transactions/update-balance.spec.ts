@@ -54,8 +54,8 @@ test.describe('update manual account balance', () => {
     await expect(dialog.getByRole('alert')).toHaveCount(0)
     await dialog.getByRole('button', { name: 'Save balance' }).click()
     await expect(dialog.getByRole('status')).toContainText('2,500.00')
-    await expect(dialog.getByRole('status')).toContainText('an opening balance of')
-    await expect(dialog.getByRole('status')).toContainText('1,400.00')
+    await expect(dialog.getByRole('status')).toContainText(/Offbook added 1,400\.00 USD so your transactions add up to it/)
+    await expect(dialog.getByRole('status')).toContainText('recorded as this account’s opening balance')
     await dialog.getByRole('button', { name: 'Done' }).click()
     await expect(row).toContainText('2,500.00')
     // Reported now, not as of midnight UTC (which read "23h ago"), and in
@@ -68,8 +68,8 @@ test.describe('update manual account balance', () => {
     await row.getByRole('button', { name: 'Update balance for Balance Checking' }).click()
     await input.fill('2350.00')
     await dialog.getByRole('button', { name: 'Save balance' }).click()
-    await expect(dialog.getByRole('status')).toContainText('an adjustment of')
-    await expect(dialog.getByRole('status')).toContainText('150.00')
+    await expect(dialog.getByRole('status')).toContainText(/Offbook took off 150\.00 USD so your transactions add up to it/)
+    await expect(dialog.getByRole('status')).toContainText('recorded as an adjustment')
     await dialog.getByRole('button', { name: 'Done' }).click()
     await expect(row).toContainText('2,350.00')
     await expect(row.getByRole('link', { name: /needs attention/ })).toBeVisible()
@@ -176,6 +176,10 @@ test.describe('update manual account balance', () => {
     await testInfo.attach('update-balance-past-saved', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
     await dialog.getByRole('button', { name: 'Done' }).click()
     await expect(row).toContainText('900.00')
+    // #673: the row says what was reported for that day, not "Reported
+    // <day>" under today's 900.00.
+    await expect(row).toContainText(/You reported 1,000\.00 USD for [A-Z][a-z]{2} \d{1,2}/)
+    await expect(row).not.toContainText(/Reported [A-Z][a-z]{2} \d/)
 
     // A real discrepancy that day is recorded there (as the first reconciling
     // row, the opening balance); the later −100 still applies.
@@ -183,8 +187,10 @@ test.describe('update manual account balance', () => {
     await dialog.getByLabel('Balance (USD)').fill('1100.00')
     await dialog.getByLabel('As of').fill(past)
     await dialog.getByRole('button', { name: 'Save balance' }).click()
-    await expect(status).toContainText('an opening balance of')
-    await expect(status).toContainText('100.00')
+    await expect(status).toContainText(/Offbook added 100\.00 USD on .+ so your transactions add up to it/)
+    await expect(status).toContainText('recorded as this account’s opening balance')
+    await expect(status).not.toContainText('an opening balance of')
+    await expect(status).not.toContainText('adjustment')
     await expect(status).toContainText('Balance today is')
     await expect(status).toContainText('1,000.00')
     await expectNoOverflow(page)
@@ -193,6 +199,9 @@ test.describe('update manual account balance', () => {
     await expect(row).toContainText('1,000.00')
     await page.reload()
     await expect(row).toContainText('1,000.00')
+    await expect(row).toContainText(/You reported 1,100\.00 USD for [A-Z][a-z]{2} \d{1,2}/)
+    await expectNoOverflow(page)
+    await testInfo.attach('accounts-past-reported', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
   })
 })
 

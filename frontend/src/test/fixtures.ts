@@ -83,6 +83,7 @@ export const account1: Account = {
   last_sync_error: null,
   last_observed_at: null,
   last_observed_source: null,
+  last_observed_balance: null,
   needs_attention: false,
 }
 

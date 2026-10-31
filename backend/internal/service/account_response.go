@@ -47,6 +47,12 @@ type AccountResponse struct {
 	// observation (manual accounts; a Plaid account never yet reconciled).
 	LastObservedAt     *time.Time `json:"last_observed_at"`
 	LastObservedSource *string    `json:"last_observed_source"`
+	// LastObservedBalance is the figure that observation reported, signed
+	// like Balance, so the UI can say what was reported rather than pairing
+	// the observation's date with today's derived balance (#673). Set only
+	// when the observation is of the account's primary quote asset (its cash
+	// balance); nil for a holding-quantity observation or no observation.
+	LastObservedBalance *decimal.Decimal `json:"last_observed_balance"`
 
 	// NeedsAttention is true when the account holds at least one
 	// unacknowledged adjustment transaction whose delta is large relative to
