@@ -19,6 +19,16 @@ test.describe('goal contribution history', () => {
     const card = page.locator('div.rounded-lg', { has: page.getByRole('heading', { name: 'Emergency fund', exact: true }) }).last()
     await expect(card).toBeVisible()
 
+    // #686: the card's actions name their goal and are thumb-sized on phones.
+    const minTarget = testInfo.project.name.includes('mobile') ? 40 : 32
+    for (const action of ['Edit', 'Delete']) {
+      const btn = card.getByRole('button', { name: `${action} Emergency fund goal`, exact: true })
+      const box = await btn.boundingBox()
+      expect(box, `${action} is rendered`).not.toBeNull()
+      expect(box!.width, `${action} hit area width`).toBeGreaterThanOrEqual(minTarget)
+      expect(box!.height, `${action} hit area height`).toBeGreaterThanOrEqual(minTarget)
+    }
+
     // Empty state before anything is logged.
     const toggle = card.getByRole('button', { name: /^History/ })
     await expect(toggle).toHaveAttribute('aria-expanded', 'false')
@@ -57,6 +67,8 @@ test.describe('goal contribution history', () => {
     await card.getByRole('button', { name: /^History/ }).click()
     await expect(list.getByRole('listitem')).toHaveCount(2)
     await expect(list.getByRole('listitem').nth(0)).toContainText('Total 149.75')
+    await expectNoOverflow(page)
+    await testInfo.attach('goal-history-reloaded-open', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
     await card.getByRole('button', { name: /Hide history/ }).click()
     await expect(list).toBeHidden()
   })

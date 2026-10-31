@@ -206,7 +206,7 @@ function GoalCard({ goal, linkedAccount, canMutate, onEdit, onDelete, onContribu
   const colorClass = pct >= 100 ? 'bg-emerald-500' : pct >= 80 ? 'bg-indigo-500' : 'bg-gray-400'
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h2 className="truncate text-base font-semibold text-gray-900">{goal.name}</h2>
           {linkedAccount && (
@@ -215,8 +215,8 @@ function GoalCard({ goal, linkedAccount, canMutate, onEdit, onDelete, onContribu
         </div>
         {canMutate && (
           <div className="flex shrink-0 items-center gap-1 text-gray-400">
-            <button type="button" onClick={onEdit} aria-label="Edit" className="rounded p-1 hover:bg-gray-100 hover:text-gray-700"><Pencil size={14} /></button>
-            <button type="button" onClick={onDelete} aria-label="Delete" className="rounded p-1 hover:bg-gray-100 hover:text-red-700"><Trash2 size={14} /></button>
+            <button type="button" onClick={onEdit} aria-label={`Edit ${goal.name} goal`} className="inline-flex h-10 w-10 items-center justify-center rounded hover:bg-gray-100 hover:text-gray-700 sm:h-8 sm:w-8"><Pencil size={16} /></button>
+            <button type="button" onClick={onDelete} aria-label={`Delete ${goal.name} goal`} className="inline-flex h-10 w-10 items-center justify-center rounded hover:bg-gray-100 hover:text-red-700 sm:h-8 sm:w-8"><Trash2 size={16} /></button>
           </div>
         )}
       </div>
