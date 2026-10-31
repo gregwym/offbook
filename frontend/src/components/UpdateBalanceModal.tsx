@@ -100,11 +100,17 @@ export function UpdateBalanceModal({ account, onClose, onUpdated }: Props) {
             </p>
             {result.recorded ? (
               <p>
-                Recorded{' '}
-                {result.recorded.kind === 'opening_balance' ? 'an opening balance of ' : 'an adjustment of '}
-                <AmountDisplay amount={result.recorded.amount} currency={account.currency} signed />
-                {saved?.asOf ? ` on ${formatDay(saved.asOf)}` : ''} to match it.
-                Adjustments don’t count as spending or income.
+                <RecordedDifference
+                  amount={result.recorded.amount}
+                  currency={account.currency}
+                  liability={liability}
+                  day={saved?.asOf ? formatDay(saved.asOf) : null}
+                />{' '}
+                {/* #673: one name per row, the Reconciliation page's. The
+                    +delta is a correction, never "an opening balance of". */}
+                {result.recorded.kind === 'opening_balance'
+                  ? 'The difference is recorded as this account’s opening balance, so it doesn’t count as spending or income.'
+                  : 'The difference is recorded as an adjustment, so it doesn’t count as spending or income.'}
               </p>
             ) : (
               <p>
@@ -212,6 +218,34 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 // inCredit: a stored liability balance above zero means the lender owes the user.
 function inCredit(balance: string): boolean {
   return !balance.trim().startsWith('-') && absDecimal(balance) !== '0'
+}
+
+// RecordedDifference says what Offbook changed to match the reported balance,
+// as a plain sentence (#673): "Offbook added 100.00 on Aug 30 so your
+// transactions add up to it." For a card or loan the stored sign is the
+// opposite of what's owed, so it speaks in amount owed.
+function RecordedDifference({ amount, currency, liability, day }: {
+  amount: string
+  currency: string
+  liability: boolean
+  day: string | null
+}) {
+  const up = !amount.trim().startsWith('-')
+  const value = <AmountDisplay amount={absDecimal(amount)} currency={currency} className="font-semibold" />
+  const on = day ? ` on ${day}` : ''
+  if (liability) {
+    return up ? (
+      <>Offbook took {value} off what you owe{on} so your transactions add up to it.</>
+    ) : (
+      <>Offbook added {value} to what you owe{on} so your transactions add up to it.</>
+    )
+  }
+  return (
+    <>
+      Offbook {up ? 'added' : 'took off'} {value}
+      {on} so your transactions add up to it.
+    </>
+  )
 }
 
 function todayISO(): string {

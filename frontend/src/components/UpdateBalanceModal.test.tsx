@@ -40,8 +40,8 @@ describe('Update balance (#504)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save balance' }))
     const status = await screen.findByRole('status')
     expect(status).toHaveTextContent('1,300.00')
-    expect(status).toHaveTextContent('an adjustment of')
-    expect(status).toHaveTextContent('65.44')
+    expect(status).toHaveTextContent('Offbook added 65.44 USD so your transactions add up to it.')
+    expect(status).toHaveTextContent('The difference is recorded as an adjustment')
     expect(posted).toEqual({ balance: '1300.00' })
     expect(screen.getByRole('link', { name: 'View reconciliation' })).toHaveAttribute('href', '/accounts/1/reconciliation')
   })
@@ -68,6 +68,30 @@ describe('Update balance (#504)', () => {
     expect(status).toHaveTextContent(/Saved 1,000\.00.*as your balance on May 31, 2026/)
     expect(status).toHaveTextContent(/Balance today is 900\.00/)
     expect(status).toHaveTextContent('Your transactions up to May 31, 2026 already add up to this balance')
+  })
+
+  // #673: a past-day correction is described as what Offbook added that
+  // day, under one name, never "an opening balance of <delta>".
+  it('describes a past-day opening-balance correction in plain words', async () => {
+    server.use(
+      http.post('/api/v1/accounts/:id/balance', () =>
+        HttpResponse.json({
+          data: {
+            account: { ...account1, balance: '1000.000000000000000000' },
+            recorded: { id: 9, kind: 'opening_balance', amount: '100.000000000000000000' },
+          },
+        })),
+    )
+    renderPage(<AccountsPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Update balance for Checking' }))
+    fireEvent.change(screen.getByLabelText('Balance (USD)'), { target: { value: '1100' } })
+    fireEvent.change(screen.getByLabelText('As of'), { target: { value: '2026-05-31' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save balance' }))
+    const status = await screen.findByRole('status')
+    expect(status).toHaveTextContent('Offbook added 100.00 USD on May 31, 2026 so your transactions add up to it.')
+    expect(status).toHaveTextContent('recorded as this account’s opening balance')
+    expect(status).not.toHaveTextContent(/an opening balance of/)
+    expect(status).not.toHaveTextContent(/adjustment/i)
   })
 
   // #667: a card's balance is the amount owed as the statement shows it.

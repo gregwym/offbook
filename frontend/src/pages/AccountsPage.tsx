@@ -15,7 +15,8 @@ import { TimeAgo } from '../components/TimeAgo'
 import { TradeFormModal } from '../components/TradeFormModal'
 import { UpdateBalanceModal } from '../components/UpdateBalanceModal'
 import { useMinWidth } from '../hooks/useMinWidth'
-import { reportedBy } from '../lib/balanceSource'
+import { reportedBy, reportedSubject } from '../lib/balanceSource'
+import { formatReportedDay, reportedLine } from '../lib/reportedBalance'
 import { groupAccounts, institutionLabel, summarizeAccounts, type CurrencyTotal } from '../lib/accountGroups'
 import { useAccountsStore } from '../store/accountsStore'
 import { useScopeStore } from '../store/scopeStore'
@@ -318,11 +319,7 @@ export function AccountsPage() {
                       ))}
                     </>
                   )}
-                  {a.last_observed_at && (
-                    <div className="mt-0.5 text-xs text-gray-400">
-                      Reported <TimeAgo when={a.last_observed_at} /> {reportedBy(a.last_observed_source)}
-                    </div>
-                  )}
+                  <ReportedProvenance account={a} />
                   {canUpdateBalance(a) && (
                     <button
                       type="button"
@@ -619,4 +616,27 @@ function errMsg(err: unknown): string {
   }
   if (err instanceof Error) return err.message
   return 'request failed'
+}
+
+// ReportedProvenance is the line under an account's balance naming its
+// latest balance report (#673). A past-dated report, or one the balance has
+// since moved from, says what was reported rather than stamping a date on
+// today's figure.
+function ReportedProvenance({ account: a }: { account: Account }) {
+  const line = reportedLine(a)
+  if (line.kind === 'none') return null
+  if (line.kind === 'when') {
+    return (
+      <div className="mt-0.5 text-xs text-gray-500">
+        Reported <TimeAgo when={line.at} /> {reportedBy(a.last_observed_source)}
+      </div>
+    )
+  }
+  return (
+    <div className="mt-0.5 text-xs text-gray-500">
+      {reportedSubject(a.last_observed_source)} <AmountDisplay amount={line.amount} currency={a.currency} />
+      {line.reading === 'owed' ? ' owed' : line.reading === 'credit' ? ' in credit' : ''}{' '}
+      {line.day ? <span className="whitespace-nowrap">for {formatReportedDay(line.day)}</span> : <TimeAgo when={line.at} />}
+    </div>
+  )
 }

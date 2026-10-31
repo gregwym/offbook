@@ -26,6 +26,7 @@ func TestAccountService_UpdateBalance_Backdated(t *testing.T) {
 		repository.NewAssetRepository(g),
 		repository.NewAccountRepository(g),
 	))
+	svc.WithBalanceObservationRepo(repository.NewBalanceObservationRepository(g))
 	t.Cleanup(func() {
 		g.Where("user_id = ?", userID).Delete(&model.AccountBalanceObservation{})
 	})
@@ -180,6 +181,37 @@ func TestAccountService_UpdateBalance_Backdated(t *testing.T) {
 		past := today.AddDate(0, 0, -20)
 		res := update(t, a, "12", &past)
 		assertBalances(t, a, res, past, "12", "10")
+	})
+
+	// #673: the Accounts row says what was reported, so the response carries
+	// the reported figure alongside today's derived balance.
+	t.Run("response carries the reported balance, not today's", func(t *testing.T) {
+		a := seed(t, 26)
+		update(t, a, "1100", &d0)
+		resp, err := svc.GetResponse(ctx, userID, a.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.LastObservedAt == nil || !resp.LastObservedAt.Equal(d0) {
+			t.Errorf("last_observed_at = %v, want %s", resp.LastObservedAt, d0)
+		}
+		if resp.LastObservedBalance == nil || !resp.LastObservedBalance.Equal(d("1100")) {
+			t.Errorf("last_observed_balance = %v, want 1100", resp.LastObservedBalance)
+		}
+		if !resp.Balance.Equal(d("1000")) {
+			t.Errorf("balance = %s, want 1000", resp.Balance)
+		}
+		// Another user never sees this account's observation.
+		other := seedTestUser(t, g)
+		list, _, err := svc.ListResponse(ctx, other, repository.AccountFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range list {
+			if r.ID == a.ID {
+				t.Errorf("other user listed account %d", a.ID)
+			}
+		}
 	})
 
 	t.Run("flows on the as_of day count toward it", func(t *testing.T) {

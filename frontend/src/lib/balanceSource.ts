@@ -43,3 +43,15 @@ export function reportedBy(source: string | null | undefined): string {
     unknown: '',
   }[reporter(source)]
 }
+
+// reportedSubject opens "… 1,100.00 for Aug 30" (#673): who reported the
+// figure, as the sentence's subject.
+export function reportedSubject(source: string | null | undefined): string {
+  return {
+    you: 'You reported',
+    bank: 'Your bank reported',
+    statement: 'Your statement showed',
+    offbook: 'Offbook recorded',
+    unknown: 'Reported',
+  }[reporter(source)]
+}
