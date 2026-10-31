@@ -23,7 +23,13 @@ type SavingsGoalRepository interface {
 	// current_amount and bumps updated_at. Returns the post-update row.
 	// A naive read+write+save races under concurrent contributions; this
 	// keeps the increment server-side. delta may be negative (withdrawal).
-	AddContribution(ctx context.Context, owner PlanOwner, id int64, delta decimal.Decimal) (*model.SavingsGoal, error)
+	// The same transaction appends a savings_goal_contributions row holding
+	// delta and the post-update total, recorded as made by `by` (#682).
+	AddContribution(ctx context.Context, owner PlanOwner, id int64, delta decimal.Decimal, by int64) (*model.SavingsGoal, error)
+	// ListContributions returns a goal's recorded contributions, newest
+	// first. The caller must already have checked the goal belongs to the
+	// owner; this re-applies the owner filter so a wrong id returns nothing.
+	ListContributions(ctx context.Context, owner PlanOwner, id int64) ([]model.SavingsGoalContribution, error)
 }
 
 type savingsGoalRepo struct {
@@ -85,23 +91,55 @@ func (r *savingsGoalRepo) SoftDelete(ctx context.Context, owner PlanOwner, id in
 	return nil
 }
 
-func (r *savingsGoalRepo) AddContribution(ctx context.Context, owner PlanOwner, id int64, delta decimal.Decimal) (*model.SavingsGoal, error) {
+func (r *savingsGoalRepo) AddContribution(ctx context.Context, owner PlanOwner, id int64, delta decimal.Decimal, by int64) (*model.SavingsGoal, error) {
 	// Single UPDATE with arithmetic in SQL — concurrent contributions
-	// serialize on the row's update conflict resolution. updated_at is
-	// touched explicitly because gorm's auto-update only fires through
-	// Save/Updates with the model, not arbitrary Raw or expression updates.
-	res := owner.Apply(r.db.WithContext(ctx)).
-		Model(&model.SavingsGoal{}).
-		Where("id = ? AND deleted_at IS NULL", id).
-		Updates(map[string]interface{}{
-			"current_amount": gorm.Expr("current_amount + ?", delta),
-			"updated_at":     gorm.Expr("NOW()"),
-		})
-	if res.Error != nil {
-		return nil, res.Error
+	// serialize on the row lock the UPDATE takes, which is held until this
+	// transaction commits, so each history row's balance_after is the total
+	// that UPDATE produced. updated_at is touched explicitly because gorm's
+	// auto-update only fires through Save/Updates with the model, not
+	// arbitrary expression updates.
+	var g model.SavingsGoal
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := owner.Apply(tx).
+			Model(&model.SavingsGoal{}).
+			Where("id = ? AND deleted_at IS NULL", id).
+			Updates(map[string]interface{}{
+				"current_amount": gorm.Expr("current_amount + ?", delta),
+				"updated_at":     gorm.Expr("NOW()"),
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		if err := owner.Apply(tx).First(&g, id).Error; err != nil {
+			return err
+		}
+		c := model.SavingsGoalContribution{
+			GoalID:       g.ID,
+			UserID:       &by,
+			Amount:       delta,
+			BalanceAfter: g.CurrentAmount,
+		}
+		return tx.Create(&c).Error
+	})
+	if err != nil {
+		return nil, err
 	}
-	if res.RowsAffected == 0 {
-		return nil, ErrNotFound
+	return &g, nil
+}
+
+func (r *savingsGoalRepo) ListContributions(ctx context.Context, owner PlanOwner, id int64) ([]model.SavingsGoalContribution, error) {
+	goals := owner.Apply(r.db.WithContext(ctx).Model(&model.SavingsGoal{})).
+		Select("id").
+		Where("id = ? AND deleted_at IS NULL", id)
+	out := []model.SavingsGoalContribution{}
+	if err := r.db.WithContext(ctx).
+		Where("goal_id IN (?)", goals).
+		Order("id DESC").
+		Find(&out).Error; err != nil {
+		return nil, err
 	}
-	return r.GetByID(ctx, owner, id)
+	return out, nil
 }

@@ -99,5 +99,18 @@ func (s *Service) ContributeToSharedGoal(ctx context.Context, userID, householdI
 	if err := s.requireContributor(ctx, userID, householdID); err != nil {
 		return nil, err
 	}
-	return s.goals.Contribute(ctx, repository.HouseholdOwner(householdID), id, delta)
+	return s.goals.Contribute(ctx, repository.HouseholdOwner(householdID), id, delta, userID)
+}
+
+// SharedGoalContributions lists a shared goal's recorded contributions,
+// newest first (#682). Any active member may read it, like the goal itself.
+// Who recorded each one is not returned (per-member attribution is #382).
+func (s *Service) SharedGoalContributions(ctx context.Context, userID, householdID, id int64) ([]model.SavingsGoalContribution, error) {
+	if _, err := s.members.GetActive(ctx, householdID, userID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrNotMember
+		}
+		return nil, err
+	}
+	return s.goals.Contributions(ctx, repository.HouseholdOwner(householdID), id)
 }

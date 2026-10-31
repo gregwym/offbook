@@ -135,7 +135,7 @@ func TestSavingsGoalService_TenantIsolation(t *testing.T) {
 	if err := svc.SoftDelete(ctx, repository.UserOwner(userB), goal.ID); !errors.Is(err, service.ErrSavingsGoalNotFound) {
 		t.Errorf("cross-tenant Delete err = %v", err)
 	}
-	if _, err := svc.Contribute(ctx, repository.UserOwner(userB), goal.ID, decimal.NewFromInt(100)); !errors.Is(err, service.ErrSavingsGoalNotFound) {
+	if _, err := svc.Contribute(ctx, repository.UserOwner(userB), goal.ID, decimal.NewFromInt(100), userB); !errors.Is(err, service.ErrSavingsGoalNotFound) {
 		t.Errorf("cross-tenant Contribute err = %v", err)
 	}
 }
@@ -154,21 +154,21 @@ func TestSavingsGoalService_Contribute_AtomicAndPostFetched(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = svc.SoftDelete(ctx, repository.UserOwner(userID), goal.ID) })
 
-	after, err := svc.Contribute(ctx, repository.UserOwner(userID), goal.ID, decimal.NewFromInt(200))
+	after, err := svc.Contribute(ctx, repository.UserOwner(userID), goal.ID, decimal.NewFromInt(200), userID)
 	if err != nil {
 		t.Fatalf("deposit: %v", err)
 	}
 	if !after.CurrentAmount.Equal(decimal.NewFromInt(200)) {
 		t.Errorf("after deposit = %s, want 200", after.CurrentAmount)
 	}
-	after, err = svc.Contribute(ctx, repository.UserOwner(userID), goal.ID, decimal.NewFromInt(-50))
+	after, err = svc.Contribute(ctx, repository.UserOwner(userID), goal.ID, decimal.NewFromInt(-50), userID)
 	if err != nil {
 		t.Fatalf("withdrawal: %v", err)
 	}
 	if !after.CurrentAmount.Equal(decimal.NewFromInt(150)) {
 		t.Errorf("after withdrawal = %s, want 150", after.CurrentAmount)
 	}
-	if _, err := svc.Contribute(ctx, repository.UserOwner(userID), goal.ID, decimal.Zero); !errors.Is(err, service.ErrZeroContribution) {
+	if _, err := svc.Contribute(ctx, repository.UserOwner(userID), goal.ID, decimal.Zero, userID); !errors.Is(err, service.ErrZeroContribution) {
 		t.Errorf("zero contribution err = %v", err)
 	}
 }
@@ -195,7 +195,7 @@ func TestSavingsGoalService_Contribute_ConcurrentSafe(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := svc.Contribute(ctx, repository.UserOwner(userID), goal.ID, decimal.NewFromInt(1)); err != nil {
+			if _, err := svc.Contribute(ctx, repository.UserOwner(userID), goal.ID, decimal.NewFromInt(1), userID); err != nil {
 				errs <- err
 			}
 		}()
@@ -248,5 +248,165 @@ func TestSavingsGoalService_View_ProgressAndRemaining(t *testing.T) {
 				t.Errorf("Remaining = %s, want %s", v.Remaining, expectedRem)
 			}
 		})
+	}
+}
+
+// TestSavingsGoalService_Contributions_History (#682): each contribution and
+// withdrawal is recorded with its exact amount and the total after it,
+// newest first; another user's goal reads as not found.
+func TestSavingsGoalService_Contributions_History(t *testing.T) {
+	svc, userID, _, g := newGoalSvc(t)
+	ctx := context.Background()
+	owner := repository.UserOwner(userID)
+
+	goal, err := svc.Create(ctx, owner, service.CreateGoalInput{Name: "History", TargetAmount: decimal.NewFromInt(1000)})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, owner, goal.ID) })
+
+	empty, err := svc.Contributions(ctx, owner, goal.ID)
+	if err != nil {
+		t.Fatalf("empty list: %v", err)
+	}
+	if empty == nil || len(empty) != 0 {
+		t.Errorf("new goal history = %v, want empty non-nil slice", empty)
+	}
+
+	for _, amt := range []string{"0.000000000000000001", "250.25", "-100.5"} {
+		if _, err := svc.Contribute(ctx, owner, goal.ID, decimal.RequireFromString(amt), userID); err != nil {
+			t.Fatalf("contribute %s: %v", amt, err)
+		}
+	}
+	got, err := svc.Contributions(ctx, owner, goal.ID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	want := []struct{ amount, after string }{
+		{"-100.5", "149.750000000000000001"},
+		{"250.25", "250.250000000000000001"},
+		{"0.000000000000000001", "0.000000000000000001"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if !got[i].Amount.Equal(decimal.RequireFromString(w.amount)) {
+			t.Errorf("row %d amount = %s, want %s", i, got[i].Amount, w.amount)
+		}
+		if !got[i].BalanceAfter.Equal(decimal.RequireFromString(w.after)) {
+			t.Errorf("row %d balance_after = %s, want %s", i, got[i].BalanceAfter, w.after)
+		}
+		if got[i].GoalID != goal.ID {
+			t.Errorf("row %d goal_id = %d, want %d", i, got[i].GoalID, goal.ID)
+		}
+	}
+
+	// A rejected contribution writes no history row.
+	if _, err := svc.Contribute(ctx, owner, goal.ID, decimal.Zero, userID); !errors.Is(err, service.ErrZeroContribution) {
+		t.Fatalf("zero err = %v", err)
+	}
+	if again, _ := svc.Contributions(ctx, owner, goal.ID); len(again) != len(want) {
+		t.Errorf("history grew to %d after a rejected contribution", len(again))
+	}
+
+	userB := seedTestUser(t, g)
+	if _, err := svc.Contributions(ctx, repository.UserOwner(userB), goal.ID); !errors.Is(err, service.ErrSavingsGoalNotFound) {
+		t.Errorf("cross-tenant Contributions err = %v, want ErrSavingsGoalNotFound", err)
+	}
+	if _, err := svc.Contribute(ctx, repository.UserOwner(userB), goal.ID, decimal.NewFromInt(5), userB); !errors.Is(err, service.ErrSavingsGoalNotFound) {
+		t.Errorf("cross-tenant Contribute err = %v", err)
+	}
+	if after, _ := svc.Contributions(ctx, owner, goal.ID); len(after) != len(want) {
+		t.Errorf("a rejected cross-tenant contribution added history (%d rows)", len(after))
+	}
+}
+
+// TestSavingsGoalService_Contributions_PreHistoryTotal (#682): a goal that
+// held money before history was kept still reconciles — the oldest row's
+// balance_after - amount is that earlier total.
+func TestSavingsGoalService_Contributions_PreHistoryTotal(t *testing.T) {
+	svc, userID, _, g := newGoalSvc(t)
+	ctx := context.Background()
+	owner := repository.UserOwner(userID)
+
+	goal, err := svc.Create(ctx, owner, service.CreateGoalInput{Name: "Legacy", TargetAmount: decimal.NewFromInt(1000)})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, owner, goal.ID) })
+	// Simulate a pre-#682 contribution: the total moved with no history.
+	if err := g.Model(&model.SavingsGoal{}).Where("id = ?", goal.ID).
+		Update("current_amount", decimal.RequireFromString("300.40")).Error; err != nil {
+		t.Fatalf("seed legacy total: %v", err)
+	}
+	if _, err := svc.Contribute(ctx, owner, goal.ID, decimal.RequireFromString("19.60"), userID); err != nil {
+		t.Fatalf("contribute: %v", err)
+	}
+	got, err := svc.Contributions(ctx, owner, goal.ID)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("list = %v, %v; want one row", got, err)
+	}
+	if !got[0].BalanceAfter.Equal(decimal.NewFromInt(320)) {
+		t.Errorf("balance_after = %s, want 320", got[0].BalanceAfter)
+	}
+	if pre := got[0].BalanceAfter.Sub(got[0].Amount); !pre.Equal(decimal.RequireFromString("300.40")) {
+		t.Errorf("pre-history total = %s, want 300.40", pre)
+	}
+}
+
+// TestSavingsGoalService_Contributions_ConcurrentConsistent (#682): under
+// concurrent contributions every history row's balance_after is distinct
+// and the newest equals current_amount — no two writers saw the same total.
+func TestSavingsGoalService_Contributions_ConcurrentConsistent(t *testing.T) {
+	svc, userID, _, _ := newGoalSvc(t)
+	ctx := context.Background()
+	owner := repository.UserOwner(userID)
+
+	goal, err := svc.Create(ctx, owner, service.CreateGoalInput{Name: "Race", TargetAmount: decimal.NewFromInt(1000)})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.SoftDelete(ctx, owner, goal.ID) })
+
+	const n = 30
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := svc.Contribute(ctx, owner, goal.ID, decimal.NewFromInt(1), userID); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent contribute: %v", err)
+	}
+
+	got, err := svc.Contributions(ctx, owner, goal.ID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != n {
+		t.Fatalf("history rows = %d, want %d", len(got), n)
+	}
+	seen := map[string]bool{}
+	for _, c := range got {
+		k := c.BalanceAfter.String()
+		if seen[k] {
+			t.Errorf("two rows share balance_after %s", k)
+		}
+		seen[k] = true
+	}
+	cur, err := svc.Get(ctx, owner, goal.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !got[0].BalanceAfter.Equal(cur.CurrentAmount) {
+		t.Errorf("newest balance_after = %s, current_amount = %s", got[0].BalanceAfter, cur.CurrentAmount)
 	}
 }

@@ -284,3 +284,51 @@ func TestSharedGoal_TenantIsolation(t *testing.T) {
 		t.Errorf("scoped-to-wrong-household err = %v, want ErrSharedGoalNotFound", err)
 	}
 }
+
+// TestSharedGoalContributions_HistoryAndIsolation (#682): every contribution
+// to a shared goal is listed newest first with the running total, a
+// view-only member can read it, and a non-member or a wrong household can't.
+func TestSharedGoalContributions_HistoryAndIsolation(t *testing.T) {
+	svc, g := withSharedGoals(t)
+	ownerID, contribID, viewOnlyID, hhID := seedSharedGoalHousehold(t, svc, g)
+	ctx := context.Background()
+	created, err := svc.CreateSharedGoal(ctx, ownerID, hhID, household.SharedGoalInput{
+		Name: "Trip", TargetAmount: decimal.NewFromInt(1000),
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := svc.ContributeToSharedGoal(ctx, contribID, hhID, created.ID, decimal.RequireFromString("200.10")); err != nil {
+		t.Fatalf("contribute: %v", err)
+	}
+	if _, err := svc.ContributeToSharedGoal(ctx, ownerID, hhID, created.ID, decimal.RequireFromString("-50.05")); err != nil {
+		t.Fatalf("withdraw: %v", err)
+	}
+
+	got, err := svc.SharedGoalContributions(ctx, viewOnlyID, hhID, created.ID)
+	if err != nil {
+		t.Fatalf("list as view-only: %v", err)
+	}
+	want := []struct{ amount, after string }{{"-50.05", "150.05"}, {"200.1", "200.1"}}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if !got[i].Amount.Equal(decimal.RequireFromString(w.amount)) || !got[i].BalanceAfter.Equal(decimal.RequireFromString(w.after)) {
+			t.Errorf("row %d = %s/%s, want %s/%s", i, got[i].Amount, got[i].BalanceAfter, w.amount, w.after)
+		}
+	}
+
+	outsider := seedUser(t, g, "sg-hist-outsider")
+	if _, err := svc.SharedGoalContributions(ctx, outsider, hhID, created.ID); !errors.Is(err, household.ErrNotMember) {
+		t.Errorf("outsider err = %v, want ErrNotMember", err)
+	}
+	hhB, err := svc.Create(ctx, outsider, household.CreateInput{Name: "Other"})
+	if err != nil {
+		t.Fatalf("create B: %v", err)
+	}
+	cleanupHousehold(t, g, hhB.ID)
+	if _, err := svc.SharedGoalContributions(ctx, outsider, hhB.ID, created.ID); !errors.Is(err, household.ErrSharedGoalNotFound) {
+		t.Errorf("wrong-household err = %v, want ErrSharedGoalNotFound", err)
+	}
+}

@@ -226,6 +226,7 @@ Tables that do **not** carry `deleted_at` (by design):
 - `ai_messages` — turn log; cascades on `ai_threads.deleted_at` via thread scoping.
 - `ingestion_jobs` — append-only audit trail.
 - `rule_apply_runs` / `rule_apply_changes` — append-only audit of committed "Apply rules" runs and each changed row's prior state, so the latest run can be undone (#565). `undone_at` marks a reverted run.
+- `savings_goal_contributions` — append-only history of each goal contribution/withdrawal with the goal's total after it (#682); written in the same transaction as the `savings_goals.current_amount` update.
 - `pii_store` — hard-delete only (right-to-forget semantics; see PII Isolation above).
 - `sessions` — short-lived auth state; hard-delete on signout/expiry.
 - `household_members` — uses `left_at` + `purged_at` for the grace-period lifecycle, not `deleted_at`. See [ADR-0007](ADR/0007-member-lifecycle.md).

@@ -3,8 +3,8 @@
 // source via useScopedGoals, not the component. Linked accounts and the
 // "remaining" figure are personal-only and are hidden in household scope.
 // Household mutation is gated on the member's role. See hooks/useScopedGoals.ts.
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Coins, Pencil, PiggyBank, Plus, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { ChevronDown, Coins, History, Pencil, PiggyBank, Plus, Trash2 } from 'lucide-react'
 import { AmountDisplay } from '../components/AmountDisplay'
 import {
   useScopedGoals,
@@ -14,6 +14,8 @@ import {
 import { useAccountsStore } from '../store/accountsStore'
 import type { Account } from '../types/account'
 import { ModalShell } from '../components/ModalShell'
+import { GoalHistory } from '../components/GoalHistory'
+import type { GoalContribution } from '../types/savingsGoal'
 
 export function SavingsGoalsPage() {
   const {
@@ -27,6 +29,7 @@ export function SavingsGoalsPage() {
     update,
     remove,
     contribute,
+    history,
     clearError,
   } = useScopedGoals()
   const { accounts, fetch: fetchAccounts } = useAccountsStore()
@@ -141,6 +144,7 @@ export function SavingsGoalsPage() {
               }
             }}
             onContribute={() => setContributing(g)}
+            loadHistory={history}
           />
         ))}
       </div>
@@ -191,9 +195,13 @@ type CardProps = {
   onEdit: () => void
   onDelete: () => Promise<void>
   onContribute: () => void
+  loadHistory: (id: number) => Promise<GoalContribution[]>
 }
 
-function GoalCard({ goal, linkedAccount, canMutate, onEdit, onDelete, onContribute }: CardProps) {
+function GoalCard({ goal, linkedAccount, canMutate, onEdit, onDelete, onContribute, loadHistory }: CardProps) {
+  const [showHistory, setShowHistory] = useState(false)
+  const load = useCallback(() => loadHistory(goal.id), [loadHistory, goal.id])
+  const historyId = `goal-history-${goal.id}`
   const pct = Math.round(goal.progress_pct * 100)
   const colorClass = pct >= 100 ? 'bg-emerald-500' : pct >= 80 ? 'bg-indigo-500' : 'bg-gray-400'
   return (
@@ -236,6 +244,22 @@ function GoalCard({ goal, linkedAccount, canMutate, onEdit, onDelete, onContribu
         >
           <Coins size={14} /> Log contribution
         </button>
+      )}
+      <button
+        type="button"
+        onClick={() => setShowHistory((v) => !v)}
+        aria-expanded={showHistory}
+        aria-controls={historyId}
+        className="mt-2 flex min-h-9 w-full items-center justify-center gap-1 rounded-md px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+      >
+        <History size={14} /> {showHistory ? 'Hide history' : 'History'}
+        <ChevronDown size={14} className={showHistory ? 'rotate-180 transition-transform' : 'transition-transform'} />
+      </button>
+      {showHistory && (
+        <div id={historyId}>
+          {/* Re-mounts after a contribution changes the total, so the list reloads. */}
+          <GoalHistory key={goal.current_amount} goalName={goal.name} currentAmount={goal.current_amount} load={load} />
+        </div>
       )}
     </div>
   )

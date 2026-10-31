@@ -57,6 +57,7 @@ GET /api/v1/households/:id
 GET /api/v1/households/:id/members
 GET /api/v1/households/:id/shared-budgets
 GET /api/v1/households/:id/shared-goals
+GET /api/v1/households/:id/shared-goals/:goalID/contributions
 GET /api/v1/me
 GET /api/v1/me/scope
 GET /api/v1/me/settings
@@ -64,6 +65,7 @@ GET /api/v1/plaid/items
 GET /api/v1/plaid/items/:item_id/errors
 GET /api/v1/savings-goals
 GET /api/v1/savings-goals/:id
+GET /api/v1/savings-goals/:id/contributions
 GET /api/v1/setup/status
 GET /api/v1/transactions
 GET /api/v1/transactions/:id
