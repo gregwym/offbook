@@ -22,6 +22,13 @@ describe('SavingsGoalsPage smoke', () => {
     expect(await screen.findByRole('dialog')).toBeTruthy()
   })
 
+  it('names each goal card action after its goal (#686)', async () => {
+    renderPage(<SavingsGoalsPage />)
+    expect(await screen.findByRole('button', { name: 'Edit Emergency fund goal' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Delete Emergency fund goal' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull()
+  })
+
   it('opens a goal\'s history with dates, signed amounts and running totals (#682)', async () => {
     server.use(
       http.get('*/savings-goals/1/contributions', () =>
