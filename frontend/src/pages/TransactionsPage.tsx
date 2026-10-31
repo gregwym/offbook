@@ -339,17 +339,23 @@ export function TransactionsPage() {
   // Only the latest request may set the count: the unfiltered first-render
   // query can resolve after the filtered one and would otherwise overwrite
   // it with the all-accounts number.
+  // The request reads the filter on screen *when it is sent* (a ref), not
+  // the one captured when an action started: a review or bulk edit that
+  // resolves after the user switched accounts must count the new account,
+  // not the old one (#688).
   const countFilter = useMemo(() => ({ ...filter, reviewed: false, limit: 1, offset: 0 }), [filter])
+  const countFilterRef = useRef(countFilter)
+  countFilterRef.current = countFilter
   const reviewCountSeq = useRef(0)
   const refreshReviewCount = useCallback(() => {
     const seq = ++reviewCountSeq.current
-    return listTransactions(countFilter)
+    return listTransactions(countFilterRef.current)
       .then((r) => { if (seq === reviewCountSeq.current) setReviewCount(r.total) })
       .catch(() => { /* swallow — the count just won't surface */ })
-  }, [countFilter])
+  }, [])
   useEffect(() => {
     void refreshReviewCount()
-  }, [recentSyncAt, refreshReviewCount])
+  }, [recentSyncAt, countFilter, refreshReviewCount])
 
   // Review / undo. The store updates optimistically and reverts on failure;
   // the toast offers a one-click undo for the exact rows just changed.

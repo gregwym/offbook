@@ -911,3 +911,81 @@ describe('TransactionsPage review count and account column under a filter (#675)
     expect(screen.getByRole('columnheader', { name: 'Account' })).toBeTruthy()
   })
 })
+
+// #688: an action that resolves after the filter changed must refresh the
+// Needs review count for the filter now on screen, not the one it started on.
+describe('TransactionsPage review count after a delayed action (#688)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  // Account A (id 1) has 4 unreviewed rows (3 once one is reviewed), account
+  // B (id 3) has 9, and all accounts together have 13. The review POST is
+  // held until the test releases it.
+  const setup = () => {
+    const b = { ...fx.account1, id: 3, name: 'Second Card', account_type: 'credit_card' as const }
+    const rowA = { ...fx.transaction1, id: 41, account_id: 1, merchant_name: 'Alpha Store', description_clean: 'Alpha Store', description: 'ALPHA STORE', reviewed_at: null }
+    const rowB = { ...fx.transaction1, id: 42, account_id: 3, merchant_name: 'Beta Store', description_clean: 'Beta Store', description: 'BETA STORE', reviewed_at: null }
+    let reviewedA = false
+    let release: () => void = () => {}
+    const held = new Promise<void>((r) => { release = r })
+    server.use(
+      http.get(`${API}/accounts`, () => HttpResponse.json({ data: [fx.account1, b], total: 2 })),
+      http.post(`${API}/transactions/review`, async () => {
+        await held
+        reviewedA = true
+        return HttpResponse.json({ data: { updated: 1 } })
+      }),
+      http.get(`${API}/transactions`, ({ request }) => {
+        const q = new URL(request.url).searchParams
+        const acct = q.get('account_id')
+        if (q.get('reviewed') === 'false' && q.get('limit') === '1') {
+          const a = reviewedA ? 3 : 4
+          const total = acct === '1' ? a : acct === '3' ? 9 : a + 9
+          return HttpResponse.json({ data: [], total })
+        }
+        const rows = acct === '1' ? [rowA] : acct === '3' ? [rowB] : [rowA, rowB]
+        return HttpResponse.json({ data: rows, total: rows.length })
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/transactions?account_id=1']}>
+        <TransactionsPage />
+      </MemoryRouter>,
+    )
+    return { release: () => release() }
+  }
+  const chip = () => screen.getByRole('button', { name: /needs review/i })
+
+  it('keeps the new account\'s count when a review on the old account resolves late', async () => {
+    const { release } = setup()
+    await waitFor(() => expect(chip()).toHaveTextContent('Needs review· 4'))
+    fireEvent.click(chip())
+    fireEvent.click((await screen.findAllByRole('button', { name: /mark alpha store reviewed/i }))[0])
+
+    // While A's review is in flight, switch to account B.
+    fireEvent.change(screen.getByLabelText('Account'), { target: { value: '3' } })
+    await waitFor(() => expect(chip()).toHaveTextContent('Needs review· 9'))
+
+    release()
+    await waitFor(() => expect(screen.queryByText(/saving your review/i)).toBeNull())
+    await new Promise((r) => setTimeout(r, 100))
+    expect(chip()).toHaveTextContent('Needs review· 9')
+  })
+
+  it('counts every account when the filter is cleared while a review is pending', async () => {
+    const { release } = setup()
+    await waitFor(() => expect(chip()).toHaveTextContent('Needs review· 4'))
+    fireEvent.click(chip())
+    fireEvent.click((await screen.findAllByRole('button', { name: /mark alpha store reviewed/i }))[0])
+
+    fireEvent.click(screen.getByRole('button', { name: 'All accounts' }))
+    await waitFor(() => expect(chip()).toHaveTextContent('Needs review· 13'))
+
+    release()
+    // A's review landed, so the all-accounts count drops to 12, never A's 3.
+    await waitFor(() => expect(chip()).toHaveTextContent('Needs review· 12'))
+    await new Promise((r) => setTimeout(r, 100))
+    expect(chip()).toHaveTextContent('Needs review· 12')
+  })
+})
