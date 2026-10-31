@@ -356,11 +356,21 @@ export function TransactionsPage() {
   useEffect(() => {
     void refreshReviewCount()
   }, [recentSyncAt, countFilter, refreshReviewCount])
+  // After an action settles: refresh the count, and if the filter changed
+  // while it was in flight, reload the list too. A list fetched for the new
+  // filter before the write landed still holds the row the action changed
+  // (and a failed write reverts to the old filter's rows), so without the
+  // reload it would disagree with the chip (#688).
+  const settleAction = (startedWith: typeof countFilter) => {
+    void refreshReviewCount()
+    if (countFilterRef.current !== startedWith) void fetch()
+  }
 
   // Review / undo. The store updates optimistically and reverts on failure;
   // the toast offers a one-click undo for the exact rows just changed.
   const reviewRows = async (ids: number[], reviewed: boolean, offerUndo = true) => {
     if (ids.length === 0) return
+    const startedWith = countFilterRef.current
     setReviewBusy(true)
     try {
       await markReviewed(ids, reviewed)
@@ -378,7 +388,7 @@ export function TransactionsPage() {
       setReviewToast(null) // store.error renders the failure banner
     } finally {
       setReviewBusy(false)
-      void refreshReviewCount()
+      settleAction(startedWith)
     }
   }
 
@@ -386,6 +396,7 @@ export function TransactionsPage() {
   // offers an undo that restores exactly the rows this edit changed.
   const bulkEditRows = async (ids: number[], action: BulkEditAction, done: (n: number) => string) => {
     if (ids.length === 0) return
+    const startedWith = countFilterRef.current
     setReviewBusy(true)
     try {
       const res = await bulkEdit(ids, action)
@@ -403,11 +414,12 @@ export function TransactionsPage() {
       setBulkToast(null) // store.error renders the failure banner
     } finally {
       setReviewBusy(false)
-      void refreshReviewCount()
+      settleAction(startedWith)
     }
   }
 
   const undoBulkRows = async (undo: BulkEditPrior[]) => {
+    const startedWith = countFilterRef.current
     setReviewBusy(true)
     try {
       const res = await undoBulkEdit(undo)
@@ -419,7 +431,7 @@ export function TransactionsPage() {
       setBulkToast(null)
     } finally {
       setReviewBusy(false)
-      void refreshReviewCount()
+      settleAction(startedWith)
     }
   }
 

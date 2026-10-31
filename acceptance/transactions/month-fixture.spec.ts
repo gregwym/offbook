@@ -256,6 +256,8 @@ test.describe('acceptance month fixture', () => {
     await page.waitForTimeout(300)
     await expect(chip).toHaveText(new RegExp(`· ${allUnreviewed - 1}$`))
     expect((await get(cookie, '/transactions?reviewed=false&limit=1')).total).toBe(allUnreviewed - 1)
+    // The inbox list agrees with the chip: it reloads once the write lands.
+    await expect(page.getByText(`${allUnreviewed - 1} to review`, { exact: true })).toBeVisible()
     await snap(page, testInfo, 'review-count-after-filter-change')
 
     // Every other core page at volume: nothing clipped inside a wrapper (#561).

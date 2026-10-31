@@ -944,7 +944,8 @@ describe('TransactionsPage review count after a delayed action (#688)', () => {
           const total = acct === '1' ? a : acct === '3' ? 9 : a + 9
           return HttpResponse.json({ data: [], total })
         }
-        const rows = acct === '1' ? [rowA] : acct === '3' ? [rowB] : [rowA, rowB]
+        let rows = acct === '1' ? [rowA] : acct === '3' ? [rowB] : [rowA, rowB]
+        if (q.get('reviewed') === 'false' && reviewedA) rows = rows.filter((t) => t !== rowA)
         return HttpResponse.json({ data: rows, total: rows.length })
       }),
     )
@@ -987,5 +988,9 @@ describe('TransactionsPage review count after a delayed action (#688)', () => {
     await waitFor(() => expect(chip()).toHaveTextContent('Needs review· 12'))
     await new Promise((r) => setTimeout(r, 100))
     expect(chip()).toHaveTextContent('Needs review· 12')
+    // The inbox list was fetched for all accounts before A's write landed;
+    // it reloads, so the reviewed row is gone from it too.
+    await waitFor(() => expect(screen.queryByText('Alpha Store')).toBeNull())
+    expect(screen.getByText('1 to review')).toBeInTheDocument()
   })
 })
