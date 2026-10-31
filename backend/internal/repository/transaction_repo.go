@@ -156,8 +156,13 @@ type TransactionRepository interface {
 	// FoldQuantityThrough is FoldQuantity restricted to rows dated on or
 	// before through's calendar day (UTC) — the ledger as it stood at the end
 	// of that day. A backdated balance is compared with this, not with the
-	// current fold, so later activity is not absorbed into it (#669). Takes
-	// the position lock first (see lockPosition).
+	// current fold, so later activity is not absorbed into it (#669).
+	//
+	// An opening_balance row always counts, whatever its date: it is the
+	// balance before the first known row, the policy FoldByUserAsOf and the
+	// household history reader use (#528). The two agree on every day from
+	// the pair's first row on; before it, history shows no data (#680).
+	// Takes the position lock first (see lockPosition).
 	FoldQuantityThrough(ctx context.Context, userID, accountID, assetID int64, through time.Time) (decimal.Decimal, error)
 	// EarliestReconcilingAfter returns the date of the earliest
 	// opening_balance/adjustment row dated after `after`'s calendar day
@@ -878,8 +883,8 @@ func (r *transactionRepo) FoldQuantityThrough(ctx context.Context, userID, accou
 		FROM transactions
 		WHERE deleted_at IS NULL
 		  AND user_id = ? AND account_id = ? AND asset_id = ?
-		  AND transaction_date <= ?::date
-	`, userID, accountID, assetID, through.UTC().Format("2006-01-02")).Scan(&s).Error; err != nil {
+		  AND (kind = ? OR transaction_date <= ?::date)
+	`, userID, accountID, assetID, model.KindOpeningBalance, through.UTC().Format("2006-01-02")).Scan(&s).Error; err != nil {
 		return decimal.Zero, err
 	}
 	return decimal.NewFromString(s)

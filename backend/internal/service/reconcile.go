@@ -37,12 +37,21 @@ func ReconcilePosition(
 	asOf time.Time,
 	source string,
 ) (*model.Transaction, error) {
-	return reconcilePositionForJob(ctx, txRepo, obsRepo, userID, accountID, assetID, reported, asOf, source, nil)
+	return reconcilePositionForJob(ctx, txRepo, obsRepo, userID, accountID, assetID, reported, asOf, source, nil, nil)
+}
+
+// insertedRow is a ledger row the caller added to the (account, asset)
+// immediately before reconciling, e.g. a statement's new flows. A backdated
+// reconcile undoes their effect on balances a later anchor pinned (#680).
+type insertedRow struct {
+	date   time.Time
+	amount decimal.Decimal
 }
 
 // reconcilePositionForJob is ReconcilePosition that links the observation and
 // any adjustment it writes to a statement import job, so Undo can reverse
-// them with the rows (#483).
+// them with the rows (#483). inserted lists the rows the caller just added
+// for this (account, asset); see offsetAtNextAnchor.
 func reconcilePositionForJob(
 	ctx context.Context,
 	txRepo repository.TransactionRepository,
@@ -52,6 +61,7 @@ func reconcilePositionForJob(
 	asOf time.Time,
 	source string,
 	jobID *int64,
+	inserted []insertedRow,
 ) (*model.Transaction, error) {
 	obs := &model.AccountBalanceObservation{
 		UserID:           userID,
@@ -72,6 +82,13 @@ func reconcilePositionForJob(
 	}
 	delta := reported.Sub(fold)
 	if delta.IsZero() {
+		// A statement can match on its own day yet carry new rows that moved
+		// a balance a later anchor pinned (#680).
+		if historical {
+			if err := offsetAtNextAnchor(ctx, txRepo, obsRepo, userID, accountID, assetID, delta, inserted, asOf, obs.ID, jobID); err != nil {
+				return nil, err
+			}
+		}
 		return nil, nil
 	}
 
@@ -101,7 +118,7 @@ func reconcilePositionForJob(
 		return nil, fmt.Errorf("reconcile: write %s: %w", kind, err)
 	}
 	if historical {
-		if err := offsetAtNextAnchor(ctx, txRepo, obsRepo, userID, accountID, assetID, delta, asOf, obs.ID, jobID); err != nil {
+		if err := offsetAtNextAnchor(ctx, txRepo, obsRepo, userID, accountID, assetID, delta, inserted, asOf, obs.ID, jobID); err != nil {
 			return nil, err
 		}
 	}
@@ -136,12 +153,19 @@ func reconcileFold(ctx context.Context, txRepo repository.TransactionRepository,
 // ledger then matches both the backdated report and the later one, and the
 // current balance is unchanged. With no later anchor the delta carries
 // forward, since nothing after asOf contradicts it.
+//
+// Rows the caller inserted on or before that later day moved its balance
+// too, so the offset reverses them as well (#680). Without that, an older
+// statement's new flows would shift a later confirmed balance. Only this
+// operation's changes are reversed: an unrelated discrepancy at the later
+// anchor is left for its own reconciliation to show.
 func offsetAtNextAnchor(
 	ctx context.Context,
 	txRepo repository.TransactionRepository,
 	obsRepo repository.BalanceObservationRepository,
 	userID, accountID, assetID int64,
 	delta decimal.Decimal,
+	inserted []insertedRow,
 	asOf time.Time,
 	obsID int64,
 	jobID *int64,
@@ -160,15 +184,25 @@ func offsetAtNextAnchor(
 	if next == nil {
 		return nil
 	}
+	nextDay := next.UTC().Truncate(24 * time.Hour)
+	shift := delta
+	for _, r := range inserted {
+		if !r.date.UTC().Truncate(24 * time.Hour).After(nextDay) {
+			shift = shift.Add(r.amount)
+		}
+	}
+	if shift.IsZero() {
+		return nil
+	}
 	desc := "Reconciliation adjustment (offsets an earlier balance correction)"
 	offset := &model.Transaction{
 		UserID:                userID,
 		AccountID:             accountID,
 		AssetID:               assetID,
 		Kind:                  model.KindAdjustment,
-		Amount:                delta.Neg(),
+		Amount:                shift.Neg(),
 		Description:           &desc,
-		TransactionDate:       next.UTC().Truncate(24 * time.Hour),
+		TransactionDate:       nextDay,
 		Source:                "system",
 		CausedByObservationID: &obsID,
 		ImportJobID:           jobID,
