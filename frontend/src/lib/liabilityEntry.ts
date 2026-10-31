@@ -27,3 +27,14 @@ export function liabilityReading(entered: string): { kind: 'owed' | 'credit' | '
   if (n.startsWith('-')) return { kind: 'credit', amount: n.slice(1) }
   return { kind: 'owed', amount: n }
 }
+
+// liabilityBalance says how a stored liability balance reads (#674): the
+// amount owed as a positive magnitude, or the credit when the stored balance
+// is positive. Same reading as summarizeAccounts' owed/liabilityCredit, so a
+// row, its group subtotal and the summary tile always agree.
+export function liabilityBalance(balance: string): { kind: 'owed' | 'credit' | 'zero'; amount: string } {
+  const n = subDecimal(balance, '0')
+  if (n === '0' || n === '-0') return { kind: 'zero', amount: '0' }
+  if (n.startsWith('-')) return { kind: 'owed', amount: n.slice(1) }
+  return { kind: 'credit', amount: n }
+}

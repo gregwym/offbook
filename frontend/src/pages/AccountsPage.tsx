@@ -5,6 +5,7 @@ import { accountTransactionsHref, canUpdateBalance, isBrokerage } from '../lib/a
 import { listItems } from '../api/plaid'
 import { AccountVisibilityChip } from '../components/AccountVisibilityChip'
 import { AmountDisplay } from '../components/AmountDisplay'
+import { AccountBalance } from '../components/AccountBalance'
 import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
 import { PartialBadge } from '../components/PartialBadge'
 import { PIIPanel } from '../components/PIIPanel'
@@ -227,7 +228,7 @@ export function AccountsPage() {
               </th>
               <td colSpan={showLastFour ? 3 : 2} className="hidden md:table-cell" />
               <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900" aria-label={`${g.label} total`}>
-                <Subtotals totals={g.subtotals} />
+                <Subtotals totals={g.subtotals} liability={g.key === 'credit' || g.key === 'loans'} />
               </td>
               <td colSpan={columns - (showLastFour ? 5 : 4)} className="hidden md:table-cell" />
             </tr>
@@ -287,7 +288,7 @@ export function AccountsPage() {
                 <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{accountTypeLabel(a.account_type)}</td>
                 {showLastFour && <td className="hidden px-4 py-2 align-top text-gray-700 md:table-cell">{a.last_four ?? '—'}</td>}
                 <td className="px-4 py-2 text-right align-top">
-                  <AmountDisplay amount={a.balance} currency={a.currency} />
+                  <AccountBalance accountType={a.account_type} balance={a.balance} currency={a.currency} />
                   {!a.balance_complete && (
                     <>
                       <PartialBadge />
@@ -468,12 +469,14 @@ function SummaryTile({ label, amount, currency, complete, strong, note }: {
 }
 
 // Subtotals renders a group's total, one line per currency when it mixes them.
-function Subtotals({ totals }: { totals: CurrencyTotal[] }) {
+// Credit cards and Loans hold only liabilities, so their subtotal reads as
+// the amount owed, like each row (#674).
+function Subtotals({ totals, liability }: { totals: CurrencyTotal[]; liability: boolean }) {
   return (
     <>
       {totals.map((t) => (
         <div key={t.currency}>
-          <AmountDisplay amount={t.amount} currency={t.currency} />
+          <AccountBalance liability={liability} balance={t.amount} currency={t.currency} />
           {!t.complete && <PartialBadge />}
         </div>
       ))}

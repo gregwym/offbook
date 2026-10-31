@@ -270,6 +270,9 @@ describe('InsightsPage accounts band labels', () => {
     expect(within(band).getByText('Chase')).toBeTruthy()
     expect(within(band).getByText('Linked bank')).toBeTruthy()
     expect(band.textContent).not.toMatch(/checking|credit_card|ins_\d|plaid/)
+    // #674: a card reads as the amount owed here too, matching Accounts.
+    expect(band).toHaveTextContent('12,341.70 USD')
+    expect(band).not.toHaveTextContent('-12,341.70')
   })
 })
 

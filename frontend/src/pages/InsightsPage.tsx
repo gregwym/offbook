@@ -41,6 +41,7 @@ import {
 } from 'recharts'
 import { refreshPrices } from '../api/prices'
 import { AmountDisplay } from '../components/AmountDisplay'
+import { AccountBalance } from '../components/AccountBalance'
 import { DateDisplay } from '../components/DateDisplay'
 import { FALLBACK_PIE_COLORS } from '../components/chartColors'
 import { accountTypeLabel } from '../types/account'
@@ -1233,7 +1234,7 @@ function AccountsBand({ data }: { data: InsightsData }) {
               <span className="text-xs text-gray-400">{accountTypeLabel(a.account_type)}</span>
               <span className="text-xs text-gray-400">{a.institution}</span>
               <span className="text-right">
-                <AmountDisplay amount={a.balance} currency={a.currency || 'USD'} />
+                <AccountBalance accountType={a.account_type} balance={a.balance} currency={a.currency || 'USD'} />
                 {!a.balance_complete && <PartialBadge />}
               </span>
             </div>
