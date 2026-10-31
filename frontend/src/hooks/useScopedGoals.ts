@@ -14,6 +14,7 @@ import {
   contributeToGoal,
   createGoal,
   deleteGoal,
+  listGoalContributions,
   listGoals,
   updateGoal,
 } from '../api/savingsGoals'
@@ -21,6 +22,7 @@ import {
   contributeToSharedGoal,
   createSharedGoal,
   deleteSharedGoal,
+  listSharedGoalContributions,
   listSharedGoals,
   updateSharedGoal,
 } from '../api/households'
@@ -31,7 +33,7 @@ import type {
   CreateSharedGoalInput,
   UpdateSharedGoalInput,
 } from '../types/household'
-import type { UpdateGoalInput } from '../types/savingsGoal'
+import type { GoalContribution, UpdateGoalInput } from '../types/savingsGoal'
 import { SCOPE_HOUSEHOLD } from '../types/scope'
 
 // ScopedGoalRow normalizes personal `SavingsGoal` and household `SharedGoal`
@@ -69,6 +71,8 @@ export type UseScopedGoals = {
   update: (id: number, input: ScopedGoalInput) => Promise<void>
   remove: (id: number) => Promise<void>
   contribute: (id: number, amount: string) => Promise<void>
+  // history lists a goal's recorded contributions, newest first (#682).
+  history: (id: number) => Promise<GoalContribution[]>
   clearError: () => void
 }
 
@@ -208,6 +212,17 @@ export function useScopedGoals(): UseScopedGoals {
     [isHousehold, householdId, reload],
   )
 
+  const history = useCallback(
+    async (id: number): Promise<GoalContribution[]> => {
+      if (isHousehold) {
+        if (householdId == null) return []
+        return listSharedGoalContributions(householdId, id)
+      }
+      return listGoalContributions(id)
+    },
+    [isHousehold, householdId],
+  )
+
   const householdMissing = isHousehold && householdId == null
   const canMutate = isHousehold
     ? detail?.role === 'owner' || detail?.role === 'contributor'
@@ -225,6 +240,7 @@ export function useScopedGoals(): UseScopedGoals {
     update,
     remove,
     contribute,
+    history,
     clearError: () => setError(null),
   }
 }

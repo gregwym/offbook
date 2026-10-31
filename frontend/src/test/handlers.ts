@@ -33,6 +33,8 @@ export const handlers = [
   http.get(`${API}/budgets/:id/spend`, () => item(fx.budgetSpend1)),
   http.get(`${API}/budgets/summary`, () => item(fx.budgetSummary1)),
   http.get(`${API}/savings-goals`, () => list(fx.goals)),
+  http.get(`${API}/savings-goals/:id/contributions`, () => list([])),
+  http.get(`${API}/households/:id/shared-goals/:goalID/contributions`, () => list([])),
 
   // Transactions / rules
   http.get(`${API}/transactions`, () => list(fx.transactions)),

@@ -54,6 +54,7 @@ func (h *HouseholdHandler) Register(g *gin.RouterGroup) {
 	g.PATCH("/households/:id/shared-goals/:goalID", h.UpdateSharedGoal)
 	g.DELETE("/households/:id/shared-goals/:goalID", h.DeleteSharedGoal)
 	g.POST("/households/:id/shared-goals/:goalID/contributions", h.ContributeToSharedGoal)
+	g.GET("/households/:id/shared-goals/:goalID/contributions", h.ListSharedGoalContributions)
 
 	g.GET("/accounts/:id/shares", h.ListShares)
 	g.PUT("/accounts/:id/shares/:householdID", h.SetShare)
@@ -506,6 +507,26 @@ func (h *HouseholdHandler) ContributeToSharedGoal(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": g})
+}
+
+// ListSharedGoalContributions returns a shared goal's contribution history,
+// newest first (#682).
+func (h *HouseholdHandler) ListSharedGoalContributions(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	goalID, err := strconv.ParseInt(c.Param("goalID"), 10, 64)
+	if err != nil || goalID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "goalID must be a positive integer", "code": "INVALID_REQUEST"})
+		return
+	}
+	out, err := h.svc.SharedGoalContributions(c.Request.Context(), auth.MustUserID(c.Request.Context()), id, goalID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out, "total": int64(len(out))})
 }
 
 func (h *HouseholdHandler) ListShares(c *gin.Context) {

@@ -2,6 +2,7 @@ import { apiClient, type ApiItem, type ApiList } from './client'
 import type {
   ContributionInput,
   CreateGoalInput,
+  GoalContribution,
   SavingsGoal,
   UpdateGoalInput,
 } from '../types/savingsGoal'
@@ -27,5 +28,10 @@ export async function deleteGoal(id: number): Promise<void> {
 
 export async function contributeToGoal(id: number, input: ContributionInput): Promise<SavingsGoal> {
   const res = await apiClient.post<ApiItem<SavingsGoal>>(`/savings-goals/${id}/contributions`, input)
+  return res.data.data
+}
+
+export async function listGoalContributions(id: number): Promise<GoalContribution[]> {
+  const res = await apiClient.get<ApiList<GoalContribution>>(`/savings-goals/${id}/contributions`)
   return res.data.data
 }

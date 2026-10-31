@@ -13,6 +13,7 @@ import type {
   UpdateSharedBudgetInput,
   UpdateSharedGoalInput,
 } from '../types/household'
+import type { GoalContribution } from '../types/savingsGoal'
 
 export async function getHousehold(id: number): Promise<HouseholdDetail> {
   const res = await apiClient.get<ApiItem<HouseholdDetail>>(`/households/${id}`)
@@ -154,6 +155,16 @@ export async function contributeToSharedGoal(
   const res = await apiClient.post<ApiItem<SharedGoal>>(
     `/households/${householdID}/shared-goals/${goalID}/contributions`,
     { amount },
+  )
+  return res.data.data
+}
+
+export async function listSharedGoalContributions(
+  householdID: number,
+  goalID: number,
+): Promise<GoalContribution[]> {
+  const res = await apiClient.get<ApiList<GoalContribution>>(
+    `/households/${householdID}/shared-goals/${goalID}/contributions`,
   )
   return res.data.data
 }

@@ -36,3 +36,14 @@ export type UpdateGoalInput = {
 export type ContributionInput = {
   amount: string
 }
+
+// One recorded change to a goal's total (#682): a contribution (amount > 0)
+// or withdrawal (amount < 0), with the goal's total right after it. Mirrors
+// backend model.SavingsGoalContribution (who recorded it is not exposed).
+export type GoalContribution = {
+  id: number
+  goal_id: number
+  amount: string
+  balance_after: string
+  created_at: string
+}

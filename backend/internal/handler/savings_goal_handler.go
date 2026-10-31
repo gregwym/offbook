@@ -10,6 +10,7 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/service"
+	"github.com/gregwym/offbook/backend/internal/service/auth"
 )
 
 type SavingsGoalHandler struct {
@@ -27,6 +28,7 @@ func (h *SavingsGoalHandler) Register(g *gin.RouterGroup) {
 	g.PATCH("/savings-goals/:id", h.Update)
 	g.DELETE("/savings-goals/:id", h.Delete)
 	g.POST("/savings-goals/:id/contributions", h.Contribute)
+	g.GET("/savings-goals/:id/contributions", h.ListContributions)
 }
 
 type createGoalRequest struct {
@@ -163,12 +165,27 @@ func (h *SavingsGoalHandler) Contribute(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": "INVALID_REQUEST"})
 		return
 	}
-	g, err := h.svc.Contribute(c.Request.Context(), personalOwner(c), id, req.Amount)
+	g, err := h.svc.Contribute(c.Request.Context(), personalOwner(c), id, req.Amount, auth.MustUserID(c.Request.Context()))
 	if err != nil {
 		h.writeServiceError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": viewOrRaw(g)})
+}
+
+// ListContributions returns the goal's contribution history, newest first
+// (#682).
+func (h *SavingsGoalHandler) ListContributions(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	out, err := h.svc.Contributions(c.Request.Context(), personalOwner(c), id)
+	if err != nil {
+		h.writeServiceError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": out, "total": int64(len(out))})
 }
 
 func (h *SavingsGoalHandler) writeServiceError(c *gin.Context, err error) {

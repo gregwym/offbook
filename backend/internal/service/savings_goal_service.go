@@ -137,13 +137,14 @@ func (s *SavingsGoalService) SoftDelete(ctx context.Context, owner repository.Pl
 }
 
 // Contribute applies delta (positive = deposit, negative = withdrawal)
-// atomically. Returns the post-update row. delta=0 is rejected because
+// atomically and records it in the goal's history as made by `by` (the
+// session user). Returns the post-update row. delta=0 is rejected because
 // it's almost always a bug in the caller.
-func (s *SavingsGoalService) Contribute(ctx context.Context, owner repository.PlanOwner, id int64, delta decimal.Decimal) (*model.SavingsGoal, error) {
+func (s *SavingsGoalService) Contribute(ctx context.Context, owner repository.PlanOwner, id int64, delta decimal.Decimal, by int64) (*model.SavingsGoal, error) {
 	if delta.IsZero() {
 		return nil, ErrZeroContribution
 	}
-	g, err := s.repo.AddContribution(ctx, owner, id, delta)
+	g, err := s.repo.AddContribution(ctx, owner, id, delta, by)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrSavingsGoalNotFound
@@ -151,6 +152,23 @@ func (s *SavingsGoalService) Contribute(ctx context.Context, owner repository.Pl
 		return nil, fmt.Errorf("add contribution: %w", err)
 	}
 	return g, nil
+}
+
+// Contributions returns a goal's recorded contributions and withdrawals,
+// newest first (#682). Each carries the goal's total right after it. A goal
+// that held money before history was kept has an oldest entry whose
+// balance_after - amount is that earlier total; a goal with no entries holds
+// only pre-history money. ErrSavingsGoalNotFound when the goal isn't the
+// owner's.
+func (s *SavingsGoalService) Contributions(ctx context.Context, owner repository.PlanOwner, id int64) ([]model.SavingsGoalContribution, error) {
+	if _, err := s.Get(ctx, owner, id); err != nil {
+		return nil, err
+	}
+	out, err := s.repo.ListContributions(ctx, owner, id)
+	if err != nil {
+		return nil, fmt.Errorf("list contributions: %w", err)
+	}
+	return out, nil
 }
 
 // View enriches a goal with its computed progress + remaining.
