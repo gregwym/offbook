@@ -66,6 +66,33 @@ test.describe('manual credit card balance', () => {
     const after = (await get(cookie, '/accounts')).data.find((a: { name: string }) => a.name === 'QA Visa')
     expect(after.balance.startsWith('-512.3')).toBe(true)
     await testInfo.attach('accounts-after-update', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+
+    // #674: the row, its group and the account's Transactions header read
+    // as owed, the same figure as the tile and the dialog; never -512.30.
+    await expect(row).toContainText('512.30 USD')
+    await expect(page.getByLabel('Credit cards total').locator('visible=true')).toHaveText('512.30 USD')
+    await expect(page.getByRole('rowgroup', { name: 'Credit cards' })).not.toContainText('-512.30')
+    await row.getByRole('link', { name: 'QA Visa', exact: true }).click()
+    const header = page.getByRole('region', { name: 'Account QA Visa' })
+    await expect(header.getByLabel('Account balance')).toHaveText('512.30 USD')
+    await expectNoOverflow(page)
+    await testInfo.attach('card-transactions-header', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+
+    // A card in credit says "credit" everywhere instead of a bare sign.
+    await header.getByRole('button', { name: 'Update balance' }).click()
+    const credit = page.getByRole('dialog', { name: /Update balance/ })
+    await credit.getByLabel('Amount owed (USD)').fill('-20')
+    await credit.getByRole('button', { name: 'Save balance' }).click()
+    await expect(credit.getByRole('status')).toBeVisible()
+    await credit.getByRole('button', { name: 'Done' }).click()
+    await expect(header.getByLabel('Account balance')).toHaveText('20.00 USD credit')
+    await page.goto('/accounts')
+    await expect(tile(page, 'Liabilities')).toContainText('credit')
+    await expect(page.getByRole('row').filter({ hasText: 'QA Visa' })).toContainText('20.00 USD credit')
+    await expect(page.getByLabel('Credit cards total').locator('visible=true')).toHaveText('20.00 USD credit')
+    await expect(tile(page, 'Net worth')).toContainText('2,020.00')
+    await expectNoOverflow(page)
+    await testInfo.attach('accounts-card-in-credit', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
   })
 })
 

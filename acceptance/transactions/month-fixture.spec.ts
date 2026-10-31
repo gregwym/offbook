@@ -136,6 +136,9 @@ test.describe('acceptance month fixture', () => {
 
     await signIn(page, user.email, user.password)
 
+    // Each account's ledger total, in cents.
+    const per = { checking: opening.checking, savings: opening.savings, card: 0, brokerage: 0 }
+    for (const r of rows) per[r.account] += r.cents
     // Insights: headline net worth + spending, and per-category spend.
     await page.goto('/insights')
     const nw = page.locator('section', { hasText: 'Net worth' }).first()
@@ -153,6 +156,8 @@ test.describe('acceptance month fixture', () => {
     await expect(checkingRow.getByText('Checking', { exact: true })).toBeVisible()
     await expect(checkingRow.getByText('Manual', { exact: true })).toBeVisible()
     await expect(feeding.locator('div', { hasText: 'QAM Card' }).last().getByText('Credit card', { exact: true })).toBeVisible()
+    // #674: so is its balance, matching Accounts.
+    await expect(feeding.locator('div', { hasText: 'QAM Card' }).last()).toContainText(`${fmt(-per.card)} USD`)
     await expect(feeding.getByText(/^(checking|savings|credit_card|investment|manual)$/)).toHaveCount(0)
     await expectNoClipping(page, 'insights')
     await snap(page, testInfo, 'insights')
@@ -175,8 +180,6 @@ test.describe('acceptance month fixture', () => {
 
     // Accounts (#655): grouped by kind with exact subtotals, and a net worth
     // that equals the Insights headline to the cent.
-    const per = { checking: opening.checking, savings: opening.savings, card: 0, brokerage: 0 }
-    for (const r of rows) per[r.account] += r.cents
     await page.goto('/accounts')
     const summary = page.getByLabel('Accounts summary')
     await expect(summary).toContainText(fmt(per.checking + per.savings + per.brokerage))
@@ -188,7 +191,11 @@ test.describe('acceptance month fixture', () => {
     await expect(summary).not.toContainText(fmt(per.card))
     await expect(summary).toContainText(fmt(netWorth))
     await expect(page.getByLabel('Cash total').locator('visible=true')).toContainText(fmt(per.checking + per.savings))
-    await expect(page.getByLabel('Credit cards total').locator('visible=true')).toContainText(fmt(per.card))
+    // #674: the card's subtotal and row read as owed, like the tile.
+    await expect(page.getByLabel('Credit cards total').locator('visible=true')).toHaveText(`${fmt(-per.card)} USD`)
+    const cardRow = page.getByRole('rowgroup', { name: 'Credit cards' }).getByRole('row').filter({ hasText: 'QAM Card' })
+    await expect(cardRow).toContainText(`${fmt(-per.card)} USD`)
+    await expect(page.getByRole('rowgroup', { name: 'Credit cards' })).not.toContainText(fmt(per.card))
     await expect(page.getByLabel('Investments total').locator('visible=true')).toContainText(fmt(per.brokerage))
     await expect(page.getByRole('rowgroup', { name: 'Credit cards' })).toContainText('QAM Card')
     await expect(page.getByText('manual', { exact: true })).toHaveCount(0)
@@ -202,7 +209,7 @@ test.describe('acceptance month fixture', () => {
     await page.getByRole('link', { name: 'QAM Card', exact: true }).click()
     await page.waitForURL(new RegExp(`/transactions\\?account_id=${acct.card}$`))
     const header = page.getByRole('region', { name: 'Account QAM Card' })
-    await expect(header.getByLabel('Account balance')).toHaveText(`${fmt(per.card)} USD`)
+    await expect(header.getByLabel('Account balance')).toHaveText(`${fmt(-per.card)} USD`)
     await expect(page.getByText(`${cardRows} total`, { exact: true })).toBeVisible()
     await expect(page.getByText(`${PREFIX} `).locator('visible=true').first()).toBeVisible()
     await expectNoClipping(page, 'account-transactions')

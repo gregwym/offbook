@@ -134,7 +134,10 @@ describe('AccountsPage smoke', () => {
     expect(summary).not.toHaveTextContent('-12,341.70')
     expect(summary).toHaveTextContent('Net worth11,980.60 USD')
     expect(screen.getByLabelText('Cash total')).toHaveTextContent('23,122.30 USD')
-    expect(screen.getByLabelText('Credit cards total')).toHaveTextContent('-12,341.70 USD')
+    // #674: the card's group and row read as owed, like the summary tile.
+    expect(screen.getByLabelText('Credit cards total')).toHaveTextContent(/^12,341\.70 USD$/)
+    expect(within(screen.getByRole('rowgroup', { name: 'Credit cards' })).getByRole('row', { name: /Visa/ })).toHaveTextContent('12,341.70 USD')
+    expect(screen.getByRole('rowgroup', { name: 'Credit cards' })).not.toHaveTextContent('-12,341.70')
     expect(screen.getByLabelText('Investments total')).toHaveTextContent('1,200.00 USD')
     expect(within(screen.getByRole('rowgroup', { name: 'Cash' })).getByText('Rainy day')).toBeTruthy()
     expect(screen.getByText('Inactive')).toBeTruthy()

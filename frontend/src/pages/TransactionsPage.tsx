@@ -26,6 +26,7 @@ import type { BulkEditAction, BulkEditPrior, CreateTransactionInput, TagCount, T
 import { TRANSACTION_SOURCES } from '../types/transaction'
 import { ModalShell } from '../components/ModalShell'
 import { PartialBadge } from '../components/PartialBadge'
+import { AccountBalance } from '../components/AccountBalance'
 import { UpdateBalanceModal } from '../components/UpdateBalanceModal'
 import { canUpdateBalance } from '../lib/accountActions'
 import { RowActionsMenu, type RowAction } from '../components/RowActionsMenu'
@@ -1712,7 +1713,7 @@ function AccountHeader({ account, onUpdateBalance, onShowAll }: {
         <div className="text-right">
           <div className="text-xs font-medium uppercase tracking-wider text-gray-500">Balance</div>
           <div aria-label="Account balance" className="text-lg font-semibold text-gray-900">
-            <AmountDisplay amount={account.balance} currency={account.currency} />
+            <AccountBalance accountType={account.account_type} balance={account.balance} currency={account.currency} />
             {!account.balance_complete && <PartialBadge />}
           </div>
         </div>

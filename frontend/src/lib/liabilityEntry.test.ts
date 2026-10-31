@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { entryFromLedger, ledgerFromEntry, liabilityReading } from './liabilityEntry'
+import { entryFromLedger, ledgerFromEntry, liabilityBalance, liabilityReading } from './liabilityEntry'
 
 describe('liability balance entry (#667)', () => {
   it('maps between what the user types and the stored balance', () => {
@@ -31,5 +31,15 @@ describe('liability balance entry (#667)', () => {
     expect(liabilityReading('0.00')).toEqual({ kind: 'zero', amount: '0' })
     expect(liabilityReading('abc')).toBeNull()
     expect(liabilityReading('')).toBeNull()
+  })
+
+  it('reads a stored liability balance as owed, credit or zero (#674)', () => {
+    expect(liabilityBalance('-12341.700000000000000000')).toEqual({ kind: 'owed', amount: '12341.7' })
+    expect(liabilityBalance('20.000000000000000000')).toEqual({ kind: 'credit', amount: '20' })
+    expect(liabilityBalance('0.000000000000000000')).toEqual({ kind: 'zero', amount: '0' })
+    expect(liabilityBalance('-0')).toEqual({ kind: 'zero', amount: '0' })
+    // Exact at 18 dp: no float round trip.
+    expect(liabilityBalance('-0.000000000000000001')).toEqual({ kind: 'owed', amount: '0.000000000000000001' })
+    expect(liabilityBalance('123456789012.123456789012345678')).toEqual({ kind: 'credit', amount: '123456789012.123456789012345678' })
   })
 })

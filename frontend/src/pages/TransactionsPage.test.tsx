@@ -829,8 +829,8 @@ describe('TransactionsPage account filter (#657)', () => {
       </MemoryRouter>,
     )
     const header = await screen.findByRole('region', { name: 'Account QAM Card' })
-    // Same value and formatting as the Accounts row.
-    expect(within(header).getByLabelText('Account balance')).toHaveTextContent('-12,341.70 USD')
+    // Same value and formatting as the Accounts row: the amount owed (#674).
+    expect(within(header).getByLabelText('Account balance')).toHaveTextContent(/^12,341\.70 USD$/)
     expect(within(header).getByRole('link', { name: 'Reconciliation' })).toHaveAttribute('href', '/accounts/3/reconciliation')
     // A credit card is a manual cash-style account: its balance can be updated.
     expect(within(header).getByRole('button', { name: 'Update balance' })).toBeTruthy()
