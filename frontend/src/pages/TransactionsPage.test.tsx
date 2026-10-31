@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
-import { http, HttpResponse } from 'msw'
+import { delay, http, HttpResponse } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import * as fx from '../test/fixtures'
 import { server } from '../test/server'
@@ -872,12 +872,15 @@ describe('TransactionsPage review count and account column under a filter (#675)
     const countQueries: URLSearchParams[] = []
     server.use(
       http.get(`${API}/accounts`, () => HttpResponse.json({ data: [fx.account1, card], total: 2 })),
-      http.get(`${API}/transactions`, ({ request }) => {
+      http.get(`${API}/transactions`, async ({ request }) => {
         const q = new URL(request.url).searchParams
         if (q.get('reviewed') === 'false') {
           countQueries.push(q)
-          // 207 across every account, 4 on the card.
-          return HttpResponse.json({ data: [], total: q.get('account_id') === '3' ? 4 : 207 })
+          // 207 across every account, 4 on the card. The unfiltered count
+          // answers late, so a stale response must not overwrite the card's.
+          if (q.get('account_id') === '3') return HttpResponse.json({ data: [], total: 4 })
+          await delay(150)
+          return HttpResponse.json({ data: [], total: 207 })
         }
         const rows = q.get('account_id') === '3' ? [{ ...fx.transaction1, account_id: 3 }] : fx.transactions
         return HttpResponse.json({ data: rows, total: rows.length })
@@ -890,6 +893,9 @@ describe('TransactionsPage review count and account column under a filter (#675)
     )
     const chip = await screen.findByRole('button', { name: /needs review/i })
     await waitFor(() => expect(chip).toHaveTextContent('Needs review· 4'))
+    // Let the late unfiltered response land; the count must stay the card's.
+    await new Promise((r) => setTimeout(r, 250))
+    expect(chip).toHaveTextContent('Needs review· 4')
     expect(countQueries.at(-1)?.get('account_id')).toBe('3')
     expect(countQueries.at(-1)?.get('limit')).toBe('1')
     expect(screen.queryByRole('columnheader', { name: 'Account' })).toBeNull()

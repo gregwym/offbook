@@ -336,10 +336,15 @@ export function TransactionsPage() {
   // tag, spending drill-down) with reviewed=false, so the chip's number is
   // exactly what pressing it shows (#675); with no filter it counts every
   // account. limit=1 keeps the fetch cheap — we only need `total`.
+  // Only the latest request may set the count: the unfiltered first-render
+  // query can resolve after the filtered one and would otherwise overwrite
+  // it with the all-accounts number.
   const countFilter = useMemo(() => ({ ...filter, reviewed: false, limit: 1, offset: 0 }), [filter])
+  const reviewCountSeq = useRef(0)
   const refreshReviewCount = useCallback(() => {
+    const seq = ++reviewCountSeq.current
     return listTransactions(countFilter)
-      .then((r) => setReviewCount(r.total))
+      .then((r) => { if (seq === reviewCountSeq.current) setReviewCount(r.total) })
       .catch(() => { /* swallow — the count just won't surface */ })
   }, [countFilter])
   useEffect(() => {
