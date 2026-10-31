@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -66,17 +67,38 @@ func (r *savingsGoalRepo) List(ctx context.Context, owner PlanOwner) ([]model.Sa
 	return out, nil
 }
 
+// goalMetadataColumns are the only columns a metadata Update writes.
+// current_amount is deliberately absent: it moves only through
+// AddContribution's server-side increment, so a stale snapshot read before a
+// concurrent contribution can never overwrite that contribution (#684).
+var goalMetadataColumns = []string{"name", "target_amount", "target_date", "account_id", "updated_at"}
+
 func (r *savingsGoalRepo) Update(ctx context.Context, g *model.SavingsGoal) error {
-	res := PlanOwner{UserID: g.UserID, HouseholdID: g.HouseholdID}.
-		Apply(r.db.WithContext(ctx)).
-		Save(g)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	owner := PlanOwner{UserID: g.UserID, HouseholdID: g.HouseholdID}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Select lists the columns explicitly so a cleared (NULL) target_date
+		// or account_id is still written, unlike a plain struct Updates.
+		res := owner.Apply(tx).
+			Model(&model.SavingsGoal{}).
+			Where("id = ? AND deleted_at IS NULL", g.ID).
+			Select(goalMetadataColumns).
+			Updates(&model.SavingsGoal{
+				Name:         g.Name,
+				TargetAmount: g.TargetAmount,
+				TargetDate:   g.TargetDate,
+				AccountID:    g.AccountID,
+				UpdatedAt:    time.Now(),
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		// Reload so the caller sees the live current_amount (including any
+		// contribution committed after its snapshot), not the stale one.
+		return owner.Apply(tx).First(g, g.ID).Error
+	})
 }
 
 func (r *savingsGoalRepo) SoftDelete(ctx context.Context, owner PlanOwner, id int64) error {
