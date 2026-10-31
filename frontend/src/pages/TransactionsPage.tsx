@@ -122,6 +122,9 @@ export function TransactionsPage() {
   const [importing, setImporting] = useState(false)
   const [balancing, setBalancing] = useState<Account | null>(null)
   const filteredAccount = accountID ? accounts.find((a) => String(a.id) === accountID) ?? null : null
+  // One account filtered (#675): every row is that account, so the table
+  // drops the Account column and the phone meta line drops its suffix.
+  const showAccount = !accountID
   const filtersActive = Boolean(accountID || categoryID || from || to || searchInput || tag)
   // Below md only Search is shown up front; Account/Category/From/To sit
   // behind a "Filters" toggle so the list isn't pushed below the fold (#518).
@@ -328,14 +331,22 @@ export function TransactionsPage() {
 
   const bannerKey = recentSyncAt ? `txn-review-banner:${recentSyncAt}` : null
 
-  // Pull the count of rows that would land in the "Needs review" filter,
-  // independently from the main list (which honors all current filters).
-  // limit=1 keeps the fetch cheap — we only need `total`.
+  // Pull the count of rows that would land in the "Needs review" filter.
+  // It applies every active list filter (account, category, dates, search,
+  // tag, spending drill-down) with reviewed=false, so the chip's number is
+  // exactly what pressing it shows (#675); with no filter it counts every
+  // account. limit=1 keeps the fetch cheap — we only need `total`.
+  // Only the latest request may set the count: the unfiltered first-render
+  // query can resolve after the filtered one and would otherwise overwrite
+  // it with the all-accounts number.
+  const countFilter = useMemo(() => ({ ...filter, reviewed: false, limit: 1, offset: 0 }), [filter])
+  const reviewCountSeq = useRef(0)
   const refreshReviewCount = useCallback(() => {
-    return listTransactions({ reviewed: false, limit: 1 })
-      .then((r) => setReviewCount(r.total))
+    const seq = ++reviewCountSeq.current
+    return listTransactions(countFilter)
+      .then((r) => { if (seq === reviewCountSeq.current) setReviewCount(r.total) })
       .catch(() => { /* swallow — the count just won't surface */ })
-  }, [])
+  }, [countFilter])
   useEffect(() => {
     void refreshReviewCount()
   }, [recentSyncAt, refreshReviewCount])
@@ -825,7 +836,7 @@ export function TransactionsPage() {
               </th>
               <th className="hidden px-3 py-2 text-left md:table-cell">Bank description</th>
               <th className="hidden px-3 py-2 text-right md:table-cell">Amount</th>
-              <th className="hidden px-3 py-2 text-left md:table-cell">Account</th>
+              {showAccount && <th className="hidden px-3 py-2 text-left md:table-cell">Account</th>}
               <th className="hidden px-3 py-2 text-left md:table-cell">Category</th>
               <th className="hidden px-3 py-2 md:table-cell"><span className="sr-only">Actions</span></th>
             </tr>
@@ -899,6 +910,7 @@ export function TransactionsPage() {
                     legA={t}
                     legB={partner}
                     account={account}
+                    showAccount={showAccount}
                     assetByID={assetByID}
                     categories={categories}
                     categoryByID={categoryByID}
@@ -917,6 +929,7 @@ export function TransactionsPage() {
                   key={t.id}
                   tx={t}
                   account={account}
+                  showAccount={showAccount}
                   asset={assetByID.get(t.asset_id)}
                   categories={categories}
                   currentCategory={t.category_id ? categoryByID.get(t.category_id) : undefined}
@@ -1161,6 +1174,8 @@ export function TransactionsPage() {
 type RowProps = {
   tx: Transaction
   account?: Account
+  // false when the list is filtered to this one account (#675).
+  showAccount?: boolean
   asset?: Asset
   categories: Category[]
   currentCategory?: Category
@@ -1193,7 +1208,7 @@ type RowProps = {
 
 const PENDING_HINT = 'Your bank hasn’t posted this yet. Your edits will carry over when it posts.'
 
-function TransactionRow({ tx, account, asset, categories, currentCategory, onCategoryChange, onNewCategory, onCreateRule, onSplit, onToggleHidden, onEditTags, onEditDetails, onTagClick, onDelete, onUnlinkTransfer, indented, selected, onSelect, onToggleReviewed }: RowProps) {
+function TransactionRow({ tx, account, showAccount = true, asset, categories, currentCategory, onCategoryChange, onNewCategory, onCreateRule, onSplit, onToggleHidden, onEditTags, onEditDetails, onTagClick, onDelete, onUnlinkTransfer, indented, selected, onSelect, onToggleReviewed }: RowProps) {
   // Per ADR-0013, the unit on a transaction is asset_id. Display currency
   // = asset.symbol when available; fall back to the parent account's
   // currency for older rows that haven't been backfilled.
@@ -1384,7 +1399,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
             {rawDescription && (
               <> · <span className="break-all" title={rawDescription}>{rawDescription}</span></>
             )}
-            {account?.name && ` · ${account.name}`}
+            {showAccount && account?.name && ` · ${account.name}`}
           </div>
           {/* No hover on touch screens: spell out what the chip's tooltip says. */}
           {tx.pending && <div className="text-xs text-sky-700">{PENDING_HINT}</div>}
@@ -1430,7 +1445,7 @@ function TransactionRow({ tx, account, asset, categories, currentCategory, onCat
       <td className="hidden whitespace-nowrap px-3 py-2 text-right align-top md:table-cell">
         <AmountDisplay amount={tx.amount} currency={currency} signed />
       </td>
-      <td className="hidden px-3 py-2 align-top text-gray-700 md:table-cell">{account?.name ?? `#${tx.account_id}`}</td>
+      {showAccount && <td className="hidden px-3 py-2 align-top text-gray-700 md:table-cell">{account?.name ?? `#${tx.account_id}`}</td>}
       <td className="hidden px-3 py-2 align-top md:table-cell">{categorySelect}</td>
       <td className="hidden px-3 py-2 align-top md:table-cell">
         {/* Desktop mirrors the phone (#554): Reviewed stays inline and the
@@ -1463,6 +1478,7 @@ type PairedTradeRowProps = {
   legA: Transaction
   legB: Transaction
   account?: Account
+  showAccount?: boolean
   assetByID: Map<number, Asset>
   categories: Category[]
   categoryByID: Map<number, Category>
@@ -1479,6 +1495,7 @@ function PairedTradeRow({
   legA,
   legB,
   account,
+  showAccount = true,
   assetByID,
   categories,
   categoryByID,
@@ -1535,7 +1552,8 @@ function PairedTradeRow({
             trade
           </span>
           <div className="mt-1 text-xs text-gray-500 md:hidden">
-            <DateDisplay value={securityLeg.transaction_date} /> · {account?.name ?? `#${securityLeg.account_id}`}
+            <DateDisplay value={securityLeg.transaction_date} />
+            {showAccount && ` · ${account?.name ?? `#${securityLeg.account_id}`}`}
           </div>
           {/* No Amount column on a phone (#590): both legs under the name. */}
           <div className="mt-1 flex gap-2 text-xs tabular-nums md:hidden">
@@ -1554,7 +1572,7 @@ function PairedTradeRow({
             <AmountDisplay amount={cashLeg.amount} currency={cashCurrency} signed />
           </div>
         </td>
-        <td className="hidden px-3 py-2 text-gray-700 md:table-cell">{account?.name ?? `#${securityLeg.account_id}`}</td>
+        {showAccount && <td className="hidden px-3 py-2 text-gray-700 md:table-cell">{account?.name ?? `#${securityLeg.account_id}`}</td>}
         <td className="hidden px-3 py-2 text-gray-400 italic text-xs md:table-cell">expand to edit</td>
         <td className="hidden px-3 py-2 md:table-cell"></td>
       </tr>
@@ -1563,6 +1581,7 @@ function PairedTradeRow({
           <TransactionRow
             tx={securityLeg}
             account={account}
+            showAccount={showAccount}
             asset={securityAsset}
             categories={categories}
             currentCategory={securityLeg.category_id ? categoryByID.get(securityLeg.category_id) : undefined}
@@ -1574,6 +1593,7 @@ function PairedTradeRow({
           <TransactionRow
             tx={cashLeg}
             account={account}
+            showAccount={showAccount}
             asset={cashAsset}
             categories={categories}
             currentCategory={cashLeg.category_id ? categoryByID.get(cashLeg.category_id) : undefined}
