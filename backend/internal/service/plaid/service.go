@@ -873,10 +873,18 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 					// adopt the existing row so the user's category, notes,
 					// review state and splits survive (the pending ID is
 					// then a benign no-op in `removed`).
+					//
+					// Plaid may also remove the pending ID in an earlier
+					// drain than the one that adds the posted row (#690).
+					// The pending row is then soft-deleted, so the lookup
+					// is Unscoped: a live row wins, else the newest
+					// soft-deleted one is adopted and brought back live
+					// (same policy as the resurrect-by-same-ID pass).
 					if pt.PendingTransactionID != "" && pt.PendingTransactionID != pt.PlaidTransactionID {
 						var pending model.Transaction
-						perr := tx.WithContext(ctx).
+						perr := tx.WithContext(ctx).Unscoped().
 							Where("user_id = ? AND plaid_transaction_id = ?", userID, pt.PendingTransactionID).
+							Order("deleted_at IS NOT NULL, id DESC").
 							First(&pending).Error
 						if perr == nil {
 							merged, err := MergePlaidUpdate(pending, pt, ref.ID, ref.AssetID, s.catMapper, userRules)
@@ -885,6 +893,18 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 							}
 							id := pt.PlaidTransactionID
 							merged.PlaidTransactionID = &id
+							if pending.DeletedAt.Valid {
+								merged.DeletedAt = gorm.DeletedAt{}
+								res := tx.WithContext(ctx).Unscoped().Save(&merged)
+								if res.Error != nil {
+									return res.Error
+								}
+								if res.RowsAffected == 0 {
+									return repository.ErrNotFound
+								}
+								result.Resurrected++
+								return nil
+							}
 							if err := txRepo.UpdateByPlaidTransactionID(ctx, userID, pt.PendingTransactionID, merged); err != nil {
 								return err
 							}
