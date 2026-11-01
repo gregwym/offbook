@@ -845,6 +845,7 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 					if err != nil {
 						return err
 					}
+					ReviveSoftDeleted(existing, &merged, time.Now())
 					return txRepo.ResurrectByPlaidTransactionID(ctx, userID, ptxID, merged)
 				})
 				if perRowErr != nil {
@@ -879,7 +880,9 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 					// The pending row is then soft-deleted, so the lookup
 					// is Unscoped: a live row wins, else the newest
 					// soft-deleted one is adopted and brought back live
-					// (same policy as the resurrect-by-same-ID pass).
+					// (same policy as the resurrect-by-same-ID pass). A row
+					// the user deleted comes back unreviewed with a note
+					// (#696, ReviveSoftDeleted).
 					if pt.PendingTransactionID != "" && pt.PendingTransactionID != pt.PlaidTransactionID {
 						var pending model.Transaction
 						perr := tx.WithContext(ctx).Unscoped().
@@ -894,7 +897,7 @@ func (s *Service) SyncTransactions(ctx context.Context, userID int64, plaidItemI
 							id := pt.PlaidTransactionID
 							merged.PlaidTransactionID = &id
 							if pending.DeletedAt.Valid {
-								merged.DeletedAt = gorm.DeletedAt{}
+								ReviveSoftDeleted(pending, &merged, time.Now())
 								res := tx.WithContext(ctx).Unscoped().Save(&merged)
 								if res.Error != nil {
 									return res.Error

@@ -632,13 +632,20 @@ func unlinkPartnersOf(tx *gorm.DB, userID int64, cond string, args ...any) error
 		Updates(map[string]any{"is_transfer": false, "transfer_pair_id": nil}).Error
 }
 
+// softDeleteWhere soft-deletes the live rows matching cond in one UPDATE,
+// recording who deleted them (#696) alongside deleted_at. updated_at is left
+// alone, matching GORM's own soft delete.
+func softDeleteWhere(tx *gorm.DB, by string, cond string, args ...any) *gorm.DB {
+	return tx.Model(&model.Transaction{}).Where(cond, args...).
+		UpdateColumns(map[string]any{"deleted_at": time.Now().UTC(), "deleted_by": by})
+}
+
 func (r *transactionRepo) SoftDeleteByPlaidTransactionID(ctx context.Context, userID int64, plaidTxnID string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := unlinkPartnersOf(tx, userID, "plaid_transaction_id = ?", plaidTxnID); err != nil {
 			return err
 		}
-		res := tx.Where("user_id = ? AND plaid_transaction_id = ?", userID, plaidTxnID).
-			Delete(&model.Transaction{})
+		res := softDeleteWhere(tx, model.DeletedBySync, "user_id = ? AND plaid_transaction_id = ?", userID, plaidTxnID)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -1152,7 +1159,7 @@ func (r *transactionRepo) SoftDelete(ctx context.Context, userID, id int64) erro
 		if err := unlinkPartnersOf(tx, userID, "id = ?", id); err != nil {
 			return err
 		}
-		res := tx.Where("user_id = ?", userID).Delete(&model.Transaction{}, id)
+		res := softDeleteWhere(tx, model.DeletedByUser, "user_id = ? AND id = ?", userID, id)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -1179,8 +1186,7 @@ func (r *transactionRepo) SoftDeleteByImportJob(ctx context.Context, userID, job
 		if err := unlinkPartnersOf(tx, userID, "import_job_id = ?", jobID); err != nil {
 			return err
 		}
-		res := tx.Where("user_id = ? AND import_job_id = ?", userID, jobID).
-			Delete(&model.Transaction{})
+		res := softDeleteWhere(tx, model.DeletedByImportUndo, "user_id = ? AND import_job_id = ?", userID, jobID)
 		n = res.RowsAffected
 		return res.Error
 	})

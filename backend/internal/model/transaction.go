@@ -78,6 +78,13 @@ type Transaction struct {
 	// ImportJobID links a statement-imported row to the ingestion_jobs audit
 	// row that created it, so the import can be undone as a unit.
 	ImportJobID *int64         `json:"import_job_id,omitempty"`
+	// DeletedBy (#696) records who soft-deleted the row: DeletedByUser,
+	// DeletedBySync or DeletedByImportUndo. Nil on live rows. Internal only.
+	DeletedBy *string `json:"-"`
+	// RestoredAfterUserDeleteAt (#696) is set when Plaid sync brings back a
+	// row the user had deleted (the bank posted or re-sent it). The row comes
+	// back unreviewed and the UI explains why it reappeared.
+	RestoredAfterUserDeleteAt *time.Time `json:"restored_after_user_delete_at,omitempty"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
@@ -96,5 +103,12 @@ type Transaction struct {
 	Category     *Category    `gorm:"foreignKey:CategoryID" json:"-"`
 	TransferPair *Transaction `gorm:"foreignKey:TransferPairID" json:"-"`
 }
+
+// Who soft-deleted a transaction (#696).
+const (
+	DeletedByUser       = "user"
+	DeletedBySync       = "sync"
+	DeletedByImportUndo = "import_undo"
+)
 
 func (Transaction) TableName() string { return "transactions" }

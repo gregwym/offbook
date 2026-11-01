@@ -59,6 +59,9 @@ export type Transaction = {
   pending?: boolean
   // tags (#544): user labels; metadata only, never affect spending/balances.
   tags?: string[]
+  // restored_after_user_delete_at (#696): the user deleted this bank row and
+  // the bank sent it again; it came back unreviewed.
+  restored_after_user_delete_at?: string | null
   created_at: string
   updated_at: string
 }
