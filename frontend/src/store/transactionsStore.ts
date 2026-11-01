@@ -87,6 +87,14 @@ export const useTransactionsStore = create<State>((set, get) => ({
         offset: page * pageSize,
       })
       if (seq !== fetchSeq) return
+      // A write elsewhere (review, bulk edit, delete) can shrink the list
+      // so the page we asked for no longer exists (#708). Step back to the
+      // last real page instead of showing an empty page with no way back.
+      const last = lastPage(total, pageSize)
+      if (items.length === 0 && page > last) {
+        set({ page: last })
+        return get().fetch()
+      }
       set({ transactions: items, total, spendTotal: spend_total ?? null, loading: false })
     } catch (err) {
       if (seq !== fetchSeq) return
@@ -204,13 +212,26 @@ export const useTransactionsStore = create<State>((set, get) => ({
     set({ transactions: next, total, error: null, reviewPending: get().reviewPending + 1 })
     const write = reviewChain.then(() => setTransactionsReviewed(ids, reviewed))
     reviewChain = write.catch(() => undefined)
+    let ok = false
     try {
       await write
+      ok = true
     } catch (err) {
       set({ transactions: before, total: totalBefore, error: errMsg(err) })
       throw err
     } finally {
-      set({ reviewPending: get().reviewPending - 1 })
+      const pending = get().reviewPending - 1
+      const s = get()
+      // The rows on screen all left the filter but more still match it
+      // (e.g. the sole row on page 2 of 51, #708): reload a real page
+      // rather than announce an empty inbox. Only once the last queued
+      // write has landed, so the reload sees every saved review.
+      if (ok && pending === 0 && s.transactions.length === 0 && s.total > 0) {
+        set({ reviewPending: 0, page: Math.min(s.page, lastPage(s.total, s.pageSize)), loading: true })
+        void get().fetch()
+      } else {
+        set({ reviewPending: pending })
+      }
     }
   },
 
@@ -218,13 +239,20 @@ export const useTransactionsStore = create<State>((set, get) => ({
     set({ error: null })
     try {
       await apiDelete(id)
-      set({ transactions: get().transactions.filter((t) => t.id !== id) })
+      const { transactions, total } = get()
+      const next = transactions.filter((t) => t.id !== id)
+      set({ transactions: next, total: Math.max(0, total - (transactions.length - next.length)) })
     } catch (err) {
       set({ error: errMsg(err) })
       throw err
     }
   },
 }))
+
+// Highest valid 0-based page for `total` rows (0 when the list is empty).
+function lastPage(total: number, pageSize: number): number {
+  return Math.max(0, Math.ceil(total / pageSize) - 1)
+}
 
 function errMsg(err: unknown): string {
   if (err && typeof err === 'object' && 'response' in err) {

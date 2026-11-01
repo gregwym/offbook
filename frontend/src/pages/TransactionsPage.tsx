@@ -870,7 +870,23 @@ export function TransactionsPage() {
             {!loading && transactions.length === 0 && needsReview && reviewPending > 0 && (
               <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-500" aria-live="polite">Saving your review…</td></tr>
             )}
-            {!loading && transactions.length === 0 && needsReview && reviewPending === 0 && (
+            {!loading && transactions.length === 0 && reviewPending === 0 && total > 0 && (
+              <tr>
+                <td colSpan={8} className="px-4 py-10 text-center">
+                  <div className="text-gray-700">
+                    {total} more transaction{total === 1 ? '' : 's'} {needsReview ? 'still need review' : 'match these filters'}.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPage(Math.min(page, totalPages - 1))}
+                    className="mt-3 min-h-9 rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    Show them
+                  </button>
+                </td>
+              </tr>
+            )}
+            {!loading && transactions.length === 0 && needsReview && reviewPending === 0 && total === 0 && (
               <tr>
                 <td colSpan={8} className="px-4 py-10 text-center">
                   <div className="text-base font-medium text-gray-900">You’re all caught up</div>
@@ -887,7 +903,7 @@ export function TransactionsPage() {
                 </td>
               </tr>
             )}
-            {!loading && transactions.length === 0 && !needsReview && (
+            {!loading && transactions.length === 0 && !needsReview && total === 0 && (
               <tr>
                 <td colSpan={8} className="px-4 py-8 text-center">
                   {filtersActive ? (
@@ -978,8 +994,9 @@ export function TransactionsPage() {
         </table>
       </div>
 
-      {/* #702: no pager when everything fits on one page (or the list is empty). */}
-      {totalPages > 1 && (
+      {/* #702: no pager when everything fits on one page (or the list is empty).
+          #708: but never strand the user on a page past the end without Prev. */}
+      {(totalPages > 1 || page > 0) && (
         <nav aria-label="Pagination" className="mt-3 flex items-center justify-end gap-2 text-sm">
           <button
             type="button"
@@ -987,7 +1004,7 @@ export function TransactionsPage() {
             disabled={page === 0}
             className="min-h-9 rounded border border-gray-300 px-3 py-1 disabled:opacity-50"
           >Prev</button>
-          <span className="text-gray-600">Page {page + 1} / {totalPages}</span>
+          <span className="text-gray-600">Page {page + 1} / {Math.max(totalPages, page + 1)}</span>
           <button
             type="button"
             onClick={() => setPage(page + 1)}

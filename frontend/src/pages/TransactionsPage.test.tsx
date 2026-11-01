@@ -1069,3 +1069,121 @@ describe('TransactionsPage pagination (#702)', () => {
     expect(screen.getByPlaceholderText(/description or merchant/i).closest('label')).toHaveClass('md:col-span-2')
   })
 })
+
+// #708: a write that empties the current page (the sole row on page 2 of
+// 51) must land the user on a real page of what still matches, not on an
+// empty page that claims inbox zero and has no Prev.
+describe('TransactionsPage stale page after a shrinking write (#708)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  function installPagedInbox(n: number) {
+    const rows = Array.from({ length: n }, (_, i) => ({
+      ...fx.transaction1,
+      id: i + 1,
+      description: `PAGED ${i + 1}`,
+      merchant_name: null,
+      description_clean: null,
+      reviewed_at: null as string | null,
+      hidden_at: null as string | null,
+    }))
+    const listCalls: URLSearchParams[] = []
+    let failReview = false
+    server.use(
+      http.get(`${API}/transactions`, ({ request }) => {
+        const q = new URL(request.url).searchParams
+        listCalls.push(q)
+        const r = q.get('reviewed')
+        const search = q.get('search')
+        const data = rows.filter((t) =>
+          (r == null || (r === 'false') === (t.reviewed_at == null)) &&
+          (!search || t.description.includes(search)) &&
+          (r == null || t.hidden_at == null))
+        const offset = Number(q.get('offset') ?? 0)
+        const limit = Number(q.get('limit') ?? 50)
+        return HttpResponse.json({ data: data.slice(offset, offset + limit), total: data.length })
+      }),
+      http.post(`${API}/transactions/review`, async ({ request }) => {
+        const body = (await request.json()) as { ids: number[]; reviewed: boolean }
+        if (failReview) return HttpResponse.json({ error: 'boom', code: 'INTERNAL' }, { status: 500 })
+        for (const t of rows) if (body.ids.includes(t.id)) t.reviewed_at = body.reviewed ? '2026-07-02T00:00:00Z' : null
+        return HttpResponse.json({ data: { updated: body.ids.length } })
+      }),
+      http.post(`${API}/transactions/bulk-edit`, async ({ request }) => {
+        const body = (await request.json()) as { ids: number[]; hidden?: boolean }
+        for (const t of rows) if (body.ids.includes(t.id)) t.hidden_at = '2026-07-02T00:00:00Z'
+        return HttpResponse.json({ data: { updated: body.ids.length, skipped_split: 0, undo: [] } })
+      }),
+    )
+    return { rows, listCalls, setFailReview: (v: boolean) => { failReview = v } }
+  }
+
+  async function openPage2() {
+    renderPage(<TransactionsPage />, '/transactions?review=1')
+    await screen.findByText('51 to review')
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Pagination' })).getByRole('button', { name: 'Next' }))
+    await screen.findByText('PAGED 51')
+    await waitFor(() => expect(screen.queryByText('PAGED 1')).not.toBeInTheDocument())
+  }
+
+  it('reviewing the sole row on page 2 shows the remaining 50, not inbox zero', async () => {
+    installPagedInbox(51)
+    await openPage2()
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Mark PAGED 51 reviewed' })[0])
+
+    expect(await screen.findByText('PAGED 1')).toBeInTheDocument()
+    expect(screen.getByText('50 to review')).toBeInTheDocument()
+    expect(screen.queryByText(/you.re all caught up/i)).not.toBeInTheDocument()
+    // 50 fit on one page now: #702's no-pager presentation at a valid page.
+    expect(screen.queryByRole('navigation', { name: 'Pagination' })).not.toBeInTheDocument()
+
+    // Undo brings the row back into the inbox.
+    fireEvent.click(screen.getByRole('button', { name: /undo/i }))
+    expect(await screen.findByText('51 to review')).toBeInTheDocument()
+  })
+
+  it('keeps the search filter when stepping back a page', async () => {
+    const { listCalls } = installPagedInbox(51)
+    renderPage(<TransactionsPage />, '/transactions?review=1')
+    await screen.findByText('51 to review')
+    fireEvent.change(screen.getByPlaceholderText(/description or merchant/i), { target: { value: 'PAGED' } })
+    await waitFor(() => expect(listCalls.some((q) => q.get('search') === 'PAGED')).toBe(true))
+    await screen.findByText('51 to review')
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Pagination' })).getByRole('button', { name: 'Next' }))
+    await screen.findByText('PAGED 51')
+    fireEvent.click(screen.getAllByRole('button', { name: 'Mark PAGED 51 reviewed' })[0])
+
+    expect(await screen.findByText('PAGED 1')).toBeInTheDocument()
+    const last = listCalls[listCalls.length - 1]
+    expect(last.get('search')).toBe('PAGED')
+    expect(last.get('reviewed')).toBe('false')
+    expect(last.get('offset')).toBe('0')
+  })
+
+  it('a failed review keeps the row on page 2 with Prev available', async () => {
+    const { setFailReview } = installPagedInbox(51)
+    await openPage2()
+    setFailReview(true)
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Mark PAGED 51 reviewed' })[0])
+
+    expect(await screen.findByText('boom')).toBeInTheDocument()
+    expect(screen.getByText('PAGED 51')).toBeInTheDocument()
+    expect(screen.getByText('51 to review')).toBeInTheDocument()
+    expect(within(screen.getByRole('navigation', { name: 'Pagination' })).getByRole('button', { name: 'Prev' })).toBeEnabled()
+  })
+
+  it('a bulk edit that empties page 2 steps back to a real page', async () => {
+    installPagedInbox(51)
+    await openPage2()
+
+    fireEvent.click(screen.getByLabelText(/select all transactions on this page/i))
+    fireEvent.click(screen.getByRole('button', { name: /^hide$/i }))
+
+    expect(await screen.findByText('PAGED 1')).toBeInTheDocument()
+    expect(screen.getByText('50 to review')).toBeInTheDocument()
+    expect(screen.queryByText(/you.re all caught up/i)).not.toBeInTheDocument()
+  })
+})
