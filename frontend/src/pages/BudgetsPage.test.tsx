@@ -64,6 +64,29 @@ describe('BudgetsPage smoke', () => {
     expect(screen.queryByText(/-10\.00/)).toBeNull()
   })
 
+  it('reads the percentage as the share used, so it agrees with the overspend (#706)', async () => {
+    server.use(
+      http.get('*/budgets/:id/spend', () =>
+        HttpResponse.json({ data: { ...fx.budgetSpend1, spent: '60.00', available: '50.00', remaining: '-10.00', pct: 1.2 } }),
+      ),
+    )
+    renderPage(<BudgetsPage />)
+    expect(await screen.findByText('120% used')).toBeTruthy()
+    expect(screen.queryByText(/120% over/)).toBeNull()
+    expect(screen.getByText(/over budget/i)).toBeTruthy()
+  })
+
+  it('says "100% used", not "100% over", at exactly the limit (#706)', async () => {
+    server.use(
+      http.get('*/budgets/:id/spend', () =>
+        HttpResponse.json({ data: { ...fx.budgetSpend1, spent: '500.00', remaining: '0.00', pct: 1 } }),
+      ),
+    )
+    renderPage(<BudgetsPage />)
+    expect(await screen.findByText('100% used')).toBeTruthy()
+    expect(screen.queryByText(/% over/)).toBeNull()
+  })
+
   it('shows the rolled-over balance on a shared (household) budget', async () => {
     setHouseholdScope(10)
     server.use(
