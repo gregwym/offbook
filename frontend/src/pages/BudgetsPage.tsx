@@ -409,8 +409,10 @@ function BudgetCard({ row, category, includes, canMutate, drillHref, onEdit, onD
       </div>
       <div className="mt-1 flex justify-between text-xs">
         <span className={over ? 'text-red-700' : warning ? 'text-amber-700' : 'text-gray-500'}>
-          {row.pct != null ? `${Math.round(row.pct * 100)}%` : '—'}
-          {over ? ' over' : ''}
+          {/* The share of the budget used, never "N% over": 60 of 50 is 120%
+              used and 20% over, and the right-hand caption already names the
+              overspend (#706). */}
+          {row.pct != null ? `${Math.round(row.pct * 100)}% used` : '—'}
         </span>
         <span className="text-gray-500">
           {row.remaining == null
