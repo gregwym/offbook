@@ -182,22 +182,57 @@ func (s *ReconciliationService) Acknowledge(ctx context.Context, userID, transac
 // threshold — the bulk form AccountService uses to flag the Accounts/Insights
 // list without a per-account round trip.
 func (s *ReconciliationService) AccountsNeedingAttention(ctx context.Context, userID int64) (map[int64]bool, error) {
+	summaries, err := s.AttentionSummaries(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	flagged := make(map[int64]bool, len(summaries))
+	for id := range summaries {
+		flagged[id] = true
+	}
+	return flagged, nil
+}
+
+// AttentionSummary says why an account needs attention (#697): how many
+// unacknowledged adjustments exceed the threshold and, when exactly one does,
+// that adjustment's delta and the asset it is denominated in — so the
+// Accounts list can name the amount instead of only "needs attention".
+type AttentionSummary struct {
+	Count int
+	// Delta/AssetID describe the single flagged adjustment; zero when
+	// Count > 1 (no one amount explains several adjustments).
+	Delta   decimal.Decimal
+	AssetID int64
+}
+
+// AttentionSummaries returns, per flagged account (for userID), the
+// AttentionSummary of its unacknowledged above-threshold adjustments.
+// Accounts with nothing flagged are absent from the map.
+func (s *ReconciliationService) AttentionSummaries(ctx context.Context, userID int64) (map[int64]AttentionSummary, error) {
 	adjustments, err := s.txRepo.ListUnacknowledgedAdjustments(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list unacknowledged adjustments: %w", err)
 	}
-	flagged := make(map[int64]bool)
+	out := make(map[int64]AttentionSummary)
 	for i := range adjustments {
 		t := &adjustments[i]
 		priorFold, err := s.txRepo.FoldQuantityBefore(ctx, t.UserID, t.AccountID, t.AssetID, t.TransactionDate, t.ID)
 		if err != nil {
 			return nil, fmt.Errorf("fold before adjustment %d: %w", t.ID, err)
 		}
-		if exceedsReconciliationThreshold(t.Amount, priorFold, s.flagPctThreshold) {
-			flagged[t.AccountID] = true
+		if !exceedsReconciliationThreshold(t.Amount, priorFold, s.flagPctThreshold) {
+			continue
 		}
+		sum := out[t.AccountID]
+		sum.Count++
+		if sum.Count == 1 {
+			sum.Delta, sum.AssetID = t.Amount, t.AssetID
+		} else {
+			sum.Delta, sum.AssetID = decimal.Zero, 0
+		}
+		out[t.AccountID] = sum
 	}
-	return flagged, nil
+	return out, nil
 }
 
 // exceedsReconciliationThreshold reports whether an adjustment delta is

@@ -72,7 +72,15 @@ test.describe('update manual account balance', () => {
     await expect(dialog.getByRole('status')).toContainText('recorded as an adjustment')
     await dialog.getByRole('button', { name: 'Done' }).click()
     await expect(row).toContainText('2,350.00')
-    await expect(row.getByRole('link', { name: /needs attention/ })).toBeVisible()
+    // #697: the reason is visible text naming the amount, the link's name
+    // carries the reason and destination, and phones get a ≥40px target.
+    const attention = row.getByRole('link', { name: /needs attention.*Unexplained adjustment of 150\.00 USD.*review in Reconciliation/ })
+    await expect(attention).toBeVisible()
+    expect(await attention.getAttribute('title')).toBeNull()
+    const box = await attention.boundingBox()
+    expect(box!.height).toBeGreaterThanOrEqual(page.viewportSize()!.width < 768 ? 40 : 16)
+    await expectInViewport(page, attention)
+    await testInfo.attach('accounts-needs-attention', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
 
     // Adjustments and opening balances are not spending.
     const summary = await get(cookie, '/dashboard/summary')
@@ -80,7 +88,7 @@ test.describe('update manual account balance', () => {
     expect(Number(summary.data.income)).toBe(1200)
 
     // The reconciliation view explains both and lets the user acknowledge.
-    await row.getByRole('link', { name: /needs attention/ }).click()
+    await attention.click()
     await expect(page).toHaveURL(new RegExp(`/accounts/${accountID}/reconciliation$`))
     await expect(page.getByRole('heading', { name: 'Reconciliation: Balance Checking' })).toBeVisible()
     // #512: plain language, no raw enum names, on every width.

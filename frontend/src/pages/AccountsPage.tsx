@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, LineChart, Pencil, Plus, Trash2, Upload, X } from 'lucide-react'
+import { CheckCircle2, LineChart, Pencil, Plus, Trash2, Upload, X } from 'lucide-react'
 import { accountTransactionsHref, canUpdateBalance, isBrokerage } from '../lib/accountActions'
 import { listItems } from '../api/plaid'
 import { AccountVisibilityChip } from '../components/AccountVisibilityChip'
 import { AmountDisplay } from '../components/AmountDisplay'
 import { AccountBalance } from '../components/AccountBalance'
+import { AttentionLink } from '../components/AttentionLink'
 import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
 import { PartialBadge } from '../components/PartialBadge'
 import { PIIPanel } from '../components/PIIPanel'
@@ -249,13 +250,12 @@ export function AccountsPage() {
                     </span>
                   )}
                   {a.needs_attention && (
-                    <Link
-                      to={`/accounts/${a.id}/reconciliation`}
-                      title="An adjustment on this account needs review — see the reconciliation view."
-                      className="ml-1.5 inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1 py-px align-middle text-[10px] font-medium leading-4 text-amber-700 hover:bg-amber-100"
-                    >
-                      <AlertTriangle size={10} /> needs attention
-                    </Link>
+                    <AttentionLink
+                      accountID={a.id}
+                      currency={a.currency}
+                      count={a.attention_count}
+                      amount={a.attention_amount}
+                    />
                   )}
                   {/* Narrow screens drop every column but Name and Balance
                       (#511); stack the details, sync state and labelled

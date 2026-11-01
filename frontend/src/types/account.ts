@@ -60,6 +60,12 @@ export type Account = {
   // the ledger fold immediately before it (#370). Review it on the
   // account's /accounts/:id/reconciliation view.
   needs_attention: boolean
+  // #697: why. attention_count is how many unacknowledged adjustments are
+  // flagged; attention_amount is the single flagged adjustment's magnitude
+  // in the account's currency (decimal string) — null when several are
+  // flagged or the adjustment is in a holding's units.
+  attention_count?: number
+  attention_amount?: string | null
 }
 
 // SyncStatus mirrors the CHECK constraint in migration 000027 on
