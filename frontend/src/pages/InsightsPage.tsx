@@ -1011,6 +1011,8 @@ function CategoryTrendList({
 }) {
   const top = items.slice(0, 5)
   const averaged = top.reduce((acc, c) => Math.max(acc, c.trailing_months ?? 0), 0)
+  // The month in progress is month-to-date (#695); every row shares it.
+  const partial = top.find((c) => c.partial_month && c.elapsed_days && c.days_in_month)
   return (
     <div>
       <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">
@@ -1028,7 +1030,12 @@ function CategoryTrendList({
             {top.map((c) => {
               const thisMonth = num(c.this_month)
               const avg = num(c.trailing_average)
-              const delta = avg > 0 ? ((thisMonth - avg) / avg) * 100 : null
+              // Month in progress (#695): compare month-to-date with the
+              // average pro-rated to today, not with a full month.
+              const base = c.partial_month && c.expected_by_now != null ? num(c.expected_by_now) : avg
+              const nothingYet = c.partial_month === true && thisMonth === 0 && avg > 0
+              const delta = base > 0 && !nothingYet ? ((thisMonth - base) / base) * 100 : null
+              const onPace = delta != null && Math.abs(delta) < 1
               const isNew = avg === 0 && thisMonth > 0
               return (
                 <li
@@ -1038,9 +1045,15 @@ function CategoryTrendList({
                   <span className="truncate text-gray-700">{c.name}</span>
                   <span className="shrink-0 text-right text-gray-500">
                     <AmountDisplay amount={c.this_month} />
-                    {delta != null && (
+                    {delta != null && !onPace && (
                       <span className={delta > 0 ? 'ml-1 text-red-600' : 'ml-1 text-emerald-600'}>
                         {delta > 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(0)}%
+                      </span>
+                    )}
+                    {onPace && <span className="ml-1 text-gray-400">on pace</span>}
+                    {nothingYet && (
+                      <span className="ml-1 text-gray-400" title="No spending here yet this month">
+                        nothing yet
                       </span>
                     )}
                     {isNew && (
@@ -1053,7 +1066,11 @@ function CategoryTrendList({
               )
             })}
           </ul>
-          <p className="mt-2 text-xs text-gray-400">Compared with the average of the previous {monthCount(averaged)}.</p>
+          <p className="mt-2 text-xs text-gray-400">
+            {partial
+              ? <>So far vs. typical by this date: the average of the previous {monthCount(averaged)}, scaled to {partial.elapsed_days} of {partial.days_in_month} days.</>
+              : <>Compared with the average of the previous {monthCount(averaged)}.</>}
+          </p>
         </>
       )}
     </div>

@@ -853,6 +853,13 @@ func TestDashboard_CategoryTrend_ThisMonthVsTrailingAverage(t *testing.T) {
 	if item.TrailingAverage != "100" {
 		t.Errorf("TrailingAverage = %s, want 100 (avg of Mar+Apr)", item.TrailingAverage)
 	}
+	// May 15 of 31 days: May is month-to-date, compared with 100 × 15/31 (#695).
+	if !item.PartialMonth || item.ElapsedDays != 15 || item.DaysInMonth != 31 {
+		t.Errorf("partial = %v %d/%d, want true 15/31", item.PartialMonth, item.ElapsedDays, item.DaysInMonth)
+	}
+	if want := decimal.NewFromInt(1500).Div(decimal.NewFromInt(31)).String(); item.ExpectedByNow != want {
+		t.Errorf("ExpectedByNow = %s, want %s", item.ExpectedByNow, want)
+	}
 }
 
 // TestDashboard_CategoryTrendThrough_AnchorsWindow: the month-end review
@@ -924,6 +931,10 @@ func TestDashboard_CategoryTrendThrough_AnchorsWindow(t *testing.T) {
 			}
 			if item.TrailingAverage != "30" {
 				t.Errorf("TrailingAverage = %s, want 30 (avg of Nov 40.10 + Dec 19.90)", item.TrailingAverage)
+			}
+			// A stepped-back month is complete: full-month comparison (#695).
+			if item.PartialMonth || item.ExpectedByNow != "30" {
+				t.Errorf("partial = %v, ExpectedByNow = %s; want false, 30", item.PartialMonth, item.ExpectedByNow)
 			}
 		})
 	}
@@ -1304,4 +1315,50 @@ func TestDashboard_CategoryTrend_AveragesOnlyBookHistory(t *testing.T) {
 			t.Errorf("items = %+v, want trailing 30 over 1 month (February)", items)
 		}
 	})
+}
+
+// TestDashboard_CategoryTrend_PartialMonthProrated (#695): on the 3rd of a
+// 30-day month, month-to-date 30 against a 300 average is on pace, not a
+// 90% drop: the average is pro-rated to 300 × 3/30 = 30, exactly.
+func TestDashboard_CategoryTrend_PartialMonthProrated(t *testing.T) {
+	svc, userID, accountID, g := newDashboardSvc(t)
+	svc.SetClock(func() time.Time { return time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC) })
+	ctx := context.Background()
+
+	suffix := time.Now().Format("150405.000000")
+	cat := &model.Category{Name: "TrendPartial-" + suffix, Slug: "trend-p-" + suffix}
+	if err := g.Create(cat).Error; err != nil {
+		t.Fatalf("seed cat: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, cat.ID) })
+	seedChartTxn(t, g, userID, accountID, &cat.ID, time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-300), false)
+	seedChartTxn(t, g, userID, accountID, &cat.ID, time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-300), false)
+	seedChartTxn(t, g, userID, accountID, &cat.ID, time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC), decimal.NewFromInt(-30), false)
+
+	items, err := svc.CategoryTrend(ctx, userID, 3)
+	if err != nil {
+		t.Fatalf("CategoryTrend: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d categories, want 1", len(items))
+	}
+	it := items[0]
+	if it.ThisMonth != "30" || it.TrailingAverage != "300" {
+		t.Fatalf("this/avg = %s/%s, want 30/300", it.ThisMonth, it.TrailingAverage)
+	}
+	if !it.PartialMonth || it.ElapsedDays != 3 || it.DaysInMonth != 30 {
+		t.Errorf("partial = %v %d/%d, want true 3/30", it.PartialMonth, it.ElapsedDays, it.DaysInMonth)
+	}
+	if it.ExpectedByNow != "30" {
+		t.Errorf("ExpectedByNow = %s, want 30 (300 × 3/30): month-to-date is on pace", it.ExpectedByNow)
+	}
+
+	// Stepping back to October (complete) keeps the full-month comparison.
+	oct, err := svc.CategoryTrendThrough(ctx, userID, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), 3)
+	if err != nil {
+		t.Fatalf("CategoryTrendThrough: %v", err)
+	}
+	if len(oct) != 1 || oct[0].PartialMonth || oct[0].ExpectedByNow != oct[0].TrailingAverage {
+		t.Errorf("October = %+v, want complete month with ExpectedByNow = TrailingAverage", oct)
+	}
 }

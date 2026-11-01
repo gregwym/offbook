@@ -480,6 +480,15 @@ type CategoryTrendItem struct {
 	// the window's earlier months on or after the book's first flow row.
 	// 0 means there is no earlier month to compare with.
 	TrailingMonths int `json:"trailing_months"`
+	// PartialMonth is true when ThisMonth is the month still in progress
+	// (#695): ThisMonth is month-to-date, so it is compared with
+	// ExpectedByNow, the trailing average pro-rated to ElapsedDays of
+	// DaysInMonth, not with the full-month average. For a completed month
+	// ExpectedByNow equals TrailingAverage.
+	PartialMonth  bool   `json:"partial_month"`
+	ExpectedByNow string `json:"expected_by_now"`
+	ElapsedDays   int    `json:"elapsed_days,omitempty"`
+	DaysInMonth   int    `json:"days_in_month,omitempty"`
 }
 
 // CategoryTrend returns the month-over-month spending trend per category
@@ -544,6 +553,9 @@ func (s *DashboardService) CategoryTrendThrough(ctx context.Context, userID int6
 		byCat[k][r.Month.UTC()] = r.Amount
 	}
 
+	// The month in progress is month-to-date; its comparison is pro-rated
+	// to the days elapsed so early in a month nothing reads as a drop (#695).
+	partial, elapsed, daysInMonth := MonthProgress(through, s.now())
 	items := make([]CategoryTrendItem, 0, len(order))
 	for _, k := range order {
 		monthAmts := byCat[k]
@@ -581,6 +593,10 @@ func (s *DashboardService) CategoryTrendThrough(ctx context.Context, userID int6
 			ThisMonth:       thisMonth.String(),
 			TrailingAverage: trailingAvg.String(),
 			TrailingMonths:  trailingCount,
+			PartialMonth:    partial,
+			ExpectedByNow:   ProrateToDate(trailingAvg, elapsed, daysInMonth).String(),
+			ElapsedDays:     elapsed,
+			DaysInMonth:     daysInMonth,
 		})
 	}
 	sort.SliceStable(items, func(i, j int) bool {

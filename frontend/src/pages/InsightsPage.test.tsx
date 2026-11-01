@@ -992,3 +992,34 @@ describe('InsightsPage month vs. average (#692)', () => {
   })
 })
 
+
+describe('InsightsPage month in progress vs. typical (#695)', () => {
+  const trend = (rows: Array<Record<string, unknown>>) =>
+    server.use(
+      http.get('*/dashboard/category-trend', () =>
+        HttpResponse.json({ data: rows.map((r) => ({ months: [], ...r })), total: rows.length }),
+      ),
+    )
+  const listOf = async () =>
+    (await screen.findByText(`${monthLabel(currentMonth())} vs. average`)).parentElement as HTMLElement
+  const partial = { trailing_months: 3, partial_month: true, elapsed_days: 3, days_in_month: 30 }
+
+  it('compares month-to-date with the pro-rated average, not the full month', async () => {
+    trend([
+      { category_id: 3, name: 'Groceries', this_month: '30', trailing_average: '300', expected_by_now: '30', ...partial },
+      { category_id: 4, name: 'Dining', this_month: '45', trailing_average: '300', expected_by_now: '30', ...partial },
+      { category_id: 5, name: 'Fuel', this_month: '15', trailing_average: '300', expected_by_now: '30', ...partial },
+      { category_id: 6, name: 'Uncategorized', this_month: '0', trailing_average: '50', expected_by_now: '5', ...partial },
+    ])
+    renderPage(<InsightsPage />)
+    const list = await listOf()
+    await waitFor(() => expect(list).toHaveTextContent('Groceries30.00 USDon pace'))
+    expect(list).not.toHaveTextContent('90%')
+    expect(list).toHaveTextContent('Dining45.00 USD▲ 50%')
+    expect(list).toHaveTextContent('Fuel15.00 USD▼ 50%')
+    // Nothing spent yet this month: neutral, never a green ▼ 100%.
+    expect(list).toHaveTextContent('Uncategorized0.00 USDnothing yet')
+    expect(list).not.toHaveTextContent('100%')
+    expect(list).toHaveTextContent('So far vs. typical by this date: the average of the previous 3 months, scaled to 3 of 30 days.')
+  })
+})

@@ -121,6 +121,13 @@ export type InsightsCategoryTrendRow = {
   trailing_average: string
   // Months trailing_average averages (#692); 0 = nothing earlier.
   trailing_months: number
+  // #695: partial_month = this_month is month-to-date (the month in
+  // progress); it is compared with expected_by_now, the trailing average
+  // pro-rated server-side to elapsed_days of days_in_month.
+  partial_month?: boolean
+  expected_by_now?: string
+  elapsed_days?: number
+  days_in_month?: number
 }
 
 // InsightsMerchantRow is one row of the top-merchants view (#367).

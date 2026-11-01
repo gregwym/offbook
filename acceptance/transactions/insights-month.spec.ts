@@ -82,12 +82,24 @@ test.describe('insights spending month', () => {
     await expect(chart.getByRole('list', { name: 'Legend' })).toContainText('Spending')
     await expect(band).not.toContainText(/\d{4}-\d{2}/)
     await expect(selectedNet).toContainText('-40.00 USD')
-    // 40 this month vs. last month's 130. The book starts last month, so the
-    // average is that one month (#692), not 130 spread over 5 months (26),
-    // which used to read as a ▲ 54% spike.
+    // 40 so far this month vs. last month's 130. The book starts last month,
+    // so the average is that one month (#692), not 130 spread over 5 months.
+    // This month is in progress, so the 130 is pro-rated to today (#695):
+    // 130 × day/days-in-month, not the full month (which read as ▼ 69% on
+    // the 1st whatever the pace).
+    const today = now.getUTCDate()
+    const monthDays = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate()
+    const typical = (130 * today) / monthDays
+    const pct = ((40 - typical) / typical) * 100
     await expect(trendRow(0, groceries.name)).toContainText('40.00')
-    await expect(trendRow(0, groceries.name)).toContainText('▼ 69%')
-    await expect(trend(0)).toContainText('Compared with the average of the previous month.')
+    await expect(trendRow(0, groceries.name)).toContainText(
+      Math.abs(pct) < 1 ? 'on pace' : `${pct > 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(0)}%`)
+    await expect(trend(0)).toContainText(
+      `So far vs. typical by this date: the average of the previous month, scaled to ${today} of ${monthDays} days.`)
+    await band.scrollIntoViewIfNeeded()
+    await testInfo.attach(`${testInfo.project.name}-insights-this-month-so-far`, {
+      body: await page.screenshot({ fullPage: true }), contentType: 'image/png',
+    })
 
     await stepper.getByRole('button', { name: 'Previous month' }).click()
     await expect(band.getByRole('heading', { name: `Spending by category · ${label(-1)}` })).toBeVisible()
