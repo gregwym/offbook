@@ -18,14 +18,15 @@ export function AttentionLink({ accountID, currency, count, amount }: Props) {
   return (
     <Link
       to={`/accounts/${accountID}/reconciliation`}
-      className="mt-1 flex min-h-10 w-fit items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-normal text-amber-800 hover:bg-amber-100 md:min-h-0 md:py-0.5"
+      className="mt-1 flex min-h-10 w-fit max-w-full items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-normal text-amber-800 hover:bg-amber-100 md:min-h-0 md:py-0.5"
     >
       <AlertTriangle size={14} aria-hidden="true" className="shrink-0" />
       <span>
         <span className="font-semibold">needs attention</span>
         <span aria-hidden="true"> · </span>
         <AttentionReason currency={currency} count={count} amount={amount} />
-        <span className="whitespace-nowrap underline underline-offset-2"> — review in Reconciliation</span>
+        {' — '}
+        <span className="underline underline-offset-2">review in Reconciliation</span>
       </span>
     </Link>
   )

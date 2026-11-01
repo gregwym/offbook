@@ -80,6 +80,10 @@ test.describe('update manual account balance', () => {
     const box = await attention.boundingBox()
     expect(box!.height).toBeGreaterThanOrEqual(page.viewportSize()!.width < 768 ? 40 : 16)
     await expectInViewport(page, attention)
+    // The reason must not widen the name column and push the balance or its
+    // action off a phone screen (#511).
+    await expectInViewport(page, row.getByText('2,350.00 USD', { exact: true }))
+    await expectInViewport(page, row.getByRole('button', { name: 'Update balance for Balance Checking' }))
     await testInfo.attach('accounts-needs-attention', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
 
     // Adjustments and opening balances are not spending.
