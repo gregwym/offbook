@@ -32,7 +32,7 @@ func TestAggregator_HiddenTransaction_ExcludedFromSpending(t *testing.T) {
 	amt, _ := decimal.NewFromString("-40")
 	tx := &model.Transaction{
 		UserID: ownerID, AccountID: acct.ID, Amount: amt, CategoryID: &cat.ID,
-		Source: "manual", TransactionDate: time.Now().Add(-time.Hour),
+		Source: "manual", TransactionDate: seedWhen(),
 	}
 	if err := g.Create(tx).Error; err != nil {
 		t.Fatalf("seed tx: %v", err)

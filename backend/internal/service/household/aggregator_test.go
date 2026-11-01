@@ -102,6 +102,23 @@ func setShare(t *testing.T, g *gorm.DB, accountID, hhID int64, vis string) {
 	t.Cleanup(func() { g.Unscoped().Delete(&model.AccountShare{}, s.ID) })
 }
 
+// recentInCurrentMonth returns an instant one hour before now, clamped to the
+// first instant of now's calendar month. Tests that seed a "just happened"
+// transaction and then assert on PeriodCurrentMonth must use this instead of
+// time.Now().Add(-time.Hour): between 00:00 and 01:00 on the 1st, now−1h is
+// last month and every current-month assertion would see 0 (#693).
+func recentInCurrentMonth(now time.Time) time.Time {
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	if w := now.Add(-time.Hour); !w.Before(monthStart) {
+		return w
+	}
+	return monthStart
+}
+
+// seedWhen is recentInCurrentMonth on the real clock — the default timestamp
+// for a transaction a current-month aggregate must see.
+func seedWhen() time.Time { return recentInCurrentMonth(time.Now()) }
+
 func seedTxn(t *testing.T, g *gorm.DB, userID, accountID int64, amount string, catID *int64, when time.Time) {
 	t.Helper()
 	amt, _ := decimal.NewFromString(amount)
@@ -184,7 +201,7 @@ func TestAggregator_ExcludesPrivateAccounts(t *testing.T) {
 	// the architectural definition of private.
 	setShare(t, g, shared.ID, hh.ID, model.VisibilityBalanceAndTxns)
 
-	when := time.Now().Add(-time.Hour)
+	when := seedWhen()
 	seedTxn(t, g, ownerID, shared.ID, "-25", nil, when)
 	seedTxn(t, g, ownerID, priv.ID, "-9999", nil, when) // must not surface anywhere
 
@@ -222,7 +239,7 @@ func TestAggregator_BalanceOnlyExcludedFromCategory(t *testing.T) {
 	setShare(t, g, balOnly.ID, hh.ID, model.VisibilityBalanceOnly)
 	setShare(t, g, full.ID, hh.ID, model.VisibilityBalanceAndTxns)
 
-	when := time.Now().Add(-time.Hour)
+	when := seedWhen()
 	// Transaction on the balance_only account must NOT appear in the breakdown.
 	seedTxn(t, g, ownerID, balOnly.ID, "-100", nil, when)
 	seedTxn(t, g, ownerID, full.ID, "-50", nil, when)
@@ -271,7 +288,7 @@ func TestAggregator_InGraceExcludedFromLive(t *testing.T) {
 	setShare(t, g, ownerAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
 	setShare(t, g, leaverAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
 
-	when := time.Now().Add(-time.Hour)
+	when := seedWhen()
 	seedTxn(t, g, leaverID, leaverAcct.ID, "-555", nil, when)
 	seedTxn(t, g, ownerID, ownerAcct.ID, "-10", nil, when)
 
@@ -337,7 +354,7 @@ func TestAggregator_InGraceExcludedFromBudgetPace(t *testing.T) {
 	}
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Budget{}, budget.ID) })
 
-	when := time.Now().Add(-time.Hour)
+	when := seedWhen()
 	seedTxn(t, g, ownerID, ownerAcct.ID, "-10", &cat.ID, when)
 	seedTxn(t, g, leaverID, leaverAcct.ID, "-555", &cat.ID, when) // must not count
 
@@ -773,7 +790,7 @@ func TestAggregator_PerMemberContributions(t *testing.T) {
 	setBalance(t, g, leaverChk, "9999")
 	setShare(t, g, leaverChk.ID, hh.ID, model.VisibilityBalanceAndTxns)
 
-	when := time.Now().Add(-time.Hour)
+	when := seedWhen()
 	seedTxn(t, g, ownerID, ownerChk.ID, "-40", nil, when)   // owner spend
 	seedTxn(t, g, ownerID, ownerSav.ID, "-1000", nil, when) // balance_only, must be ignored
 	seedTxn(t, g, contribID, contribChk.ID, "-15", nil, when)

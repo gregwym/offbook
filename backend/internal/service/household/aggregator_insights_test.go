@@ -774,7 +774,7 @@ func TestAggregator_TopMerchants_PrivacyAndGrouping(t *testing.T) {
 	setShare(t, g, full.ID, hh.ID, model.VisibilityBalanceAndTxns)
 	setShare(t, g, balOnly.ID, hh.ID, model.VisibilityBalanceOnly)
 
-	when := time.Now().Add(-time.Hour)
+	when := seedWhen()
 	seedMerchantTxnH(t, g, ownerID, full.ID, "COSTCO", when, "-50", false)
 	seedMerchantTxnH(t, g, ownerID, full.ID, "COSTCO", when, "-25", false)
 	seedMerchantTxnH(t, g, ownerID, balOnly.ID, "COSTCO", when, "-9999", false)
@@ -815,7 +815,7 @@ func TestAggregator_TopMerchants_NetsRefundsAndSkipsProposedTransfers(t *testing
 	}
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, cat.ID) })
 
-	when := time.Now().Add(-time.Hour)
+	when := seedWhen()
 	seed := func(accountID int64, merchant, amount string, catID *int64) {
 		t.Helper()
 		m := merchant
@@ -862,7 +862,7 @@ func TestAggregator_TopMerchants_InGraceExcluded(t *testing.T) {
 	setShare(t, g, ownerAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
 	setShare(t, g, leaverAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
 
-	when := time.Now().Add(-time.Hour)
+	when := seedWhen()
 	seedMerchantTxnH(t, g, ownerID, ownerAcct.ID, "OWNERSHOP", when, "-10", false)
 	seedMerchantTxnH(t, g, leaverID, leaverAcct.ID, "LEAVERSHOP", when, "-9999", false)
 
