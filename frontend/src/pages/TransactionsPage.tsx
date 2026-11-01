@@ -734,7 +734,7 @@ export function TransactionsPage() {
         </ul>
       )}
 
-      <div id="transaction-filters" className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-6">
+      <div id="transaction-filters" className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-4 xl:grid-cols-7">
         <Field label="Account" className={moreFilterClass}>
           <select className={inputClass} value={accountID} onChange={(e) => setAccountID(e.target.value)}>
             <option value="">All</option>
@@ -762,7 +762,8 @@ export function TransactionsPage() {
             {tagOptions.map((o) => <option key={o.name} value={o.name}>{o.name} ({o.count})</option>)}
           </select>
         </Field>
-        <Field label="Search">
+        {/* #702: two columns so the placeholder isn't clipped on desktop. */}
+        <Field label="Search" className="block md:col-span-2">
           <input className={inputClass} placeholder="description or merchant" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
         </Field>
       </div>
@@ -977,21 +978,24 @@ export function TransactionsPage() {
         </table>
       </div>
 
-      <div className="mt-3 flex items-center justify-end gap-2 text-sm">
-        <button
-          type="button"
-          onClick={() => setPage(page - 1)}
-          disabled={page === 0}
-          className="rounded border border-gray-300 px-2 py-1 disabled:opacity-50"
-        >Prev</button>
-        <span className="text-gray-600">Page {page + 1} / {totalPages}</span>
-        <button
-          type="button"
-          onClick={() => setPage(page + 1)}
-          disabled={page + 1 >= totalPages}
-          className="rounded border border-gray-300 px-2 py-1 disabled:opacity-50"
-        >Next</button>
-      </div>
+      {/* #702: no pager when everything fits on one page (or the list is empty). */}
+      {totalPages > 1 && (
+        <nav aria-label="Pagination" className="mt-3 flex items-center justify-end gap-2 text-sm">
+          <button
+            type="button"
+            onClick={() => setPage(page - 1)}
+            disabled={page === 0}
+            className="min-h-9 rounded border border-gray-300 px-3 py-1 disabled:opacity-50"
+          >Prev</button>
+          <span className="text-gray-600">Page {page + 1} / {totalPages}</span>
+          <button
+            type="button"
+            onClick={() => setPage(page + 1)}
+            disabled={page + 1 >= totalPages}
+            className="min-h-9 rounded border border-gray-300 px-3 py-1 disabled:opacity-50"
+          >Next</button>
+        </nav>
+      )}
 
       {adding && (
         <AddTransactionModal
