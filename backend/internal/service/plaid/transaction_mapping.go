@@ -6,6 +6,7 @@ import (
 
 	"github.com/gregwym/offbook/backend/internal/model"
 	"github.com/gregwym/offbook/backend/internal/service/categorization"
+	"gorm.io/gorm"
 )
 
 // MapPlaidTransaction reshapes a Plaid transaction into our row format.
@@ -142,4 +143,24 @@ func MergePlaidUpdate(existing model.Transaction, incoming PlaidTransaction, acc
 	//   existing.Notes, existing.IsTransfer, existing.TransferPairID,
 	//   existing.MerchantEditedAt remain on `merged`.
 	return merged, nil
+}
+
+// ReviveSoftDeleted prepares merged (built by MergePlaidUpdate from the
+// soft-deleted row existing) to be brought back live by sync (#696).
+//
+// Policy (docs/product/MONARCH-BEHAVIOR-MATRIX.md TX-03/TX-02): a row that
+// Plaid removed (or that has no deleted_by, i.e. predates #696) comes back
+// exactly as it was, keeping review state, so pending -> posted is seamless.
+// A row the *user* deleted also comes back, because the posted charge is real
+// money and dropping it would make the balance wrong, but it comes back
+// unreviewed and stamped with RestoredAfterUserDeleteAt, so it lands in Needs
+// review with a note that the bank sent it again after the delete.
+func ReviveSoftDeleted(existing model.Transaction, merged *model.Transaction, now time.Time) {
+	merged.DeletedAt = gorm.DeletedAt{}
+	merged.DeletedBy = nil
+	if existing.DeletedBy != nil && *existing.DeletedBy == model.DeletedByUser {
+		merged.ReviewedAt = nil
+		t := now.UTC()
+		merged.RestoredAfterUserDeleteAt = &t
+	}
 }

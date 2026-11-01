@@ -6,6 +6,7 @@ import { DateDisplay } from '../components/DateDisplay'
 import { ImportTransactionsModal } from '../components/ImportTransactionsModal'
 import { SplitTransactionModal } from '../components/SplitTransactionModal'
 import { TagEditorModal } from '../components/TagEditorModal'
+import { DeleteTransactionDialog } from '../components/DeleteTransactionDialog'
 import { EditDetailsModal } from '../components/EditDetailsModal'
 import { RuleFormModal, type RuleFormDefaults } from '../components/RuleFormModal'
 import { TransferMatchesModal } from '../components/TransferMatchesModal'
@@ -53,6 +54,8 @@ export function TransactionsPage() {
   // Tags (#544): the row being tagged, and the user's tags for the filter
   // and the editor's suggestions.
   const [tagging, setTagging] = useState<Transaction | null>(null)
+  // The row whose delete is being confirmed (#696).
+  const [deleting, setDeleting] = useState<Transaction | null>(null)
   const [editing, setEditing] = useState<Transaction | null>(null)
   const [tagOptions, setTagOptions] = useState<TagCount[]>([])
   // After a successful rule create from a txn, surface a toast with two
@@ -935,9 +938,8 @@ export function TransactionsPage() {
                     onCategoryChange={(legID, catID) => { void setCategory(legID, catID) }}
                     onCreateRule={openRuleFromTxn}
                     onDelete={async (legID) => {
-                      if (window.confirm('Delete this trade leg?')) {
-                        await remove(legID)
-                      }
+                      const leg = legID === t.id ? t : partner
+                      setDeleting(leg)
                     }}
                   />
                 )
@@ -962,11 +964,7 @@ export function TransactionsPage() {
                   onEditTags={() => setTagging(t)}
                   onEditDetails={() => setEditing(t)}
                   onTagClick={(name) => setTag(name)}
-                  onDelete={async () => {
-                    if (window.confirm('Delete this transaction?')) {
-                      await remove(t.id)
-                    }
-                  }}
+                  onDelete={async () => setDeleting(t)}
                   onUnlinkTransfer={async () => {
                     await unlinkTransfer(t.id)
                     refreshTransferCandidates()
@@ -1056,6 +1054,23 @@ export function TransactionsPage() {
           returnFocusTo={newCategory.from}
         />
       )}
+      {deleting && (
+        <DeleteTransactionDialog
+          tx={deleting}
+          canHide={deleting.kind === 'flow' && deleting.hidden_at == null &&
+            !excludedAsTransfer(deleting, deleting.category_id ? categoryByID.get(deleting.category_id) : undefined)}
+          onClose={() => setDeleting(null)}
+          onDelete={async () => {
+            await remove(deleting.id)
+            refreshTransferCandidates()
+            // Refresh the total and the Needs review count, not just the list.
+            void fetch()
+            void refreshReviewCount()
+          }}
+          onHide={async () => { await update(deleting.id, { hidden: true }) }}
+        />
+      )}
+
       {tagging && (
         <TagEditorModal
           tx={tagging}
@@ -1249,6 +1264,9 @@ function TransactionRow({ tx, account, showAccount = true, asset, categories, cu
   const hideable = onToggleHidden != null && tx.kind === 'flow' &&
     (tx.hidden_at != null || !excludedAsTransfer(tx, currentCategory))
   const hidden = hideable && tx.hidden_at != null
+  // A bank row the user deleted that sync brought back (#696): say why it's
+  // here until it's reviewed.
+  const restoredAfterDelete = tx.restored_after_user_delete_at != null && tx.reviewed_at == null
   const splittable = onSplit != null && tx.kind === 'flow' && !tx.is_transfer
   const stale = splitCount > 0 && tx.splits_need_attention === true
   // An unpaired Transfer-category row is excluded from spending/income/budgets
@@ -1386,6 +1404,11 @@ function TransactionRow({ tx, account, showAccount = true, asset, categories, cu
               >
                 not in spending
               </span>
+            )}
+            {restoredAfterDelete && (
+              <div className="mt-0.5 text-xs text-amber-800">
+                You deleted this, then your bank sent it again. Review it, or hide it to keep it out of spending.
+              </div>
             )}
             {tags.length > 0 && (
               <div className="mt-1 flex flex-wrap gap-1">

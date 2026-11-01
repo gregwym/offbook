@@ -160,6 +160,7 @@ func (s *Service) RetrySyncError(ctx context.Context, userID, errorID int64) err
 			if err != nil {
 				return fmt.Errorf("%w: %v", ErrSyncErrorReplay, err)
 			}
+			ReviveSoftDeleted(soft[0], &merged, time.Now())
 			if err := txRepo.ResurrectByPlaidTransactionID(ctx, userID, pt.PlaidTransactionID, merged); err != nil {
 				return fmt.Errorf("%w: %v", ErrSyncErrorReplay, err)
 			}

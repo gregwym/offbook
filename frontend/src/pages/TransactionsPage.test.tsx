@@ -994,3 +994,40 @@ describe('TransactionsPage review count after a delayed action (#688)', () => {
     expect(screen.getByText('1 to review')).toBeInTheDocument()
   })
 })
+
+// #696: deleting a bank-synced row opens the shared dialog (not a native
+// confirm) and a row the bank sent back after a delete says so.
+describe('TransactionsPage bank-synced delete (#696)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('confirms a synced delete in the dialog and sends the DELETE', async () => {
+    const row = { ...fx.transaction1, id: 61, description: 'SYNCED CAFE', merchant_name: null, description_clean: null, source: 'plaid' as const, plaid_transaction_id: 'ptx-61', tags: [] }
+    let deleted: string | undefined
+    server.use(
+      http.get(`${API}/transactions`, () => HttpResponse.json({ data: deleted ? [] : [row], total: deleted ? 0 : 1 })),
+      http.delete(`${API}/transactions/:id`, ({ params }) => {
+        deleted = String(params.id)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderPage(<TransactionsPage />)
+    await expectHealthySmoke()
+    fireEvent.click(screen.getAllByRole('button', { name: 'More actions for SYNCED CAFE' })[0])
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Delete SYNCED CAFE' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Delete this bank transaction?' })
+    expect(within(dialog).getByRole('button', { name: 'Hide instead' })).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(deleted).toBe('61'))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('explains a row the bank sent again after the user deleted it, until reviewed', async () => {
+    const row = { ...fx.transaction1, id: 62, description: 'BACK CAFE', source: 'plaid' as const, plaid_transaction_id: 'ptx-62', reviewed_at: null, restored_after_user_delete_at: '2026-10-11T00:00:00Z', tags: [] }
+    server.use(http.get(`${API}/transactions`, () => HttpResponse.json({ data: [row], total: 1 })))
+    renderPage(<TransactionsPage />)
+    await expectHealthySmoke()
+    expect(await screen.findByText(/You deleted this, then your bank sent it again/)).toBeInTheDocument()
+  })
+})

@@ -304,6 +304,9 @@ func TestService_SyncTransactions_PostedAdoptsPendingRemovedInEarlierSync(t *tes
 	if got.ReviewedAt == nil {
 		t.Error("reviewed_at lost across a split pending→posted drain")
 	}
+	if got.RestoredAfterUserDeleteAt != nil {
+		t.Error("restored_after_user_delete_at set on a row Plaid (not the user) removed (#696)")
+	}
 	if got.HiddenAt == nil {
 		t.Error("hidden_at lost across a split pending→posted drain")
 	}
