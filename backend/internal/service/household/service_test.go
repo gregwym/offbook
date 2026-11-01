@@ -60,6 +60,15 @@ func openTestDB(t *testing.T) *gorm.DB {
 	if err := db.Ping(ctx, g); err != nil {
 		t.Skipf("db.Ping: %v; skipping integration test", err)
 	}
+	// Close this test's pool when it ends. Registered first, so it runs
+	// after every seed cleanup that still uses g. Without it each test's
+	// idle connections stay open for the whole package run, and the package
+	// outgrew Postgres's default max_connections (100): "too many clients".
+	t.Cleanup(func() {
+		if sqlDB, err := g.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+	})
 	return g
 }
 
