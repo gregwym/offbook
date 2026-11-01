@@ -42,7 +42,7 @@ func TestAggregator_TradeLegs_HiddenFromBalanceOnly(t *testing.T) {
 	}
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Asset{}, aapl.ID) })
 
-	when := time.Now().Add(-time.Hour)
+	when := seedWhen()
 	secLeg := &model.Transaction{
 		UserID: ownerID, AccountID: acct.ID, AssetID: aapl.ID,
 		Amount: decimal.NewFromInt(10), TransactionDate: when, Source: "manual",
@@ -103,7 +103,7 @@ func TestAggregator_TradeLegs_VisibleWithFullVisibility(t *testing.T) {
 	}
 	t.Cleanup(func() { g.Unscoped().Delete(&model.Asset{}, aapl.ID) })
 
-	when := time.Now().Add(-time.Hour)
+	when := seedWhen()
 	secLeg := &model.Transaction{
 		UserID: ownerID, AccountID: acct.ID, AssetID: aapl.ID,
 		Amount: decimal.NewFromInt(10), TransactionDate: when, Source: "manual",

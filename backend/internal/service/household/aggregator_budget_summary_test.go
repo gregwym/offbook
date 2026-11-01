@@ -61,7 +61,7 @@ func TestAggregator_BudgetSummary_PrivacyAndTotals(t *testing.T) {
 		t.Cleanup(func() { g.Unscoped().Delete(&model.Budget{}, id) })
 	}
 
-	when := time.Now().Add(-time.Hour)
+	when := seedWhen()
 	seedTxn(t, g, ownerID, shared.ID, "-120.50", &groceries, when)
 	seedTxn(t, g, partnerID, partnerShared.ID, "-30.25", &groceries, when)
 	seedTxn(t, g, ownerID, shared.ID, "-75.10", &dining, when)

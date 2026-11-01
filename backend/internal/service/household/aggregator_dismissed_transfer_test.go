@@ -3,7 +3,6 @@ package household_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/shopspring/decimal"
 
@@ -34,7 +33,7 @@ func TestAggregator_DismissedTransferProposal_Counts(t *testing.T) {
 	if err := g.Order("id").First(&cat).Error; err != nil {
 		t.Fatalf("seeded category: %v", err)
 	}
-	when := time.Now().Add(-time.Hour)
+	when := seedWhen()
 	seed := func(acct *model.Account, amt string, catID *int64) *model.Transaction {
 		tx := &model.Transaction{
 			UserID: ownerID, AccountID: acct.ID, Amount: decimal.RequireFromString(amt),

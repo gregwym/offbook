@@ -63,7 +63,7 @@ func TestAggregator_SplitLines_PrivacyAndSingleCount(t *testing.T) {
 		t.Fatalf("need 2 seeded categories: %v (got %d)", err, len(cats))
 	}
 
-	when := time.Now().Add(-time.Hour)
+	when := seedWhen()
 	seedSplitTxn(t, g, ownerID, balOnly.ID, "-100", cats[0].ID, cats[1].ID, "-70", "-30", when)
 	seedSplitTxn(t, g, ownerID, full.ID, "-50", cats[0].ID, cats[1].ID, "-20", "-30", when)
 
