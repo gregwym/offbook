@@ -94,6 +94,13 @@ export type CategoryTrendItem = {
   // Months trailing_average averages: earlier months on or after the
   // book's first flow row (#692). 0 = nothing earlier to compare.
   trailing_months: number
+  // #695: partial_month = this_month is month-to-date (the month in
+  // progress); it is compared with expected_by_now, the trailing average
+  // pro-rated server-side to elapsed_days of days_in_month.
+  partial_month?: boolean
+  expected_by_now?: string
+  elapsed_days?: number
+  days_in_month?: number
 }
 
 // MerchantSpendItem mirrors backend service.MerchantSpendItem (#367).

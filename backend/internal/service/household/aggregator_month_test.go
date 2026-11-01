@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/gregwym/offbook/backend/internal/model"
 )
 
@@ -102,6 +104,9 @@ func TestAggregator_MonthAnchored_PrivacyAndFigures(t *testing.T) {
 		for _, it := range items {
 			if it.CategoryID != nil && *it.CategoryID == cat.ID {
 				got = &it.ThisMonth
+				if it.PartialMonth || it.ExpectedByNow != it.TrailingAverage {
+					t.Errorf("April partial = %v, expected %s; want a complete month (#695)", it.PartialMonth, it.ExpectedByNow)
+				}
 				if it.TrailingAverage != "0" {
 					t.Errorf("trailing average = %s, want 0 (nothing in March)", it.TrailingAverage)
 				}
@@ -109,6 +114,31 @@ func TestAggregator_MonthAnchored_PrivacyAndFigures(t *testing.T) {
 		}
 		if got == nil || *got != "120.25" {
 			t.Errorf("items = %+v, want %s this_month 120.25 (April, not May's 40)", items, cat.Name)
+		}
+	})
+
+	// #695: May is in progress on the 15th of 31 days, so the household
+	// trend pro-rates April's 120.25 the same way as the personal one.
+	// Shares and in-grace filtering are unchanged (9999 rows never count).
+	t.Run("category trend in the current month is pro-rated", func(t *testing.T) {
+		items, err := agg.CategoryTrend(ctx, hh.ID, 2) // Apr, May
+		if err != nil {
+			t.Fatalf("CategoryTrend: %v", err)
+		}
+		found := false
+		for _, it := range items {
+			if it.CategoryID == nil || *it.CategoryID != cat.ID {
+				continue
+			}
+			found = true
+			want := decimal.RequireFromString("120.25").Mul(decimal.NewFromInt(15)).Div(decimal.NewFromInt(31)).String()
+			if it.ThisMonth != "40" || it.TrailingAverage != "120.25" || !it.PartialMonth ||
+				it.ElapsedDays != 15 || it.DaysInMonth != 31 || it.ExpectedByNow != want {
+				t.Errorf("May = %+v, want this 40, avg 120.25, partial 15/31, expected %s", it, want)
+			}
+		}
+		if !found {
+			t.Fatalf("items = %+v, want %s", items, cat.Name)
 		}
 	})
 }
