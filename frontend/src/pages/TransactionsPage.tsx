@@ -1063,6 +1063,8 @@ export function TransactionsPage() {
           onDelete={async () => {
             await remove(deleting.id)
             refreshTransferCandidates()
+            // Refresh the total and the Needs review count, not just the list.
+            void fetch()
           }}
           onHide={async () => { await update(deleting.id, { hidden: true }) }}
         />

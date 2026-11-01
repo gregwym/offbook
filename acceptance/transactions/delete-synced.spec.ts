@@ -65,6 +65,7 @@ test.describe('delete a bank-synced transaction', () => {
     await dialog.getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(dialog).toBeHidden()
     await expect(rowOf('QADEL Streaming')).toHaveCount(0)
+    await expect(page.getByText('3 total', { exact: true })).toBeVisible()
 
     // Manual row: plain confirm, no sync warning, Cancel keeps it.
     await rowAction(page, 'QADEL Cash Gift', 'Delete QADEL Cash Gift')
