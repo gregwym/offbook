@@ -1065,6 +1065,7 @@ export function TransactionsPage() {
             refreshTransferCandidates()
             // Refresh the total and the Needs review count, not just the list.
             void fetch()
+            void refreshReviewCount()
           }}
           onHide={async () => { await update(deleting.id, { hidden: true }) }}
         />
