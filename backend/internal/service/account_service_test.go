@@ -312,6 +312,30 @@ func TestAccountService_Create_OpeningBalanceIsLedgerFact(t *testing.T) {
 		t.Errorf("opening_balance amount = %s, want 1000", tx.Amount)
 	}
 
+	// The typed starting balance is a reported balance (#704): a manual
+	// observation exists and the anchor is linked to it, so Reconciliation
+	// lists it as the first checkpoint.
+	var obs []model.AccountBalanceObservation
+	if err := g.Where("account_id = ?", acct.ID).Find(&obs).Error; err != nil {
+		t.Fatalf("list observations: %v", err)
+	}
+	if len(obs) != 1 || obs[0].Source != "manual" || !obs[0].ObservedQuantity.Equal(decimal.NewFromInt(1000)) {
+		t.Fatalf("observations = %+v, want one manual 1000", obs)
+	}
+	if tx.CausedByObservationID == nil || *tx.CausedByObservationID != obs[0].ID {
+		t.Errorf("opening_balance caused_by_observation_id = %v, want %d", tx.CausedByObservationID, obs[0].ID)
+	}
+	recon := service.NewReconciliationService(repository.NewTransactionRepository(g),
+		repository.NewBalanceObservationRepository(g), repository.NewAccountRepository(g), 5)
+	report, err := recon.Report(ctx, userID, acct.ID)
+	if err != nil {
+		t.Fatalf("reconciliation report: %v", err)
+	}
+	if len(report.Checkpoints) != 1 || report.Checkpoints[0].Kind != model.KindOpeningBalance ||
+		!report.Checkpoints[0].Delta.Equal(decimal.NewFromInt(1000)) || report.NeedsAttention {
+		t.Errorf("reconciliation = %+v, want one opening_balance checkpoint of 1000, no attention", report)
+	}
+
 	// Counts toward net worth (positions × price) but NOT income/spending.
 	// Net worth comes from the service since #344 (single valuation
 	// derivation; the repo no longer computes it).

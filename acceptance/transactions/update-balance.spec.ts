@@ -142,6 +142,56 @@ test.describe('update manual account balance', () => {
     await expect(row).toContainText('2,350.00')
   })
 
+  // #704: the starting balance typed when adding a manual account is a
+  // reported balance. Reconciliation lists it instead of "No balances recorded
+  // yet", Accounts says who reported it, and a later update is explained
+  // against it.
+  test('starting balance shows in Reconciliation', async ({ page }, testInfo) => {
+    process.env.OFFBOOK_ROLE = process.env.OFFBOOK_ROLE ?? 'qa'
+    const user = await createThrowawayUser({ suite: `balance-start-${testInfo.project.name}` })
+    await signIn(page, user.email, user.password)
+    await page.goto('/accounts/add')
+    await page.getByRole('button', { name: 'Add manually', exact: true }).click()
+    await page.getByLabel('Account name').fill('Start Checking')
+    await page.getByLabel('Institution').fill('Ally Bank')
+    await page.getByLabel('Current balance (optional)').fill('3200.00')
+    await page.getByLabel('Current balance (optional)').press('Enter')
+    await expect(page).toHaveURL(/\/accounts$/)
+
+    const row = page.getByRole('row').filter({ hasText: 'Start Checking' })
+    await expect(row).toContainText('3,200.00')
+    await expect(row).toContainText(/Reported (just now|\dm ago) by you/)
+    await expect(row.getByText('needs attention')).toHaveCount(0)
+
+    // The starting balance is the first checkpoint, recorded as the opening balance.
+    const cookie = await apiSignin(user.email, user.password)
+    const accounts = (await get(cookie, '/accounts')).data as { id: number; name: string }[]
+    const accountID = accounts.find((a) => a.name === 'Start Checking')!.id
+    await page.goto(`/accounts/${accountID}/reconciliation`)
+    await expect(page.getByRole('heading', { name: 'Reconciliation: Start Checking' })).toBeVisible()
+    await expect(page.getByText(/No balances recorded yet/)).toHaveCount(0)
+    const mobile = page.viewportSize()!.width < 768
+    const opening = mobile
+      ? page.getByRole('list', { name: 'Recorded balances' }).getByRole('listitem').filter({ hasText: 'Opening balance' })
+      : page.getByRole('table').getByRole('row').filter({ hasText: 'Opening balance' })
+    await expect(opening).toContainText('3,200.00')
+    await expect(opening).toContainText(mobile ? 'You reported' : 'You')
+    await expectNoOverflow(page)
+    await testInfo.attach('reconciliation-starting-balance', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
+
+    // A later update is an adjustment against the starting balance, not a
+    // second opening balance.
+    await page.goto('/accounts')
+    await row.getByRole('button', { name: 'Update balance for Start Checking' }).click()
+    const dialog = page.getByRole('dialog', { name: /Update balance/ })
+    await dialog.getByLabel('Balance (USD)').fill('3150.00')
+    await dialog.getByRole('button', { name: 'Save balance' }).click()
+    await expect(dialog.getByRole('status')).toContainText(/Offbook took off 50\.00 USD so your transactions add up to it/)
+    await expect(dialog.getByRole('status')).toContainText('recorded as an adjustment')
+    await dialog.getByRole('button', { name: 'Done' }).click()
+    await expect(row).toContainText('3,150.00')
+  })
+
   // #669: a balance for a past day is checked against the transactions up to
   // that day; later spending still counts and today's balance is not reset.
   test('past-dated balance keeps later transactions', async ({ page }, testInfo) => {
