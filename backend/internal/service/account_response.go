@@ -62,6 +62,15 @@ type AccountResponse struct {
 	// BalanceComplete's "no wiring means don't claim a signal we can't back"
 	// contract inverted for a boolean flag: default to "nothing to flag".
 	NeedsAttention bool `json:"needs_attention"`
+
+	// AttentionCount is how many unacknowledged above-threshold adjustments
+	// raised NeedsAttention (0 when it is false) — #697.
+	AttentionCount int `json:"attention_count"`
+	// AttentionAmount is the magnitude of the single flagged adjustment, in
+	// the account's currency, so the Accounts list can say "Unexplained
+	// adjustment of 20.00 USD". Nil when nothing is flagged, when several
+	// adjustments are, or when the adjustment is in a holding's units.
+	AttentionAmount *decimal.Decimal `json:"attention_amount"`
 }
 
 // UnpricedAsset identifies a holding whose price chain was stale or missing

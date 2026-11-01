@@ -224,3 +224,77 @@ func TestReconciliationService_AccountsNeedingAttention_MultiUser(t *testing.T) 
 		t.Errorf("user B's account not flagged: %+v", flaggedForB)
 	}
 }
+
+// TestAccountService_ListResponse_AttentionReason proves the #697 reason
+// fields: one flagged adjustment in the account's currency surfaces its
+// magnitude exactly; a second flagged adjustment switches to a count with no
+// single amount; another user's account carries none of it.
+func TestAccountService_ListResponse_AttentionReason(t *testing.T) {
+	g := openTestDB(t)
+	userID := seedTestUser(t, g)
+	otherID := seedTestUser(t, g)
+	accountID, usdID := seedReconcileAccount(t, g, userID)
+	seedReconcileAccount(t, g, otherID)
+	ctx := context.Background()
+	txRepo := repository.NewTransactionRepository(g)
+	obsRepo := repository.NewBalanceObservationRepository(g)
+	acctRepo := repository.NewAccountRepository(g)
+	recon := service.NewReconciliationService(txRepo, obsRepo, acctRepo, 0.01)
+	svc := service.NewAccountService(g, acctRepo, repository.NewAssetRepository(g), repository.NewPositionRepository(g)).
+		WithReconciliation(recon)
+
+	find := func(t *testing.T, uid, id int64) *service.AccountResponse {
+		t.Helper()
+		resps, _, err := svc.ListResponse(ctx, uid, repository.AccountFilter{})
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		for i := range resps {
+			if resps[i].ID == id {
+				return &resps[i]
+			}
+		}
+		t.Fatalf("account %d not in list", id)
+		return nil
+	}
+
+	now := time.Now().UTC()
+	reconcile := func(qty string, at time.Time) {
+		t.Helper()
+		if _, err := service.ReconcilePosition(ctx, txRepo, obsRepo, userID, accountID, usdID,
+			decimal.RequireFromString(qty), at, "plaid"); err != nil {
+			t.Fatalf("reconcile %s: %v", qty, err)
+		}
+	}
+	reconcile("1000", now.Add(-3*time.Hour)) // opening balance — never flagged
+	if r := find(t, userID, accountID); r.NeedsAttention || r.AttentionCount != 0 || r.AttentionAmount != nil {
+		t.Fatalf("opening only: got needs=%v count=%d amount=%v, want nothing flagged", r.NeedsAttention, r.AttentionCount, r.AttentionAmount)
+	}
+
+	// -20.37 on 1000 = 2.037% ≥ 1% → flagged; reason names 20.37 exactly.
+	reconcile("979.63", now.Add(-2*time.Hour))
+	r := find(t, userID, accountID)
+	if !r.NeedsAttention || r.AttentionCount != 1 || r.AttentionAmount == nil {
+		t.Fatalf("one adjustment: got needs=%v count=%d amount=%v", r.NeedsAttention, r.AttentionCount, r.AttentionAmount)
+	}
+	if !r.AttentionAmount.Equal(decimal.RequireFromString("20.37")) {
+		t.Errorf("AttentionAmount = %s, want 20.37 (magnitude, exact)", r.AttentionAmount)
+	}
+
+	// A second flagged adjustment: count, no single amount.
+	reconcile("1500", now.Add(-1*time.Hour))
+	r = find(t, userID, accountID)
+	if !r.NeedsAttention || r.AttentionCount != 2 || r.AttentionAmount != nil {
+		t.Errorf("two adjustments: got needs=%v count=%d amount=%v, want count=2 amount=nil", r.NeedsAttention, r.AttentionCount, r.AttentionAmount)
+	}
+
+	others, _, err := svc.ListResponse(ctx, otherID, repository.AccountFilter{})
+	if err != nil {
+		t.Fatalf("list other: %v", err)
+	}
+	for _, o := range others {
+		if o.ID == accountID || o.NeedsAttention || o.AttentionCount != 0 || o.AttentionAmount != nil {
+			t.Errorf("other user's list leaked attention state: %+v", o)
+		}
+	}
+}

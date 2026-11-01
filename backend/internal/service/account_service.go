@@ -359,20 +359,33 @@ func (s *AccountService) ListResponse(ctx context.Context, userID int64, f repos
 	return out, total, nil
 }
 
-// fillReconciliation sets each response's NeedsAttention from the #370
-// unacknowledged-adjustment flag, computed once per request across every
-// account rather than per-account. A nil reconcileSvc (no wiring, or a unit
-// test) leaves every response at the zero value (false).
+// fillReconciliation sets each response's NeedsAttention (and the #697
+// reason fields) from the #370 unacknowledged-adjustment flag, computed once
+// per request across every account rather than per-account. A nil
+// reconcileSvc (no wiring, or a unit test) leaves every response at the zero
+// value (false / 0 / nil).
 func (s *AccountService) fillReconciliation(ctx context.Context, userID int64, resps []*AccountResponse) error {
 	if len(resps) == 0 || s.reconcileSvc == nil {
 		return nil
 	}
-	flagged, err := s.reconcileSvc.AccountsNeedingAttention(ctx, userID)
+	summaries, err := s.reconcileSvc.AttentionSummaries(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("list accounts needing attention: %w", err)
 	}
 	for _, r := range resps {
-		r.NeedsAttention = flagged[r.ID]
+		sum, ok := summaries[r.ID]
+		if !ok {
+			continue
+		}
+		r.NeedsAttention = true
+		r.AttentionCount = sum.Count
+		// Name the amount only when it is in the account's own currency
+		// (cash quote asset); a holding-quantity adjustment falls back to
+		// the fixed sentence rather than a figure in the wrong unit.
+		if sum.Count == 1 && r.Account != nil && sum.AssetID == r.PrimaryQuoteAssetID {
+			d := sum.Delta.Abs()
+			r.AttentionAmount = &d
+		}
 	}
 	return nil
 }

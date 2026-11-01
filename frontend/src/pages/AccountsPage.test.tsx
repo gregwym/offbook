@@ -240,4 +240,30 @@ describe('AccountsPage smoke', () => {
     expect(await screen.findByRole('columnheader', { name: 'Last 4' })).toBeTruthy()
     expect(screen.getByRole('columnheader', { name: 'Sync' })).toBeTruthy()
   })
+
+  // #697: the reason is visible text (no hover-only title), the link's name
+  // carries the reason and destination, and it falls back to a fixed sentence.
+  it('explains why an account needs attention without a hover tooltip', async () => {
+    server.use(
+      http.get('/api/v1/accounts', () =>
+        HttpResponse.json({
+          data: [
+            { ...fx.account1, id: 1, name: 'One', needs_attention: true, attention_count: 1, attention_amount: '20.370000000000000000' },
+            { ...fx.account1, id: 2, name: 'Many', needs_attention: true, attention_count: 3, attention_amount: null },
+            { ...fx.account1, id: 3, name: 'Units', needs_attention: true, attention_count: 1, attention_amount: null },
+            { ...fx.account1, id: 4, name: 'Fine', needs_attention: false, attention_count: 0, attention_amount: null },
+          ],
+          total: 4,
+        }),
+      ),
+    )
+    renderPage(<AccountsPage />)
+    const one = await screen.findByRole('link', { name: /needs attention.*Unexplained adjustment of 20\.37 USD.*review in Reconciliation/ })
+    expect(one).toHaveAttribute('href', '/accounts/1/reconciliation')
+    expect(one).not.toHaveAttribute('title')
+    expect(one.className).toContain('min-h-10')
+    expect(screen.getByRole('link', { name: /3 unexplained adjustments/ })).toHaveAttribute('href', '/accounts/2/reconciliation')
+    expect(screen.getByRole('link', { name: /An adjustment doesn’t match your transactions/ })).toHaveAttribute('href', '/accounts/3/reconciliation')
+    expect(screen.getAllByRole('link', { name: /needs attention/ })).toHaveLength(3)
+  })
 })
