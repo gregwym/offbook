@@ -77,17 +77,17 @@ type Transaction struct {
 	Tags Tags `gorm:"type:text[];not null;default:'{}'" json:"tags"`
 	// ImportJobID links a statement-imported row to the ingestion_jobs audit
 	// row that created it, so the import can be undone as a unit.
-	ImportJobID *int64         `json:"import_job_id,omitempty"`
+	ImportJobID *int64 `json:"import_job_id,omitempty"`
 	// DeletedBy (#696) records who soft-deleted the row: DeletedByUser,
 	// DeletedBySync or DeletedByImportUndo. Nil on live rows. Internal only.
 	DeletedBy *string `json:"-"`
 	// RestoredAfterUserDeleteAt (#696) is set when Plaid sync brings back a
 	// row the user had deleted (the bank posted or re-sent it). The row comes
 	// back unreviewed and the UI explains why it reappeared.
-	RestoredAfterUserDeleteAt *time.Time `json:"restored_after_user_delete_at,omitempty"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+	RestoredAfterUserDeleteAt *time.Time     `json:"restored_after_user_delete_at,omitempty"`
+	CreatedAt                 time.Time      `json:"created_at"`
+	UpdatedAt                 time.Time      `json:"updated_at"`
+	DeletedAt                 gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// Splits is populated by the repository on reads (#438); never persisted
 	// through this struct. Empty = unsplit.
