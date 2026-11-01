@@ -8,8 +8,8 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 // month-end review, drills into that month's rows (the banner total equals
 // the figure), and "This month" returns. The month's income, spending and net
 // (#609) follow the stepper; spending equals the category rows and drills in.
-// The "vs. average" category trend (#611) follows the stepper as well: each
-// figure equals that month's category row. Once stepped back, no figure on the
+// The "vs. average" category trend (#611) follows the stepper as well and
+// averages only months since the book's first activity (#692). Once stepped back, no figure on the
 // page still shows this month's income or spending (#617), and the footer reads
 // as an inclusive range. Throwaway user; desktop and mobile.
 
@@ -82,9 +82,12 @@ test.describe('insights spending month', () => {
     await expect(chart.getByRole('list', { name: 'Legend' })).toContainText('Spending')
     await expect(band).not.toContainText(/\d{4}-\d{2}/)
     await expect(selectedNet).toContainText('-40.00 USD')
-    // 40 this month vs. last month's 130 averaged over the 5 months before (26).
+    // 40 this month vs. last month's 130. The book starts last month, so the
+    // average is that one month (#692), not 130 spread over 5 months (26),
+    // which used to read as a ▲ 54% spike.
     await expect(trendRow(0, groceries.name)).toContainText('40.00')
-    await expect(trendRow(0, groceries.name)).toContainText('▲ 54%')
+    await expect(trendRow(0, groceries.name)).toContainText('▼ 69%')
+    await expect(trend(0)).toContainText('Compared with the average of the previous month.')
 
     await stepper.getByRole('button', { name: 'Previous month' }).click()
     await expect(band.getByRole('heading', { name: `Spending by category · ${label(-1)}` })).toBeVisible()
@@ -108,10 +111,12 @@ test.describe('insights spending month', () => {
     // second income/spending pair — the month tiles are the only cash-flow figures.
     await expect(page.getByText(/(^|[^\d,.])40\.00 USD/).filter({ visible: true })).toHaveCount(0)
     await expect(page.getByText(/Income \(period\)/)).toHaveCount(0)
-    // The trend follows the stepper (#611): last month's figures, not this month's.
+    // The trend follows the stepper (#611). Last month is the book's first
+    // month, so there is nothing earlier to compare with (#692), rather than
+    // a 0.00 average repeating the category rows.
     await expect(trend(0)).toHaveCount(0)
-    await expect(trendRow(-1, travel.name)).toContainText('410.25')
-    await expect(trendRow(-1, groceries.name)).toContainText('130.00')
+    await expect(trend(-1)).toContainText('No earlier month to compare with yet')
+    await expect(trendRow(-1, travel.name)).toHaveCount(0)
     await band.scrollIntoViewIfNeeded()
     await testInfo.attach(`${testInfo.project.name}-insights-last-month`, {
       body: await page.screenshot({ fullPage: true }), contentType: 'image/png',

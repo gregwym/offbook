@@ -861,7 +861,7 @@ function cadenceLabel(cadence: InsightsData['recurring'][number]['cadence']): st
 // heights are the only Number() use; every figure shown is the API's decimal
 // string through AmountDisplay.
 function CashFlowTrend({
-  months,
+  months: allMonths,
   selected,
   empty = 'Not enough history yet.',
 }: {
@@ -870,7 +870,13 @@ function CashFlowTrend({
   selected: string
   empty?: string
 }) {
-  const hasHistory = months.some((m) => num(m.inflow) !== 0 || num(m.outflow) !== 0)
+  // The window starts at the book's first month with income or spending
+  // (#692): earlier months are before the user had any data, not months of
+  // zero, so they're neither drawn nor listed as 0.00 — like net worth (#618).
+  const first = allMonths.findIndex((m) => num(m.inflow) !== 0 || num(m.outflow) !== 0)
+  const months = first < 0 ? [] : allMonths.slice(first)
+  const hasHistory = months.length > 0
+  const trimmed = hasHistory && months.length < allMonths.length
   const ticks = monthTicks(months.map((m) => m.month.slice(0, 7)))
   const data = months.map((m) => ({
     key: m.month.slice(0, 7),
@@ -927,6 +933,11 @@ function CashFlowTrend({
               </BarChart>
             </ResponsiveContainer>
           </div>
+          {trimmed && (
+            <p className="mt-1 text-xs text-gray-500">
+              History starts {monthLabel(months[0].month.slice(0, 7))}.
+            </p>
+          )}
           <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-gray-400">Net</div>
           <ul aria-label="Net by month" className="mt-0.5 grid grid-cols-2 gap-x-5 gap-y-0.5 text-xs sm:grid-cols-3 lg:grid-cols-2">
             {months.map((m, i) => {
@@ -985,6 +996,10 @@ function MonthTick({ x, y, label, selected }: { x: number; y: number; label?: Mo
 // by this-month spend (#367).
 // title names the month when the band is stepped back (#607): this list
 // always compares the current month with its trailing average.
+// The average spans only months since the book's first activity (#692):
+// with none, there is nothing to compare and the list says so instead of
+// repeating the amounts above; a category with history but no earlier
+// spend reads "new"; a footnote says how many months were averaged.
 function CategoryTrendList({
   items,
   title = 'Trending vs. average',
@@ -995,6 +1010,7 @@ function CategoryTrendList({
   empty?: string
 }) {
   const top = items.slice(0, 5)
+  const averaged = top.reduce((acc, c) => Math.max(acc, c.trailing_months ?? 0), 0)
   return (
     <div>
       <h3 className="text-xs font-medium uppercase tracking-wider text-gray-400">
@@ -1002,33 +1018,50 @@ function CategoryTrendList({
       </h3>
       {top.length === 0 ? (
         <div className="mt-2 py-4 text-center text-xs text-gray-400">{empty}</div>
+      ) : averaged === 0 ? (
+        <div className="mt-2 py-4 text-center text-xs text-gray-500">
+          No earlier month to compare with yet — this is the first month with activity.
+        </div>
       ) : (
-        <ul className="mt-2 space-y-1.5 text-sm">
-          {top.map((c) => {
-            const thisMonth = num(c.this_month)
-            const avg = num(c.trailing_average)
-            const delta = avg > 0 ? ((thisMonth - avg) / avg) * 100 : null
-            return (
-              <li
-                key={`${c.category_id ?? 'null'}-${c.name}`}
-                className="flex items-center justify-between gap-2"
-              >
-                <span className="truncate text-gray-700">{c.name}</span>
-                <span className="shrink-0 text-right text-gray-500">
-                  <AmountDisplay amount={c.this_month} />
-                  {delta != null && (
-                    <span className={delta > 0 ? 'ml-1 text-red-600' : 'ml-1 text-emerald-600'}>
-                      {delta > 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(0)}%
-                    </span>
-                  )}
-                </span>
-              </li>
-            )
-          })}
-        </ul>
+        <>
+          <ul className="mt-2 space-y-1.5 text-sm">
+            {top.map((c) => {
+              const thisMonth = num(c.this_month)
+              const avg = num(c.trailing_average)
+              const delta = avg > 0 ? ((thisMonth - avg) / avg) * 100 : null
+              const isNew = avg === 0 && thisMonth > 0
+              return (
+                <li
+                  key={`${c.category_id ?? 'null'}-${c.name}`}
+                  className="flex items-center justify-between gap-2"
+                >
+                  <span className="truncate text-gray-700">{c.name}</span>
+                  <span className="shrink-0 text-right text-gray-500">
+                    <AmountDisplay amount={c.this_month} />
+                    {delta != null && (
+                      <span className={delta > 0 ? 'ml-1 text-red-600' : 'ml-1 text-emerald-600'}>
+                        {delta > 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(0)}%
+                      </span>
+                    )}
+                    {isNew && (
+                      <span className="ml-1 text-gray-400" title={`No spending here in the previous ${monthCount(averaged)}`}>
+                        new
+                      </span>
+                    )}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+          <p className="mt-2 text-xs text-gray-400">Compared with the average of the previous {monthCount(averaged)}.</p>
+        </>
       )}
     </div>
   )
+}
+
+function monthCount(n: number): string {
+  return n === 1 ? 'month' : `${n} months`
 }
 
 // Top spending merchants, period-scoped (#367).

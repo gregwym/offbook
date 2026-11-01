@@ -99,6 +99,12 @@ type DashboardRepository interface {
 	// the wall clock, so a book that is simply behind on imports doesn't
 	// read as every subscription cancelled. Nil when the book is empty.
 	LatestTransactionDate(ctx context.Context, userID int64) (*time.Time, error)
+	// EarliestFlowDate returns the oldest transaction_date across the
+	// user's live flow rows — where the book's income/spending history
+	// starts (#692). The month-over-month trend averages only months on or
+	// after it, so months before the user had any data don't read as zero
+	// spending. Nil when the book has no flow rows.
+	EarliestFlowDate(ctx context.Context, userID int64) (*time.Time, error)
 }
 
 // CategoryMonthAmount is one (category, month) bucket of the month-over-month
@@ -569,6 +575,22 @@ func (r *dashboardRepo) RecurringCandidates(ctx context.Context, userID int64) (
 		out = append(out, RecurringTxnRow{Merchant: row.Merchant, Amount: amt, Date: row.Date.UTC()})
 	}
 	return out, nil
+}
+
+func (r *dashboardRepo) EarliestFlowDate(ctx context.Context, userID int64) (*time.Time, error) {
+	var earliest sql.NullTime
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT MIN(t.transaction_date)
+		FROM transactions t
+		WHERE t.deleted_at IS NULL
+		  AND t.user_id = ?
+		  AND t.kind = 'flow'
+	`, userID).Row().Scan(&earliest)
+	if err != nil || !earliest.Valid {
+		return nil, err
+	}
+	utc := earliest.Time.UTC()
+	return &utc, nil
 }
 
 func (r *dashboardRepo) LatestTransactionDate(ctx context.Context, userID int64) (*time.Time, error) {

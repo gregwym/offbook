@@ -944,3 +944,69 @@ func TestAggregator_CashFlow_InGraceExcluded(t *testing.T) {
 		t.Errorf("rows = %+v, want outflow=10 (in-grace leaver excluded)", rows)
 	}
 }
+
+// TestAggregator_CategoryTrend_AveragesOnlySharedHistory (#692): the
+// household trailing average spans only months on or after the first flow
+// row across the same account set the trend reads — balance_and_txns shares
+// of live members. Older rows on a private account, a balance_only account
+// or an in-grace leaver's account never pull that start back (privacy), and
+// a book that starts this month has nothing to compare with.
+func TestAggregator_CategoryTrend_AveragesOnlySharedHistory(t *testing.T) {
+	agg, g := newAggregator(t)
+	ctx := context.Background()
+	agg.SetClock(func() time.Time { return time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC) })
+	owner := seedUser(t, g, "ctrend-hist-owner")
+	leaver := seedUser(t, g, "ctrend-hist-leaver")
+	hh := seedHouseholdRow(t, g, owner, "CTrendHist", 30)
+	addMember(t, g, hh.ID, owner, model.RoleOwner, nil)
+	leftAt := time.Now().Add(-3 * 24 * time.Hour)
+	addMember(t, g, hh.ID, leaver, model.RoleContributor, &leftAt)
+
+	full := seedAccount(t, g, owner, "hist-full")
+	balOnly := seedAccount(t, g, owner, "hist-bal-only")
+	priv := seedAccount(t, g, owner, "hist-private")
+	leaverAcct := seedAccount(t, g, leaver, "hist-leaver")
+	setShare(t, g, full.ID, hh.ID, model.VisibilityBalanceAndTxns)
+	setShare(t, g, balOnly.ID, hh.ID, model.VisibilityBalanceOnly)
+	setShare(t, g, leaverAcct.ID, hh.ID, model.VisibilityBalanceAndTxns)
+
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	cat := &model.Category{Name: "CTrendHist-" + suffix, Slug: "ctrend-hist-" + suffix}
+	if err := g.Create(cat).Error; err != nil {
+		t.Fatalf("seed category: %v", err)
+	}
+	t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, cat.ID) })
+	day := func(m time.Month, d int) time.Time { return time.Date(2026, m, d, 0, 0, 0, 0, time.UTC) }
+
+	// Before any shared history: none of these may move the start.
+	seedTxn(t, g, owner, balOnly.ID, "-1", &cat.ID, day(1, 5))
+	seedTxn(t, g, owner, priv.ID, "-1", &cat.ID, day(1, 5))
+	seedTxn(t, g, leaver, leaverAcct.ID, "-1", &cat.ID, day(1, 5))
+
+	// No shared flow rows yet in the window's earlier months → nothing to compare.
+	seedTxn(t, g, owner, full.ID, "-80", &cat.ID, day(5, 3))
+	items, err := agg.CategoryTrend(ctx, hh.ID, 6)
+	if err != nil {
+		t.Fatalf("CategoryTrend: %v", err)
+	}
+	if len(items) != 1 || items[0].TrailingMonths != 0 || items[0].TrailingAverage != "0" {
+		t.Fatalf("items = %+v, want one category with trailing 0 over 0 months (shared history starts in May)", items)
+	}
+
+	// Shared history from March: Mar 50, Apr (quiet, counts as 0) → avg 25 over 2.
+	seedTxn(t, g, owner, full.ID, "-50", &cat.ID, day(3, 9))
+	items, err = agg.CategoryTrend(ctx, hh.ID, 6)
+	if err != nil {
+		t.Fatalf("CategoryTrend: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("got %d categories, want 1: %+v", len(items), items)
+	}
+	if items[0].TrailingAverage != "25" || items[0].TrailingMonths != 2 {
+		t.Errorf("trailing = %s over %d months, want 25 over 2 (Mar–Apr; private, balance_only and in-grace rows excluded)",
+			items[0].TrailingAverage, items[0].TrailingMonths)
+	}
+	if items[0].ThisMonth != "80" {
+		t.Errorf("ThisMonth = %s, want 80", items[0].ThisMonth)
+	}
+}

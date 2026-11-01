@@ -243,6 +243,7 @@ export const categoryTrend: CategoryTrendItem[] = [
     ],
     this_month: '120.000000000000000000',
     trailing_average: '100.000000000000000000',
+    trailing_months: 1,
   },
 ]
 

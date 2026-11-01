@@ -122,6 +122,17 @@ test.describe('daily driver journey', () => {
     await expect(categoryRow(spending, 'Groceries')).toContainText('113.55')
     await expect(categoryRow(spending, 'Shopping')).toContainText('40.15')
     await expect(categoryRow(spending, 'Gas')).toContainText('45.10')
+    // #692: the book starts this month, so there is no earlier month to
+    // average (not a 0.00 average repeating the amounts above), and the
+    // income-vs-spending trend starts here instead of listing empty months
+    // as 0.00.
+    const vsAverage = spending.getByText(/ vs\. average$/).locator('..')
+    await expect(vsAverage).toContainText('No earlier month to compare with yet')
+    await expect(vsAverage.getByText('Groceries')).toHaveCount(0)
+    const cashFlow = spending.getByRole('group', { name: 'Income vs. spending by month' })
+    await expect(cashFlow.getByRole('list', { name: 'Net by month' }).getByRole('listitem')).toHaveCount(1)
+    await expect(cashFlow).toContainText('History starts')
+    await expect(cashFlow.getByRole('list', { name: 'Net by month' })).toContainText('2,301.20')
     // #629: a cash-only book has nothing to price, a single month-end can't
     // be re-ranged, and one asset class is a line, not a donut — so the
     // month's spending sits near the top, even on a phone.

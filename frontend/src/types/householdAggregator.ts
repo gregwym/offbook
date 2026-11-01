@@ -112,6 +112,8 @@ export type HouseholdCategoryTrendItem = {
   months: Array<{ month: string; amount: string }>
   this_month: string
   trailing_average: string
+  // Months trailing_average averages (#692); 0 = nothing earlier.
+  trailing_months: number
 }
 
 // HouseholdMerchantSpendItem mirrors service/household.MerchantSpendItem

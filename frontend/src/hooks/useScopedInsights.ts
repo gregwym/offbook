@@ -119,6 +119,8 @@ export type InsightsCategoryTrendRow = {
   months: { month: string; amount: string }[]
   this_month: string
   trailing_average: string
+  // Months trailing_average averages (#692); 0 = nothing earlier.
+  trailing_months: number
 }
 
 // InsightsMerchantRow is one row of the top-merchants view (#367).

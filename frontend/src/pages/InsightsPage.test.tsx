@@ -526,8 +526,8 @@ describe('InsightsPage spending month stepper', () => {
         const month = new URL(request.url).searchParams.get('month')
         trendMonths.push(month)
         const item = month
-          ? { category_id: 7, name: 'Travel', this_month: '410.250000000000000000', trailing_average: '205.125000000000000000' }
-          : { category_id: 3, name: 'Groceries', this_month: '120.000000000000000000', trailing_average: '150.000000000000000000' }
+          ? { category_id: 7, name: 'Travel', this_month: '410.250000000000000000', trailing_average: '205.125000000000000000', trailing_months: 5 }
+          : { category_id: 3, name: 'Groceries', this_month: '120.000000000000000000', trailing_average: '150.000000000000000000', trailing_months: 5 }
         return HttpResponse.json({ data: [{ ...item, months: [] }], total: 1 })
       }),
     )
@@ -937,6 +937,58 @@ describe('InsightsPage income vs. spending trend', () => {
     expect(within(chart).getByText('Not enough history yet.')).toBeInTheDocument()
     expect(within(chart).queryByRole('list', { name: 'Legend' })).toBeNull()
     expect(within(chart).queryByRole('list', { name: 'Net by month' })).toBeNull()
+  })
+
+  it('starts at the first month with activity instead of listing earlier months as 0.00 (#692)', async () => {
+    const cur = currentMonth()
+    const start = shiftMonth(cur, -1)
+    server.use(
+      http.get('*/dashboard/cash-flow', () => {
+        const rows = [5, 4, 3, 2, 1, 0].map((b) =>
+          b > 1
+            ? { month: `${shiftMonth(cur, -b)}-01`, inflow: '0', outflow: '0', net: '0' }
+            : { month: `${shiftMonth(cur, -b)}-01`, inflow: '2500.000000000000000000', outflow: '198.800000000000000000', net: '2301.200000000000000000' },
+        )
+        return HttpResponse.json({ data: rows, total: rows.length })
+      }),
+    )
+    renderPage(<InsightsPage />)
+    const chart = await screen.findByRole('group', { name: 'Income vs. spending by month' })
+    const items = within(within(chart).getByRole('list', { name: 'Net by month' })).getAllByRole('listitem')
+    expect(items).toHaveLength(2)
+    expect(within(chart).getByText(`History starts ${monthLabel(start)}.`)).toBeInTheDocument()
+    expect(within(chart).getAllByRole('row')).toHaveLength(3) // header + 2 months in the text alternative
+  })
+})
+
+describe('InsightsPage month vs. average (#692)', () => {
+  const trend = (rows: Array<Record<string, unknown>>) =>
+    server.use(
+      http.get('*/dashboard/category-trend', () =>
+        HttpResponse.json({ data: rows.map((r) => ({ months: [], ...r })), total: rows.length }),
+      ),
+    )
+  const listOf = async () =>
+    (await screen.findByText(`${monthLabel(currentMonth())} vs. average`)).parentElement as HTMLElement
+
+  it('says there is nothing to compare when the book has no earlier month', async () => {
+    trend([{ category_id: 3, name: 'Groceries', this_month: '113.550000000000000000', trailing_average: '0', trailing_months: 0 }])
+    renderPage(<InsightsPage />)
+    const list = await listOf()
+    await waitFor(() => expect(list).toHaveTextContent('No earlier month to compare with yet'))
+    expect(within(list).queryByText('Groceries')).toBeNull()
+  })
+
+  it('marks a category with no earlier spend "new" and names the months averaged', async () => {
+    trend([
+      { category_id: 3, name: 'Groceries', this_month: '140.000000000000000000', trailing_average: '70.000000000000000000', trailing_months: 3 },
+      { category_id: 8, name: 'Pets', this_month: '12.340000000000000000', trailing_average: '0', trailing_months: 3 },
+    ])
+    renderPage(<InsightsPage />)
+    const list = await listOf()
+    await waitFor(() => expect(list).toHaveTextContent('Groceries140.00 USD▲ 100%'))
+    expect(list).toHaveTextContent('Pets12.34 USDnew')
+    expect(list).toHaveTextContent('Compared with the average of the previous 3 months.')
   })
 })
 

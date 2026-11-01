@@ -907,6 +907,10 @@ type CategoryTrendItem struct {
 	Months          []CategoryTrendMonth `json:"months"`
 	ThisMonth       string               `json:"this_month"`
 	TrailingAverage string               `json:"trailing_average"`
+	// TrailingMonths is how many months TrailingAverage averages (#692):
+	// the window's earlier months on or after the book's first flow row.
+	// 0 means there is no earlier month to compare with.
+	TrailingMonths int `json:"trailing_months"`
 }
 
 // MerchantSpendItem is one row of the household top-merchants view (#367).
@@ -967,6 +971,18 @@ func (a *Aggregator) CategoryTrendThrough(ctx context.Context, householdID int64
 		return nil, fmt.Errorf("category trend: %w", err)
 	}
 
+	// The trailing average spans only months on or after the book's first
+	// flow row (#692): a month before the user had any data is unknown,
+	// not zero spending, and counting it would inflate every delta.
+	earliest, err := a.repo.EarliestFlowDate(ctx, txAccounts)
+	if err != nil {
+		return nil, fmt.Errorf("earliest flow date: %w", err)
+	}
+	firstMonth := end // no flow rows: no earlier month counts
+	if earliest != nil {
+		firstMonth = time.Date(earliest.Year(), earliest.Month(), 1, 0, 0, 0, 0, time.UTC)
+	}
+
 	// catKey groups by category value, not pointer identity — each SQL row
 	// scan allocates a fresh *int64 even for the same category id, so using
 	// r.CategoryID directly as (part of) a map key would split one category
@@ -1007,7 +1023,7 @@ func (a *Aggregator) CategoryTrendThrough(ctx context.Context, householdID int64
 			monthsOut = append(monthsOut, CategoryTrendMonth{Month: m.Format("2006-01-02"), Amount: amt.String()})
 			if i == months-1 {
 				thisMonth = amt
-			} else {
+			} else if !m.Before(firstMonth) {
 				trailingSum = trailingSum.Add(amt)
 				trailingCount++
 			}
@@ -1027,6 +1043,7 @@ func (a *Aggregator) CategoryTrendThrough(ctx context.Context, householdID int64
 			Months:          monthsOut,
 			ThisMonth:       thisMonth.String(),
 			TrailingAverage: trailingAvg.String(),
+			TrailingMonths:  trailingCount,
 		})
 	}
 	sort.SliceStable(items, func(i, j int) bool {

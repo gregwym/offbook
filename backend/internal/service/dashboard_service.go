@@ -467,15 +467,19 @@ type CategoryTrendMonth struct {
 
 // CategoryTrendItem is one category's month-over-month spend series plus
 // the this-month vs. trailing-average comparison (#367). ThisMonth is the
-// most recent month in Months; TrailingAverage is the mean of the
-// remaining (months-1) months — 0 when there's only one month in the
-// window.
+// most recent month in Months; TrailingAverage is the mean of the earlier
+// months in the window that fall on or after the book's first flow row
+// (#692) — 0, with TrailingMonths 0, when there is no such month.
 type CategoryTrendItem struct {
 	CategoryID      *int64               `json:"category_id"`
 	Name            string               `json:"name"`
 	Months          []CategoryTrendMonth `json:"months"`
 	ThisMonth       string               `json:"this_month"`
 	TrailingAverage string               `json:"trailing_average"`
+	// TrailingMonths is how many months TrailingAverage averages (#692):
+	// the window's earlier months on or after the book's first flow row.
+	// 0 means there is no earlier month to compare with.
+	TrailingMonths int `json:"trailing_months"`
 }
 
 // CategoryTrend returns the month-over-month spending trend per category
@@ -502,6 +506,18 @@ func (s *DashboardService) CategoryTrendThrough(ctx context.Context, userID int6
 	rows, err := s.repo.CategoryTrend(ctx, userID, now, months)
 	if err != nil {
 		return nil, err
+	}
+
+	// The trailing average spans only months on or after the book's first
+	// flow row (#692): a month before the user had any data is unknown,
+	// not zero spending, and counting it would inflate every delta.
+	earliest, err := s.repo.EarliestFlowDate(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("earliest flow date: %w", err)
+	}
+	firstMonth := end // no flow rows: no earlier month counts
+	if earliest != nil {
+		firstMonth = time.Date(earliest.Year(), earliest.Month(), 1, 0, 0, 0, 0, time.UTC)
 	}
 
 	// catKey groups by category value, not pointer identity — each SQL row
@@ -544,7 +560,7 @@ func (s *DashboardService) CategoryTrendThrough(ctx context.Context, userID int6
 			monthsOut = append(monthsOut, CategoryTrendMonth{Month: m.Format("2006-01-02"), Amount: amt.String()})
 			if i == months-1 {
 				thisMonth = amt
-			} else {
+			} else if !m.Before(firstMonth) {
 				trailingSum = trailingSum.Add(amt)
 				trailingCount++
 			}
@@ -564,6 +580,7 @@ func (s *DashboardService) CategoryTrendThrough(ctx context.Context, userID int6
 			Months:          monthsOut,
 			ThisMonth:       thisMonth.String(),
 			TrailingAverage: trailingAvg.String(),
+			TrailingMonths:  trailingCount,
 		})
 	}
 	sort.SliceStable(items, func(i, j int) bool {
