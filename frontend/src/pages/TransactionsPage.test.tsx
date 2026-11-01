@@ -1031,3 +1031,41 @@ describe('TransactionsPage bank-synced delete (#696)', () => {
     expect(await screen.findByText(/You deleted this, then your bank sent it again/)).toBeInTheDocument()
   })
 })
+
+// #702: the pager is noise when everything fits on one page (or nothing
+// matches); it only appears once there is a second page to go to.
+describe('TransactionsPage pagination (#702)', () => {
+  beforeEach(() => {
+    resetStores()
+  })
+
+  it('hides Prev/Next on a single page and on an empty list', async () => {
+    renderPage(<TransactionsPage />)
+    await expectHealthySmoke()
+    expect(screen.queryByRole('navigation', { name: 'Pagination' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument()
+
+    server.use(http.get(`${API}/transactions`, () => HttpResponse.json({ data: [], total: 0 })))
+    fireEvent.change(screen.getByPlaceholderText(/description or merchant/i), { target: { value: 'zzz' } })
+    expect(await screen.findByText('No transactions match these filters.')).toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: 'Pagination' })).not.toBeInTheDocument()
+  })
+
+  it('shows Prev/Next once there is more than one page', async () => {
+    const pageSize = useTransactionsStore.getState().pageSize
+    server.use(
+      http.get(`${API}/transactions`, () => HttpResponse.json({ data: [fx.transaction1], total: pageSize + 1 })),
+    )
+    renderPage(<TransactionsPage />)
+    const pager = await screen.findByRole('navigation', { name: 'Pagination' })
+    expect(within(pager).getByText('Page 1 / 2')).toBeInTheDocument()
+    expect(within(pager).getByRole('button', { name: 'Prev' })).toBeDisabled()
+    expect(within(pager).getByRole('button', { name: 'Next' })).toBeEnabled()
+  })
+
+  it('gives Search two columns of the desktop filter row', async () => {
+    renderPage(<TransactionsPage />)
+    await expectHealthySmoke()
+    expect(screen.getByPlaceholderText(/description or merchant/i).closest('label')).toHaveClass('md:col-span-2')
+  })
+})

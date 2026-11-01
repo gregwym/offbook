@@ -6,6 +6,8 @@ import { createThrowawayUser } from '../fixtures/state.mjs'
 // screen. Below md only Search and a "Filters" toggle show up front; the list
 // must start inside the first viewport, and the hidden filters must still be
 // reachable and work. Desktop keeps all five filters inline with no toggle.
+// #702: on desktop Search is wide enough for its placeholder, and the pager
+// only appears when there is a second page.
 
 test.describe('transactions filters journey', () => {
   test('list stays above the fold; secondary filters reachable and working', async ({ page }, testInfo) => {
@@ -50,7 +52,20 @@ test.describe('transactions filters journey', () => {
     } else {
       await expect(toggle).toBeHidden()
       await expect(fromInput).toBeVisible()
+      // #702: Search spans two columns so its placeholder isn't clipped.
+      const search = page.getByPlaceholder('description or merchant')
+      const fits = await search.evaluate((el) => {
+        const input = el as HTMLInputElement
+        const ctx = document.createElement('canvas').getContext('2d')!
+        const cs = getComputedStyle(input)
+        ctx.font = `${cs.fontSize} ${cs.fontFamily}`
+        const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
+        return ctx.measureText(input.placeholder).width + pad <= input.clientWidth
+      })
+      expect(fits, 'search placeholder fits its input').toBe(true)
     }
+    // #702: two rows fit on one page, so there is no pager.
+    await expect(page.getByRole('navigation', { name: 'Pagination' })).toHaveCount(0)
 
     // The revealed filters work: narrowing to one account hides the other's row.
     await accountSelect.selectOption({ label: 'Filter Savings' })
@@ -72,6 +87,10 @@ test.describe('transactions filters journey', () => {
     // Search stays up front and combines with the account filter.
     await page.getByPlaceholder('description or merchant').fill('nomatch-zzz')
     await expect(page.getByText('No transactions match these filters.')).toBeVisible()
+    // #702: an empty result has no Prev/Next noise under it.
+    await expect(page.getByRole('navigation', { name: 'Pagination' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Next', exact: true })).toHaveCount(0)
+    await testInfo.attach(`${testInfo.project.name}-empty-no-pager`, { body: await page.screenshot(), contentType: 'image/png' })
     await page.getByRole('button', { name: /clear filters/i }).click()
     await expect(cafe).toBeVisible()
     await expect(interest).toBeVisible()
