@@ -102,8 +102,10 @@ func TestAccountService_UpdateBalance(t *testing.T) {
 		if err := g.First(&adj, res.Recorded.ID).Error; err != nil {
 			t.Fatalf("load adjustment: %v", err)
 		}
+		// obs[0] is the starting balance typed at creation (#704); the
+		// update is the second observation.
 		obs := observations(t, a)
-		if adj.CausedByObservationID == nil || len(obs) != 1 || *adj.CausedByObservationID != obs[0].ID {
+		if adj.CausedByObservationID == nil || len(obs) != 2 || *adj.CausedByObservationID != obs[1].ID {
 			t.Errorf("adjustment caused_by = %v, want observation %v", adj.CausedByObservationID, obs)
 		}
 		var pos model.Position
@@ -124,7 +126,8 @@ func TestAccountService_UpdateBalance(t *testing.T) {
 		if res.Recorded != nil {
 			t.Errorf("recorded = %+v, want nil", res.Recorded)
 		}
-		if len(observations(t, a)) != 1 {
+		// The starting balance (#704) plus this update.
+		if len(observations(t, a)) != 2 {
 			t.Error("want the observation recorded even when the ledger already matches")
 		}
 	})
@@ -136,7 +139,7 @@ func TestAccountService_UpdateBalance(t *testing.T) {
 			t.Fatalf("update balance: %v", err)
 		}
 		obs := observations(t, a)
-		if len(obs) != 1 || obs[0].AsOf.UTC().Format("2006-01-02") != past.Format("2006-01-02") {
+		if len(obs) != 2 || obs[1].AsOf.UTC().Format("2006-01-02") != past.Format("2006-01-02") {
 			t.Errorf("as_of = %v, want %s", obs, past.Format("2006-01-02"))
 		}
 		future := time.Now().UTC().AddDate(0, 0, 3)
@@ -168,7 +171,8 @@ func TestAccountService_UpdateBalance(t *testing.T) {
 		if !errors.Is(err, service.ErrAccountNotFound) {
 			t.Errorf("err = %v, want ErrAccountNotFound", err)
 		}
-		if len(observations(t, a)) != 0 {
+		// Only the starting balance recorded at creation (#704).
+		if len(observations(t, a)) != 1 {
 			t.Error("cross-user update must not write")
 		}
 	})
