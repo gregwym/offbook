@@ -91,6 +91,9 @@ export type CategoryTrendItem = {
   months: CategoryTrendMonth[]
   this_month: string
   trailing_average: string
+  // Months trailing_average averages: earlier months on or after the
+  // book's first flow row (#692). 0 = nothing earlier to compare.
+  trailing_months: number
 }
 
 // MerchantSpendItem mirrors backend service.MerchantSpendItem (#367).

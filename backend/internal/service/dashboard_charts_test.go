@@ -1190,3 +1190,118 @@ func TestDashboard_CardPayment_NotSpendingAndNetWorthUnchanged(t *testing.T) {
 		}
 	}
 }
+
+// TestDashboard_CategoryTrend_AveragesOnlyBookHistory (#692): the trailing
+// average spans only months on or after the book's first flow row. Months
+// before the user had any data are unknown, not zero spending — counting
+// them turned steady spending into a ▲ spike for every new book. A quiet
+// month inside the history still counts as 0, and another user's older
+// rows never move this user's start.
+func TestDashboard_CategoryTrend_AveragesOnlyBookHistory(t *testing.T) {
+	ctx := context.Background()
+	suffix := time.Now().Format("150405.000000")
+	newCat := func(t *testing.T, g *gorm.DB, name string) *model.Category {
+		t.Helper()
+		c := &model.Category{Name: name + "-" + suffix, Slug: "bh-" + name + "-" + suffix}
+		if err := g.Create(c).Error; err != nil {
+			t.Fatalf("seed cat: %v", err)
+		}
+		t.Cleanup(func() { g.Unscoped().Delete(&model.Category{}, c.ID) })
+		return c
+	}
+	day := func(m time.Month, d int) time.Time { return time.Date(2026, m, d, 0, 0, 0, 0, time.UTC) }
+	byName := func(items []service.CategoryTrendItem) map[string]service.CategoryTrendItem {
+		out := map[string]service.CategoryTrendItem{}
+		for _, it := range items {
+			out[it.Name] = it
+		}
+		return out
+	}
+
+	t.Run("book starts mid-window", func(t *testing.T) {
+		svc, userID, accountID, g := newDashboardSvc(t)
+		groceries := newCat(t, g, "BHGroceries")
+		fresh := newCat(t, g, "BHFresh")
+		// Clock is 2026-05-15; the default window is Dec 2025 … May 2026.
+		// The book starts in February with a paycheck only (no spend), so
+		// Feb, Mar and Apr are the earlier months in its history.
+		seedChartTxn(t, g, userID, accountID, nil, day(2, 27), decimal.NewFromInt(2500), false)
+		seedChartTxn(t, g, userID, accountID, &groceries.ID, day(3, 10), decimal.RequireFromString("-90.00"), false)
+		seedChartTxn(t, g, userID, accountID, &groceries.ID, day(4, 10), decimal.RequireFromString("-120.00"), false)
+		seedChartTxn(t, g, userID, accountID, &groceries.ID, day(5, 10), decimal.RequireFromString("-70.00"), false)
+		// A category first spent in this month: history exists, no prior spend.
+		seedChartTxn(t, g, userID, accountID, &fresh.ID, day(5, 11), decimal.RequireFromString("-12.34"), false)
+
+		// Another user's January rows must not pull this book's start back.
+		userB := seedTestUser(t, g)
+		accB := &model.Account{UserID: userB, Name: "BHB-" + suffix, InstitutionSlug: "fixture", AccountType: "checking", Currency: "USD"}
+		if err := g.Create(accB).Error; err != nil {
+			t.Fatalf("seed B account: %v", err)
+		}
+		t.Cleanup(func() {
+			g.Unscoped().Where("account_id = ?", accB.ID).Delete(&model.Transaction{})
+			g.Unscoped().Delete(&model.Account{}, accB.ID)
+		})
+		seedChartTxn(t, g, userB, accB.ID, &groceries.ID, day(1, 5), decimal.NewFromInt(-500), false)
+
+		items, err := svc.CategoryTrend(ctx, userID, 6)
+		if err != nil {
+			t.Fatalf("CategoryTrend: %v", err)
+		}
+		got := byName(items)
+		g1, ok := got[groceries.Name]
+		if !ok {
+			t.Fatalf("groceries missing: %+v", items)
+		}
+		// (0 + 90 + 120) / 3 = 70 — not (90 + 120) / 5 = 42.
+		if g1.TrailingAverage != "70" || g1.TrailingMonths != 3 {
+			t.Errorf("groceries trailing = %s over %d months, want 70 over 3 (Feb–Apr)", g1.TrailingAverage, g1.TrailingMonths)
+		}
+		if g1.ThisMonth != "70" {
+			t.Errorf("groceries this month = %s, want 70", g1.ThisMonth)
+		}
+		if len(g1.Months) != 6 {
+			t.Errorf("groceries months = %d, want the full 6-month series", len(g1.Months))
+		}
+		f, ok := got[fresh.Name]
+		if !ok {
+			t.Fatalf("fresh category missing: %+v", items)
+		}
+		if f.TrailingAverage != "0" || f.TrailingMonths != 3 {
+			t.Errorf("fresh trailing = %s over %d months, want 0 over 3 (history, no prior spend)", f.TrailingAverage, f.TrailingMonths)
+		}
+	})
+
+	t.Run("book starts this month", func(t *testing.T) {
+		svc, userID, accountID, g := newDashboardSvc(t)
+		groceries := newCat(t, g, "BHNew")
+		seedChartTxn(t, g, userID, accountID, &groceries.ID, day(5, 2), decimal.RequireFromString("-45.10"), false)
+
+		items, err := svc.CategoryTrend(ctx, userID, 6)
+		if err != nil {
+			t.Fatalf("CategoryTrend: %v", err)
+		}
+		if len(items) != 1 {
+			t.Fatalf("got %d items, want 1: %+v", len(items), items)
+		}
+		if items[0].TrailingMonths != 0 || items[0].TrailingAverage != "0" {
+			t.Errorf("trailing = %s over %d months, want 0 over 0 (nothing earlier to compare)", items[0].TrailingAverage, items[0].TrailingMonths)
+		}
+	})
+
+	t.Run("stepped back before a later start", func(t *testing.T) {
+		// Through March with history from February: one earlier month.
+		svc, userID, accountID, g := newDashboardSvc(t)
+		groceries := newCat(t, g, "BHStep")
+		seedChartTxn(t, g, userID, accountID, &groceries.ID, day(2, 3), decimal.RequireFromString("-30.00"), false)
+		seedChartTxn(t, g, userID, accountID, &groceries.ID, day(3, 3), decimal.RequireFromString("-60.00"), false)
+
+		items, err := svc.CategoryTrendThrough(ctx, userID, day(3, 20), 6)
+		if err != nil {
+			t.Fatalf("CategoryTrendThrough: %v", err)
+		}
+		if len(items) != 1 || items[0].TrailingAverage != "30" || items[0].TrailingMonths != 1 {
+			t.Errorf("items = %+v, want trailing 30 over 1 month (February)", items)
+		}
+	})
+}

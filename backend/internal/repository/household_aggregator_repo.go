@@ -163,6 +163,11 @@ type HouseholdAggregatorRepository interface {
 	// flow + transfer-excluded filter. Empty accountIDs returns nil.
 	CategoryTrend(ctx context.Context, accountIDs []int64, now time.Time, months int) ([]CategoryMonthAmount, error)
 
+	// EarliestFlowDate mirrors DashboardRepository.EarliestFlowDate, scoped
+	// to the given account set (#692): the oldest live flow row's
+	// transaction_date. Empty accountIDs or no flow rows returns nil.
+	EarliestFlowDate(ctx context.Context, accountIDs []int64) (*time.Time, error)
+
 	// TopMerchants mirrors DashboardRepository.TopMerchants, scoped to the
 	// given account set (#367). Empty accountIDs returns nil.
 	TopMerchants(ctx context.Context, accountIDs []int64, from, to time.Time, limit int) ([]MerchantSpendItem, error)
@@ -810,6 +815,26 @@ func (r *householdAggregatorRepo) ListPersonalThreadsForUser(ctx context.Context
 		Limit(limit).
 		Find(&out).Error
 	return out, err
+}
+
+// EarliestFlowDate: the oldest live flow row across the account set (#692).
+func (r *householdAggregatorRepo) EarliestFlowDate(ctx context.Context, accountIDs []int64) (*time.Time, error) {
+	if len(accountIDs) == 0 {
+		return nil, nil
+	}
+	var earliest *time.Time
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT MIN(t.transaction_date)
+		FROM transactions t
+		WHERE t.deleted_at IS NULL
+		  AND t.account_id IN ?
+		  AND t.kind = 'flow'
+	`, accountIDs).Row().Scan(&earliest)
+	if err != nil || earliest == nil {
+		return nil, err
+	}
+	utc := earliest.UTC()
+	return &utc, nil
 }
 
 // CategoryTrend: outflows only, transfers excluded, grouped by (category,
